@@ -16,8 +16,7 @@
 /**************************************************************************/
 
 /* bitmap.c */
-BOOL bitmap_decompress(unsigned char *output, int width, int height, unsigned char *input, int size,
-		       int Bpp);
+BOOL bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size, int Bpp);
 /* cache.c */
 HBITMAP cache_get_bitmap(uint8 cache_id, uint16 cache_idx);
 void cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap);
@@ -44,11 +43,13 @@ void cliprdr_send_data_request(uint32 format);
 void cliprdr_send_data(uint8 * data, uint32 length);
 BOOL cliprdr_init(void);
 /* disk.c */
+int disk_enum_devices(uint32 * id, char *optarg);
 NTSTATUS disk_query_information(HANDLE handle, uint32 info_class, STREAM out);
 NTSTATUS disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out);
 NTSTATUS disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out);
 NTSTATUS disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out);
-int disk_enum_devices(uint32 * id, char *optarg);
+/* mppc.c */
+int mppc_expand(uint8 * data, uint32 clen, uint8 ctype, uint32 * roff, uint32 * rlen);
 /* ewmhints.c */
 int get_current_workarea(uint32 * x, uint32 * y, uint32 * width, uint32 * height);
 /* iso.c */
@@ -103,31 +104,22 @@ void process_cached_pointer_pdu(STREAM s);
 void process_system_pointer_pdu(STREAM s);
 void process_bitmap_updates(STREAM s);
 void process_palette(STREAM s);
-BOOL rdp_main_loop(void);
+void rdp_main_loop(BOOL * deactivated, uint32 * ext_disc_reason);
 BOOL rdp_connect(char *server, uint32 flags, char *domain, char *password, char *command,
 		 char *directory);
 BOOL test_rdp_connect(char *server);
 void rdp_disconnect(void);
 /* rdpdr.c */
-void convert_to_unix_filename(char *filename);
-void rdpdr_send_connect(void);
-void rdpdr_send_name(void);
-void rdpdr_send_available(void);
-void rdpdr_send_completion(uint32 device, uint32 id, uint32 status, uint32 result, uint8 * buffer,
-			   uint32 length);
-BOOL rdpdr_init();
 int get_device_index(HANDLE handle);
-BOOL rdpdr_abort_io(uint32 fd, uint32 major, NTSTATUS status);
-/* Ficam aqui até sair o oficial */
+void convert_to_unix_filename(char *filename);
+BOOL rdpdr_init(void);
 void rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * timeout);
+struct async_iorequest *rdpdr_remove_iorequest(struct async_iorequest *prev,
+					       struct async_iorequest *iorq);
 void rdpdr_check_fds(fd_set * rfds, fd_set * wfds, BOOL timed_out);
+BOOL rdpdr_abort_io(uint32 fd, uint32 major, NTSTATUS status);
 /* rdpsnd.c */
-STREAM rdpsnd_init_packet(uint16 type, uint16 size);
-void rdpsnd_send(STREAM s);
 void rdpsnd_send_completion(uint16 tick, uint8 packet_index);
-void rdpsnd_process_negotiate(STREAM in);
-void rdpsnd_process_unknown6(STREAM in);
-void rdpsnd_process(STREAM s);
 BOOL rdpsnd_init(void);
 /* rdpsnd_oss.c */
 BOOL wave_out_open(void);
@@ -178,13 +170,14 @@ void restore_remote_modifiers(uint32 ev_time, uint8 scancode);
 void ensure_remote_modifiers(uint32 ev_time, key_translation tr);
 unsigned int read_keyboard_state(void);
 uint16 ui_get_numlock_state(unsigned int state);
-void reset_modifier_keys();
+void reset_modifier_keys(void);
 void rdp_send_scancode(uint32 time, uint16 flags, uint8 scancode);
 /* xwin.c */
 BOOL get_key_state(unsigned int state, uint32 keysym);
 BOOL ui_init(void);
 void ui_deinit(void);
 BOOL ui_create_window(void);
+void ui_resize_window(void);
 void ui_destroy_window(void);
 BOOL ui_open_display(void);
 void ui_get_display_size(int *width, int *height); 
@@ -222,6 +215,9 @@ void ui_triblt(uint8 opcode, int x, int y, int cx, int cy, HBITMAP src, int srcx
 void ui_line(uint8 opcode, int startx, int starty, int endx, int endy, PEN * pen);
 void ui_poly_line(uint8 opcode, short *points, int count, PEN *pen);
 void ui_rect(int x, int y, int cx, int cy, int colour);
+/* NX */
+void flush_rects();
+/* NX */
 void ui_draw_glyph(int mixmode, int x, int y, int cx, int cy, HGLYPH glyph, int srcx, int srcy,
 		   int bgcolour, int fgcolour);
 void ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y, int clipx, int clipy,

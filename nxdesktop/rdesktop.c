@@ -59,7 +59,7 @@
 #include "crypto/md5.h"
 #endif
 
-char g_title[64] = "";
+char g_title[256] = "";
 char g_username[64];
 char hostname[16];
 char keymapname[16];
@@ -76,7 +76,7 @@ int g_server_bpp = 8;
 int g_win_button_size = 0;	/* If zero, disable single app mode */
 BOOL g_bitmap_compression = True;
 BOOL g_sendmotion = True;
-BOOL g_orders = True;
+BOOL g_bitmap_cache = True;
 BOOL g_encryption = True;
 BOOL packet_encryption = True;
 BOOL g_desktop_save = True;
@@ -87,15 +87,15 @@ BOOL g_hide_decorations = False;
 BOOL g_use_rdp5 = True;
 BOOL rdp_img_cache = True;
 BOOL username_option = False;
-BOOL prompt_password = True;
+BOOL prompt_password = False;
 /* NX */
 BOOL g_console_session = False;
 BOOL g_numlock_sync = False;
-extern BOOL g_owncolmap;
-extern BOOL g_ownbackstore;
-extern uint32 g_embed_wnd;
-extern void RunOrKillNXkbd();
-uint32 g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
+BOOL g_owncolmap = False;
+BOOL g_ownbackstore = True;	/* We can't rely on external BackingStore */
+uint32 g_embed_wnd;
+uint32 g_rdp5_performanceflags =
+	RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
 
 #ifdef WITH_RDPSND
 BOOL g_rdpsnd = False;
@@ -103,6 +103,7 @@ BOOL g_rdpsnd = False;
 
 extern RDPDR_DEVICE g_rdpdr_device[];
 extern uint32 g_num_devices;
+extern char *g_rdpdr_clientname;
 
 #ifdef RDP2VNC
 extern int rfb_port;
@@ -113,6 +114,7 @@ rdp2vnc_connect(char *server, uint32 flags, char *domain, char *password,
 #endif
 
 /* Here starts the NX mods */
+extern void RunOrKillNXkbd();
 int agentArgument(int i, char *argv[]);
 void NXTranslateKeymap();
 void ShowHeaderInfo();
@@ -165,7 +167,8 @@ usage(char *program)
 	fprintf(stderr, "   -N: enable numlock syncronization\n");
 	fprintf(stderr, "   -X: embed into another window with a given id.\n");
 	fprintf(stderr, "   -a: connection colour depth\n");
-	fprintf(stderr, "   -x: RDP5 experience (m[odem 28.8], b[roadband], l[an] or hex number)\n");
+	fprintf(stderr,
+		"   -x: RDP5 experience (m[odem 28.8], b[roadband], l[an] or hex number)\n");
 	fprintf(stderr, "   -r: enable specified device redirection (this flag can be repeated)\n");
 	fprintf(stderr,
 		"         '-r comport:COM1=/dev/ttyS0': enable serial redirection of /dev/ttyS0 to COM1\n");
@@ -173,6 +176,8 @@ usage(char *program)
 	fprintf(stderr,
 		"         '-r disk:A=/mnt/floppy': enable redirection of /mnt/floppy to A:\n");
 	fprintf(stderr, "             or   A=/mnt/floppy,D=/mnt/cdrom'\n");
+	fprintf(stderr, "         '-r clientname=<client name>': Set the client name displayed\n");
+	fprintf(stderr, "             for redirected disks\n");
 	fprintf(stderr,
 		"         '-r lptport:LPT1=/dev/lp0': enable parallel redirection of /dev/lp0 to LPT1\n");
 	fprintf(stderr, "             or      LPT1=/dev/lp0,LPT2=/dev/lp1\n");
@@ -186,6 +191,106 @@ usage(char *program)
 	fprintf(stderr, "   -5: use RDP version 5 (default)\n");
 	fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
 	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n\n", rdp_bufsize);
+}
+
+void
+print_disconnect_reason(uint16 reason)
+{
+	char *text;
+
+	switch (reason)
+	{
+		case exDiscReasonNoInfo:
+			text = "No information available";
+			break;
+
+		case exDiscReasonAPIInitiatedDisconnect:
+			text = "Server initiated disconnect";
+			break;
+
+		case exDiscReasonAPIInitiatedLogoff:
+			text = "Server initiated logoff";
+			break;
+
+		case exDiscReasonServerIdleTimeout:
+			text = "Server idle timeout reached";
+			break;
+
+		case exDiscReasonServerLogonTimeout:
+			text = "Server logon timeout reached";
+			break;
+
+		case exDiscReasonReplacedByOtherConnection:
+			text = "The session was replaced";
+			break;
+
+		case exDiscReasonOutOfMemory:
+			text = "The server is out of memory";
+			break;
+
+		case exDiscReasonServerDeniedConnection:
+			text = "The server denied the connection";
+			break;
+
+		case exDiscReasonServerDeniedConnectionFips:
+			text = "The server denied the connection for security reason";
+			break;
+
+		case exDiscReasonLicenseInternal:
+			text = "Internal licensing error";
+			break;
+
+		case exDiscReasonLicenseNoLicenseServer:
+			text = "No license server available";
+			break;
+
+		case exDiscReasonLicenseNoLicense:
+			text = "No valid license available";
+			break;
+
+		case exDiscReasonLicenseErrClientMsg:
+			text = "Invalid licensing message";
+			break;
+
+		case exDiscReasonLicenseHwidDoesntMatchLicense:
+			text = "Hardware id doesn't match software license";
+			break;
+
+		case exDiscReasonLicenseErrClientLicense:
+			text = "Client license error";
+			break;
+
+		case exDiscReasonLicenseCantFinishProtocol:
+			text = "Network error during licensing protocol";
+			break;
+
+		case exDiscReasonLicenseClientEndedProtocol:
+			text = "Licensing protocol was not completed";
+			break;
+
+		case exDiscReasonLicenseErrClientEncryption:
+			text = "Incorrect client license enryption";
+			break;
+
+		case exDiscReasonLicenseCantUpgradeLicense:
+			text = "Can't upgrade license";
+			break;
+
+		case exDiscReasonLicenseNoRemoteConnections:
+			text = "The server is not licensed to accept remote connections";
+			break;
+
+		default:
+			if (reason > 0x1000 && reason < 0x7fff)
+			{
+				text = "Internal protocol error";
+			}
+			else
+			{
+				text = "Unknown reason";
+			}
+	}
+	fprintf(stderr, "disconnect: %s.\n", text);
 }
 
 static BOOL
@@ -283,11 +388,14 @@ main(int argc, char *argv[])
 	char password[64];
 	char shell[128];
 	char directory[32];
-	BOOL rdp_retval = False;
+	BOOL prompt_password, deactivated;
 	struct passwd *pw;
-	uint32 flags;
+	uint32 flags, ext_disc_reason = 0;
 	char *p;
 	int c, i;
+	
+	int username_option = 0;
+	
 	int nx_argc = 0; 
 	char *nx_argv[argc];	
 	
@@ -295,9 +403,11 @@ main(int argc, char *argv[])
 	ShowHeaderInfo();
 	
 	flags = RDP_LOGON_NORMAL;
+	prompt_password = False;
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
 	strcpy(keymapname, "en-us");
 	g_embed_wnd = 0;
+
 	g_num_devices = 0;
 
 #ifdef RDP2VNC
@@ -341,7 +451,7 @@ main(int argc, char *argv[])
 	    fprintf(stderr,"par2 '%i' '%s'\n",i,nx_argv[i]);
 	#endif
 	
-	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbBeEmCDKS:T:NX:a:x:r:045h?")) != -1)
+	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmCDKS:T:NX:a:x:r:045h?")) != -1)
 	{
 		switch (c)
 		{
@@ -362,7 +472,7 @@ main(int argc, char *argv[])
 
 			case 'u':
 				STRNCPY(g_username, optarg, sizeof(g_username));
-				username_option = True;
+				username_option = 1;
 				break;
 
 			case 'd':
@@ -444,7 +554,7 @@ main(int argc, char *argv[])
 				break;
 
 			case 'b':
-				g_orders = False;
+				g_bitmap_cache = False;
 				break;
 
 			case 'v': /* supposed to be B - changed to keep compat. with NX desktop */
@@ -494,6 +604,7 @@ main(int argc, char *argv[])
 
 			case 'T':
 				STRNCPY(g_title, optarg, sizeof(g_title));
+				strcpy(windowName,g_title);
 				break;
 
 			case 'N':
@@ -503,7 +614,7 @@ main(int argc, char *argv[])
 			case 'X':
 				g_embed_wnd = strtol(optarg, NULL, 10);
 				break;
-				
+
 			case 'a':
 				g_server_bpp = strtol(optarg, NULL, 10);
 				if (g_server_bpp != 8 && g_server_bpp != 16 && g_server_bpp != 15
@@ -515,10 +626,12 @@ main(int argc, char *argv[])
 				break;
 
 			case 'x':
-				
+
 				if (strncmp("modem", optarg, 1) == 0)
 				{
-					g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
+					g_rdp5_performanceflags =
+						RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG |
+						RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
 				}
 				else if (strncmp("broadband", optarg, 1) == 0)
 				{
@@ -533,7 +646,7 @@ main(int argc, char *argv[])
 					g_rdp5_performanceflags = strtol(optarg, NULL, 16);
 				}
 				break;
-				
+
 			case 'r':
 
 				if (strncmp("sound", optarg, 5) == 0)
@@ -556,7 +669,11 @@ main(int argc, char *argv[])
 #endif
 
 							if (strncmp("off", optarg, 3) == 0)
+#ifdef WITH_RDPSND
 								g_rdpsnd = False;
+#else
+								warning("Not compiled with sound support");
+#endif
 
 							optarg = p;
 						}
@@ -586,6 +703,11 @@ main(int argc, char *argv[])
 				else if (strncmp("printer", optarg, 7) == 0)
 				{
 					printer_enum_devices(&g_num_devices, optarg + 7);
+				}
+				else if (strncmp("clientname", optarg, 7) == 0)
+				{
+					g_rdpdr_clientname = xmalloc(strlen(optarg + 11) + 1);
+					strcpy(g_rdpdr_clientname, optarg + 11);
 				}
 				else
 				{
@@ -639,7 +761,7 @@ main(int argc, char *argv[])
 	STRNCPY(server, nx_argv[optind], sizeof(server));
 	parse_server_and_port(server);	
 
-	NXTranslateKeymap();
+	
 	
 	if (!username_option)
 	{
@@ -713,14 +835,13 @@ main(int argc, char *argv[])
 	    }
 	if (!ui_init())
 		return 1;
-	#ifdef WITH_RDPSND
+
+#ifdef WITH_RDPSND
 	if (g_rdpsnd)
 		rdpsnd_init();
-	#endif
-	
-	/* Redirection will be kept disabled until needed */
-	/* rdpdr_init(); */
-	
+#endif
+	rdpdr_init();
+
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
 		fprintf(stderr, "Error: Connection to RDP server '%s' failed.\n",server);
@@ -755,7 +876,7 @@ main(int argc, char *argv[])
 	    /* NX */
 	    if (ipaq) RunOrKillNXkbd();
 	    /* NX */
-	    rdp_retval = rdp_main_loop();
+	    rdp_main_loop(&deactivated, &ext_disc_reason);
 	    if (ipaq) RunOrKillNXkbd();
 	    ui_destroy_window();
 	}
@@ -765,11 +886,28 @@ main(int argc, char *argv[])
 	fprintf(stderr, "Info: Disconnecting from RDP server '%s'\n",server);
 	ui_deinit();
 
-	if (True == rdp_retval)
+	if (ext_disc_reason >= 2)
+		print_disconnect_reason(ext_disc_reason);
+
+	if (deactivated)
+	{
+		/* clean disconnect */
 		return 0;
+	}
 	else
-		return 2;
-	
+	{
+		if (ext_disc_reason == exDiscReasonAPIInitiatedDisconnect
+		    || ext_disc_reason == exDiscReasonAPIInitiatedLogoff)
+		{
+			/* not so clean disconnect, but nothing to worry about */
+			return 0;
+		}
+		else
+		{
+			/* return error */
+			return 2;
+		}
+	}
 
 #endif
 
@@ -1372,6 +1510,7 @@ char *argv[];
         {
            error("Invalid keyboard layout\n");
         }
+	NXTranslateKeymap();
 	return 2;
     }
 

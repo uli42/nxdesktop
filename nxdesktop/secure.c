@@ -61,8 +61,17 @@ static uint8 sec_crypted_random[SEC_MODULUS_SIZE];
 uint16 g_server_rdp_version = 0;
 
 /*
- * General purpose 48-byte transformation, using two 32-byte salts (generally,
- * a client and server salt) and a global salt value used for padding.
+ * I believe this is based on SSLv3 with the following differences:
+ *  MAC algorithm (5.2.3.1) uses only 32-bit length in place of seq_num/type/length fields
+ *  MAC algorithm uses SHA1 and MD5 for the two hash functions instead of one or other
+ *  key_block algorithm (6.2.2) uses 'X', 'YY', 'ZZZ' instead of 'A', 'BB', 'CCC'
+ *  key_block partitioning is different (16 bytes each: MAC secret, decrypt key, encrypt key)
+ *  encryption/decryption keys updated every 4096 packets
+ * See http://wp.netscape.com/eng/ssl3/draft302.txt
+ */
+
+/*
+ * 48-byte transformation used to generate master secret (6.1) and key material (6.2.2).
  * Both SHA1 and MD5 algorithms are used.
  */
 void
@@ -93,8 +102,7 @@ sec_hash_48(uint8 * out, uint8 * in, uint8 * salt1, uint8 * salt2, uint8 salt)
 }
 
 /*
- * Weaker 16-byte transformation, also using two 32-byte salts, but
- * only using a single round of MD5.
+ * 16-byte transformation used to generate export keys (6.2.2).
  */
 void
 sec_hash_16(uint8 * out, uint8 * in, uint8 * salt1, uint8 * salt2)
@@ -117,28 +125,28 @@ sec_make_40bit(uint8 * key)
 	key[2] = 0x9e;
 }
 
-/* Generate a session key and RC4 keys, given client and server randoms */
+/* Generate encryption keys given client and server randoms */
 static void
-sec_generate_keys(uint8 * client_key, uint8 * server_key, int rc4_key_size)
+sec_generate_keys(uint8 * client_random, uint8 * server_random, int rc4_key_size)
 {
-	uint8 session_key[48];
-	uint8 temp_hash[48];
-	uint8 input[48];
+	uint8 pre_master_secret[48];
+	uint8 master_secret[48];
+	uint8 key_block[48];
 
-	/* Construct input data to hash */
-	memcpy(input, client_key, 24);
-	memcpy(input + 24, server_key, 24);
+	/* Construct pre-master secret */
+	memcpy(pre_master_secret, client_random, 24);
+	memcpy(pre_master_secret + 24, server_random, 24);
 
-	/* Generate session key - two rounds of sec_hash_48 */
-	sec_hash_48(temp_hash, input, client_key, server_key, 65);
-	sec_hash_48(session_key, temp_hash, client_key, server_key, 88);
+	/* Generate master secret and then key material */
+	sec_hash_48(master_secret, pre_master_secret, client_random, server_random, 'A');
+	sec_hash_48(key_block, master_secret, client_random, server_random, 'X');
 
-	/* Store first 16 bytes of session key, for generating signatures */
-	memcpy(sec_sign_key, session_key, 16);
+	/* First 16 bytes of key material is MAC secret */
+	memcpy(sec_sign_key, key_block, 16);
 
-	/* Generate RC4 keys */
-	sec_hash_16(sec_decrypt_key, &session_key[16], client_key, server_key);
-	sec_hash_16(sec_encrypt_key, &session_key[32], client_key, server_key);
+	/* Generate export keys from next two blocks of 16 bytes */
+	sec_hash_16(sec_decrypt_key, &key_block[16], client_random, server_random);
+	sec_hash_16(sec_encrypt_key, &key_block[32], client_random, server_random);
 
 	if (rc4_key_size == 1)
 	{
@@ -187,7 +195,7 @@ buf_out_uint32(uint8 * buffer, uint32 value)
 	buffer[3] = (value >> 24) & 0xff;
 }
 
-/* Generate a signature hash, using a combination of SHA1 and MD5 */
+/* Generate a MAC hash (5.2.3.1), using a combination of SHA1 and MD5 */
 void
 sec_sign(uint8 * signature, int siglen, uint8 * session_key, int keylen, uint8 * data, int datalen)
 {
@@ -215,7 +223,7 @@ sec_sign(uint8 * signature, int siglen, uint8 * session_key, int keylen, uint8 *
 	memcpy(signature, md5sig, siglen);
 }
 
-/* Update an encryption key - similar to the signing process */
+/* Update an encryption key */
 static void
 sec_update(uint8 * key, uint8 * update_key)
 {
@@ -359,7 +367,7 @@ sec_send_to_channel(STREAM s, uint32 flags, uint16 channel)
 		flags &= ~SEC_ENCRYPT;
 		datalen = s->end - s->p - 8;
 
-#if WITH_DEBUG
+#ifdef WITH_DEBUG
 		DEBUG(("Sending encrypted packet:\n"));
 		hexdump(s->p + 8, datalen);
 #endif
@@ -433,7 +441,6 @@ sec_out_mcs_data(STREAM s)
 	out_uint16_le(s, SEC_TAG_CLI_INFO);
 	out_uint16_le(s, 212);	/* length */
 	out_uint16_le(s, g_use_rdp5 ? 4 : 1);	/* RDP version. 1 == RDP4, 4 == RDP5. */
-	
 	out_uint16_le(s, 8);
 	out_uint16_le(s, g_width);
 	out_uint16_le(s, g_height);
@@ -450,27 +457,11 @@ sec_out_mcs_data(STREAM s)
 	out_uint32(s, 0);
 	out_uint32_le(s, 12);
 	out_uint8s(s, 64);	/* reserved? 4 + 12 doublewords */
-
-	switch (g_server_bpp)
-	{
-		case 8:
-			out_uint16_le(s, 0xca01);
-			break;
-		case 15:
-			out_uint16_le(s, 0xca02);
-			break;
-		case 16:
-			out_uint16_le(s, 0xca03);
-			break;
-		case 24:
-			out_uint16_le(s, 0xca04);
-			break;
-	}
+	out_uint16_le(s, 0xca01);	/* colour depth? */
 	out_uint16_le(s, 1);
 
 	out_uint32(s, 0);
 	out_uint8(s, g_server_bpp);
-
 	out_uint16_le(s, 0x0700);
 	out_uint8(s, 0);
 	out_uint32_le(s, 1);
@@ -773,7 +764,10 @@ sec_process_srv_info(STREAM s)
 	in_uint16_le(s, g_server_rdp_version);
 	DEBUG_RDP5(("Server RDP version is %d\n", g_server_rdp_version));
 	if (1 == g_server_rdp_version)
+	{
 		g_use_rdp5 = 0;
+		g_server_bpp = 8;
+	}
 }
 
 

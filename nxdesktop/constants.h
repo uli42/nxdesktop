@@ -12,7 +12,7 @@
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
@@ -249,7 +249,13 @@ enum RDP_INPUT_DEVICE
 #define RDP5_NO_MENUANIMATIONS	0x04
 #define RDP5_NO_THEMING		0x08
 #define RDP5_NO_CURSOR_SHADOW	0x20
-#define RDP5_NO_CURSORSETTINGS	0x40 /* disables cursor blinking */
+#define RDP5_NO_CURSORSETTINGS	0x40	/* disables cursor blinking */
+
+/* compression types */
+#define RDP_MPPC_COMPRESSED	0x20
+#define RDP_MPPC_RESET		0x40
+#define RDP_MPPC_FLUSH		0x80
+#define RDP_MPPC_DICT_SIZE      8192
 
 /* Keymap flags */
 #define MapRightShiftMask   (1<<0)
@@ -356,3 +362,25 @@ enum RDP_INPUT_DEVICE
 #define FILE_DIRECTORY_FILE             0x00000001
 #define FILE_NON_DIRECTORY_FILE         0x00000040
 #define FILE_OPEN_FOR_FREE_SPACE_QUERY  0x00800000
+
+/* RDP5 disconnect PDU */
+#define exDiscReasonNoInfo				0x0000
+#define exDiscReasonAPIInitiatedDisconnect		0x0001
+#define exDiscReasonAPIInitiatedLogoff			0x0002
+#define exDiscReasonServerIdleTimeout			0x0003
+#define exDiscReasonServerLogonTimeout			0x0004
+#define exDiscReasonReplacedByOtherConnection		0x0005
+#define exDiscReasonOutOfMemory				0x0006
+#define exDiscReasonServerDeniedConnection		0x0007
+#define exDiscReasonServerDeniedConnectionFips		0x0008
+#define exDiscReasonLicenseInternal			0x0100
+#define exDiscReasonLicenseNoLicenseServer		0x0101
+#define exDiscReasonLicenseNoLicense			0x0102
+#define exDiscReasonLicenseErrClientMsg			0x0103
+#define exDiscReasonLicenseHwidDoesntMatchLicense	0x0104
+#define exDiscReasonLicenseErrClientLicense		0x0105
+#define exDiscReasonLicenseCantFinishProtocol		0x0106
+#define exDiscReasonLicenseClientEndedProtocol		0x0107
+#define exDiscReasonLicenseErrClientEncryption		0x0108
+#define exDiscReasonLicenseCantUpgradeLicense		0x0109
+#define exDiscReasonLicenseNoRemoteConnections		0x010a

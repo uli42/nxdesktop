@@ -1,15 +1,45 @@
+/* -*- c-basic-offset: 8 -*-
+   rdesktop: A Remote Desktop Protocol client.
+   Copyright (C) Matthew Chapman 1999-2004
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
+
+/*
+  Here are some resources, for your IRP hacking pleasure:
+
+  http://cvs.sourceforge.net/viewcvs.py/mingw/w32api/include/ddk/winddk.h?view=markup
+
+  http://win32.mvps.org/ntfs/streams.cpp
+
+  http://www.acc.umu.se/~bosse/ntifs.h
+
+  http://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/NT%20Objects/File/
+
+  http://us1.samba.org/samba/ftp/specs/smb-nt01.txt
+
+  http://www.osronline.com/
+*/
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <dirent.h>		/* opendir, closedir, readdir */
 #include <time.h>
+#include <errno.h>
 #include "rdesktop.h"
-
-#define IRP_MJ_CREATE		0x00
-#define IRP_MJ_CLOSE		0x02
-#define IRP_MJ_READ		0x03
-#define IRP_MJ_WRITE		0x04
-#define IRP_MJ_DEVICE_CONTROL	0x0e
 
 #define IRP_MJ_CREATE			0x00
 #define IRP_MJ_CLOSE			0x02
@@ -20,6 +50,7 @@
 #define IRP_MJ_QUERY_VOLUME_INFORMATION	0x0a
 #define IRP_MJ_DIRECTORY_CONTROL	0x0c
 #define IRP_MJ_DEVICE_CONTROL		0x0e
+#define IRP_MJ_LOCK_CONTROL             0x11
 
 #define IRP_MN_QUERY_DIRECTORY          0x01
 #define IRP_MN_NOTIFY_CHANGE_DIRECTORY  0x02
@@ -39,6 +70,7 @@ uint32 g_num_devices;
 
 /* Table with information about rdpdr devices */
 RDPDR_DEVICE g_rdpdr_device[RDPDR_MAX_DEVICES];
+char *g_rdpdr_clientname = NULL;
 
 /* Used to store incoming io request, until they are ready to be completed */
 /* using a linked list ensures that they are processed in the right order, */
@@ -81,7 +113,7 @@ convert_to_unix_filename(char *filename)
 	}
 }
 
-BOOL
+static BOOL
 rdpdr_handle_ok(int device, int handle)
 {
 	switch (g_rdpdr_device[device].device_type)
@@ -102,7 +134,7 @@ rdpdr_handle_ok(int device, int handle)
 }
 
 /* Add a new io request to the table containing pending io requests so it won't block rdesktop */
-BOOL
+static BOOL
 add_async_iorequest(uint32 device, uint32 file, uint32 id, uint32 major, uint32 length,
 		    DEVICE_FNS * fns, uint32 total_timeout, uint32 interval_timeout, uint8 * buffer,
 		    uint32 offset)
@@ -148,7 +180,7 @@ add_async_iorequest(uint32 device, uint32 file, uint32 id, uint32 major, uint32 
 	return True;
 }
 
-void
+static void
 rdpdr_send_connect(void)
 {
 	uint8 magic[4] = "rDCC";
@@ -164,12 +196,18 @@ rdpdr_send_connect(void)
 }
 
 
-void
+static void
 rdpdr_send_name(void)
 {
 	uint8 magic[4] = "rDNC";
-	uint32 hostlen = (strlen(hostname) + 1) * 2;
 	STREAM s;
+	uint32 hostlen;
+
+	if (NULL == g_rdpdr_clientname)
+	{
+		g_rdpdr_clientname = hostname;
+	}
+	hostlen = (strlen(g_rdpdr_clientname) + 1) * 2;
 
 	s = channel_init(rdpdr_channel, 16 + hostlen);
 	out_uint8a(s, magic, 4);
@@ -177,13 +215,13 @@ rdpdr_send_name(void)
 	out_uint16_le(s, 0x72);
 	out_uint32(s, 0);
 	out_uint32_le(s, hostlen);
-	rdp_out_unistr(s, hostname, hostlen - 2);
+	rdp_out_unistr(s, g_rdpdr_clientname, hostlen - 2);
 	s_mark_end(s);
 	channel_send(s, rdpdr_channel);
 }
 
 /* Returns the size of the payload of the announce packet */
-int
+static int
 announcedata_size()
 {
 	int size, i;
@@ -210,7 +248,7 @@ announcedata_size()
 	return size;
 }
 
-void
+static void
 rdpdr_send_available(void)
 {
 
@@ -268,7 +306,7 @@ rdpdr_send_available(void)
 	channel_send(s, rdpdr_channel);
 }
 
-void
+static void
 rdpdr_send_completion(uint32 device, uint32 id, uint32 status, uint32 result, uint8 * buffer,
 		      uint32 length)
 {
@@ -621,6 +659,25 @@ rdpdr_process_irp(STREAM s)
 			result = buffer_len = out.p - out.data;
 			break;
 
+
+		case IRP_MJ_LOCK_CONTROL:
+
+			if (g_rdpdr_device[device].device_type != DEVICE_TYPE_DISK)
+			{
+				status = STATUS_INVALID_HANDLE;
+				break;
+			}
+
+			in_uint32_le(s, info_level);
+
+			out.data = out.p = buffer;
+			out.size = sizeof(buffer);
+			/* FIXME: Perhaps consider actually *do*
+			   something here :-) */
+			status = STATUS_SUCCESS;
+			result = buffer_len = out.p - out.data;
+			break;
+
 		default:
 			unimpl("IRP major=0x%x minor=0x%x\n", major, minor);
 			break;
@@ -635,7 +692,7 @@ rdpdr_process_irp(STREAM s)
 	buffer = NULL;
 }
 
-void
+static void
 rdpdr_send_clientcapabilty(void)
 {
 	uint8 magic[4] = "rDPC";
@@ -753,6 +810,7 @@ rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * t
 {
 	uint32 select_timeout = 0;	// Timeout value to be used for select() (in millisecons).
 	struct async_iorequest *iorq;
+	char c;
 
 	iorq = g_iorequest;
 	while (iorq != NULL)
@@ -762,8 +820,16 @@ rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * t
 			switch (iorq->major)
 			{
 				case IRP_MJ_READ:
+					/* Is this FD valid? FDs will
+					   be invalid when
+					   reconnecting. FIXME: Real
+					   support for reconnects. */
+
+					if ((read(iorq->fd, &c, 0) != 0) && (errno == EBADF))
+						break;
 
 					FD_SET(iorq->fd, rfds);
+					*n = MAX(*n, iorq->fd);
 
 					// Check if io request timeout is smaller than current (but not 0).
 					if (iorq->timeout
@@ -777,14 +843,20 @@ rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * t
 						tv->tv_usec = (select_timeout % 1000) * 1000;
 						*timeout = True;
 					}
+
 					break;
 
 				case IRP_MJ_WRITE:
+					/* FD still valid? See above. */
+					if ((write(iorq->fd, &c, 0) != 0) && (errno == EBADF))
+						break;
+
 					FD_SET(iorq->fd, wfds);
+					*n = MAX(*n, iorq->fd);
 					break;
 
 			}
-			*n = MAX(*n, iorq->fd);
+
 		}
 
 		iorq = iorq->next;

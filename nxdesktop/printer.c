@@ -2,7 +2,7 @@
 
 extern RDPDR_DEVICE g_rdpdr_device[];
 
-PRINTER *
+static PRINTER *
 get_printer_data(HANDLE handle)
 {
 	int index;

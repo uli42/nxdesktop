@@ -18,67 +18,7 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
-#define FILE_ATTRIBUTE_READONLY			0x00000001
-#define FILE_ATTRIBUTE_HIDDEN			0x00000002
-#define FILE_ATTRIBUTE_SYSTEM			0x00000004
-#define FILE_ATTRIBUTE_DIRECTORY		0x00000010
-#define FILE_ATTRIBUTE_ARCHIVE			0x00000020
-#define FILE_ATTRIBUTE_DEVICE			0x00000040
-#define FILE_ATTRIBUTE_UNKNOWNXXX0		0x00000060	/* ??? ACTION i.e. 0x860 == compress this file ? */
-#define FILE_ATTRIBUTE_NORMAL			0x00000080
-#define FILE_ATTRIBUTE_TEMPORARY		0x00000100
-#define FILE_ATTRIBUTE_SPARSE_FILE		0x00000200
-#define FILE_ATTRIBUTE_REPARSE_POINT		0x00000400
-#define FILE_ATTRIBUTE_COMPRESSED		0x00000800
-#define FILE_ATTRIBUTE_OFFLINE			0x00001000
-#define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED	0x00002000
-#define FILE_ATTRIBUTE_ENCRYPTED		0x00004000
-
-#define FILE_FLAG_OPEN_NO_RECALL		0x00100000
-#define FILE_FLAG_OPEN_REPARSE_POINT		0x00200000
-#define FILE_FLAG_POSIX_SEMANTICS		0x01000000
-#define FILE_FLAG_BACKUP_SEMANTICS		0x02000000	/* sometimes used to create a directory */
-#define FILE_FLAG_DELETE_ON_CLOSE		0x04000000
-#define FILE_FLAG_SEQUENTIAL_SCAN		0x08000000
-#define FILE_FLAG_RANDOM_ACCESS			0x10000000
-#define FILE_FLAG_NO_BUFFERING			0x20000000
-#define FILE_FLAG_OVERLAPPED			0x40000000
-#define FILE_FLAG_WRITE_THROUGH			0x80000000
-
-#define FILE_SHARE_READ				0x01
-#define FILE_SHARE_WRITE			0x02
-#define FILE_SHARE_DELETE			0x04
-
-#define FILE_BASIC_INFORMATION			0x04
-#define FILE_STANDARD_INFORMATION		0x05
-
-#define FS_CASE_SENSITIVE			0x00000001
-#define FS_CASE_IS_PRESERVED			0x00000002
-#define FS_UNICODE_STORED_ON_DISK		0x00000004
-#define FS_PERSISTENT_ACLS			0x00000008
-#define FS_FILE_COMPRESSION			0x00000010
-#define FS_VOLUME_QUOTAS			0x00000020
-#define FS_SUPPORTS_SPARSE_FILES		0x00000040
-#define FS_SUPPORTS_REPARSE_POINTS		0x00000080
-#define FS_SUPPORTS_REMOTE_STORAGE		0X00000100
-#define FS_VOL_IS_COMPRESSED			0x00008000
-#define FILE_READ_ONLY_VOLUME			0x00080000
-
-#define OPEN_EXISTING				1
-#define CREATE_NEW				2
-#define OPEN_ALWAYS				3
-#define TRUNCATE_EXISTING			4
-#define CREATE_ALWAYS				5
-
-#define GENERIC_READ				0x80000000
-#define GENERIC_WRITE				0x40000000
-#define GENERIC_EXECUTE				0x20000000
-#define GENERIC_ALL				0x10000000
-
-#define ERROR_FILE_NOT_FOUND			2L
-#define ERROR_ALREADY_EXISTS			183L
-
-#define	MAX_OPEN_FILES	0x100
+#include "disk.h"
 
 #if (defined(sun) && (defined(__svr4__) || defined(__SVR4)))
 #define SOLARIS
@@ -104,8 +44,8 @@
 
 #if (defined(SOLARIS) || defined (__hpux) || defined(__BEOS__))
 #include <sys/statvfs.h>	/* solaris statvfs */
-#include <sys/mntent.h>
-/* TODO: Fix mntent-handling for solaris */
+/* TODO: Fix mntent-handling for solaris/hpux
+ * #include <sys/mntent.h> */
 #undef HAVE_MNTENT_H
 #define MNTENT_PATH "/etc/mnttab"
 #define STATFS_FN(path, buf) (statvfs(path,buf))
@@ -144,7 +84,7 @@ typedef struct
 } FsInfoType;
 
 
-time_t
+static time_t
 get_create_time(struct stat *st)
 {
 	time_t ret, ret1;
@@ -159,7 +99,7 @@ get_create_time(struct stat *st)
 }
 
 /* Convert seconds since 1970 to a filetime */
-void
+static void
 seconds_since_1970_to_filetime(time_t seconds, uint32 * high, uint32 * low)
 {
 	unsigned long long ticks;
@@ -170,7 +110,7 @@ seconds_since_1970_to_filetime(time_t seconds, uint32 * high, uint32 * low)
 }
 
 /* Convert seconds since 1970 back to filetime */
-time_t
+static time_t
 convert_1970_to_filetime(uint32 high, uint32 low)
 {
 	unsigned long long ticks;
@@ -222,7 +162,7 @@ disk_enum_devices(uint32 * id, char *optarg)
 }
 
 /* Opens or creates a file or directory */
-NTSTATUS
+static NTSTATUS
 disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create_disposition,
 	    uint32 flags_and_attributes, char *filename, HANDLE * phandle)
 {
@@ -379,7 +319,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS
+static NTSTATUS
 disk_close(HANDLE handle)
 {
 	struct fileinfo *pfinfo;
@@ -399,7 +339,7 @@ disk_close(HANDLE handle)
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS
+static NTSTATUS
 disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
 {
 	int n;
@@ -436,7 +376,7 @@ disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * re
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS
+static NTSTATUS
 disk_write(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
 {
 	int n;
@@ -498,7 +438,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 	// Return requested data
 	switch (info_class)
 	{
-		case 4:	/* FileBasicInformation */
+		case FileBasicInformation:
 			seconds_since_1970_to_filetime(get_create_time(&filestat), &ft_high,
 						       &ft_low);
 			out_uint32_le(out, ft_low);	//create_access_time
@@ -519,7 +459,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 			out_uint32_le(out, file_attributes);
 			break;
 
-		case 5:	/* FileStandardInformation */
+		case FileStandardInformation:
 
 			out_uint32_le(out, filestat.st_size);	//Allocation size
 			out_uint32_le(out, 0);
@@ -530,7 +470,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 			out_uint8(out, S_ISDIR(filestat.st_mode) ? 1 : 0);	//Directory
 			break;
 
-		case 35:	/* FileObjectIdInformation */
+		case FileObjectIdInformation:
 
 			out_uint32_le(out, file_attributes);	/* File Attributes */
 			out_uint32_le(out, 0);	/* Reparse Tag */
@@ -547,7 +487,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 NTSTATUS
 disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 {
-	uint32 /* NX - Commentd out to shut up compiler warning device_id, */length, file_attributes, ft_high, ft_low;
+	uint32 /*device_id, */length, file_attributes, ft_high, ft_low;
 	char newname[256], fullpath[256];
 	struct fileinfo *pfinfo;
 
@@ -561,7 +501,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 
 	switch (info_class)
 	{
-		case 4:	/* FileBasicInformation */
+		case FileBasicInformation:
 			write_time = change_time = access_time = 0;
 
 			in_uint8s(in, 4);	/* Handle of root dir? */
@@ -641,7 +581,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 
 			break;
 
-		case 10:	/* FileRenameInformation */
+		case FileRenameInformation:
 
 			in_uint8s(in, 4);	/* Handle of root dir? */
 			in_uint8s(in, 0x1a);	/* unknown */
@@ -667,12 +607,26 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 			}
 			break;
 
-		case 13:	/* FileDispositionInformation */
-
-			//unimpl("IRP Set File Information class: FileDispositionInformation\n");
+		case FileDispositionInformation:
+			/* As far as I understand it, the correct
+			   thing to do here is to *schedule* a delete,
+			   so it will be deleted when the file is
+			   closed. Subsequent
+			   FileDispositionInformation requests with
+			   DeleteFile set to FALSE should unschedule
+			   the delete. See
+			   http://www.osronline.com/article.cfm?article=245. Currently,
+			   we are deleting the file immediately. I
+			   guess this is a FIXME. */
 
 			//in_uint32_le(in, delete_on_close);
-			// disk_close(handle);
+
+			/* Make sure we close the file before
+			   unlinking it. Not doing so would trigger
+			   silly-delete if using NFS, which might fail
+			   on FAT floppies, for example. */
+			disk_close(handle);
+
 			if ((pfinfo->flags_and_attributes & FILE_DIRECTORY_FILE))	// remove a directory
 			{
 				if (rmdir(pfinfo->path) < 0)
@@ -683,12 +637,14 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 
 			break;
 
-		case 19:	/* FileAllocationInformation */
+		case FileAllocationInformation:
+			/* Fall through to FileEndOfFileInformation,
+			   which uses ftrunc. This is like Samba with
+			   "strict allocation = false", and means that
+			   we won't detect out-of-quota errors, for
+			   example. */
 
-			unimpl("IRP Set File Information class: FileAllocationInformation\n");
-			break;
-
-		case 20:	/* FileEndOfFileInformation */
+		case FileEndOfFileInformation:
 			in_uint8s(in, 28);	/* unknown */
 			in_uint32_le(in, length);	/* file size */
 
@@ -697,9 +653,14 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 				if (stat_fs.f_bsize * stat_fs.f_bfree < length)
 					return STATUS_DISK_FULL;
 
-			//printf("FileEndOfFileInformation length = %d\n", length);
-			// ????????????
-			//unimpl("IRP Set File Information class: FileEndOfFileInformation\n");
+			/* FIXME: Growing file with ftruncate doesn't
+			   work with Linux FAT fs */
+			if (ftruncate(handle, length) != 0)
+			{
+				perror("ftruncate");
+				return STATUS_DISK_FULL;
+			}
+
 			break;
 		default:
 
@@ -709,7 +670,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 	return STATUS_SUCCESS;
 }
 
-FsInfoType *
+static FsInfoType *
 FsVolumeInfo(char *fpath)
 {
 
@@ -796,7 +757,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 
 	switch (info_class)
 	{
-		case 1:	/* FileFsVolumeInformation */
+		case FileFsVolumeInformation:
 
 			out_uint32_le(out, 0);	/* volume creation time low */
 			out_uint32_le(out, 0);	/* volume creation time high */
@@ -808,7 +769,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 			rdp_out_unistr(out, fsinfo->label, 2 * strlen(fsinfo->label) - 2);
 			break;
 
-		case 3:	/* FileFsSizeInformation */
+		case FileFsSizeInformation:
 
 			out_uint32_le(out, stat_fs.f_blocks);	/* Total allocation units low */
 			out_uint32_le(out, 0);	/* Total allocation high units */
@@ -818,7 +779,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 			out_uint32_le(out, 0x200);	/* Bytes per sector */
 			break;
 
-		case 5:	/* FileFsAttributeInformation */
+		case FileFsAttributeInformation:
 
 			out_uint32_le(out, FS_CASE_SENSITIVE | FS_CASE_IS_PRESERVED);	/* fs attributes */
 			out_uint32_le(out, F_NAMELEN(stat_fs));	/* max length of filename */
@@ -827,12 +788,13 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 			rdp_out_unistr(out, fsinfo->type, 2 * strlen(fsinfo->type) - 2);
 			break;
 
-		case 2:	/* FileFsLabelInformation */
-		case 4:	/* FileFsDeviceInformation */
-		case 6:	/* FileFsControlInformation */
-		case 7:	/* FileFsFullSizeInformation */
-		case 8:	/* FileFsObjectIdInformation */
-		case 9:	/* FileFsMaximumInformation */
+		case FileFsLabelInformation:
+		case FileFsDeviceInformation:
+		case FileFsControlInformation:
+		case FileFsFullSizeInformation:
+		case FileFsObjectIdInformation:
+		case FileFsMaximumInformation:
+
 		default:
 
 			unimpl("IRP Query Volume Information class: 0x%x\n", info_class);
@@ -858,7 +820,7 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 
 	switch (info_class)
 	{
-		case 3:	//FIXME: Why 3?
+		case FileBothDirectoryInformation:
 
 			// If a search pattern is received, remember this pattern, and restart search
 			if (pattern[0] != 0)
@@ -878,13 +840,23 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 			// Get information for directory entry
 			sprintf(fullpath, "%s/%s", dirname, pdirent->d_name);
 
-			/* JIF
-			   printf("Stat: %s\n", fullpath); */
 			if (stat(fullpath, &fstat))
 			{
-				perror("stat");
-				out_uint8(out, 0);
-				return STATUS_ACCESS_DENIED;
+				switch (errno)
+				{
+					case ENOENT:
+					case ELOOP:
+					case EACCES:
+						/* These are non-fatal errors. */
+						memset(&fstat, 0, sizeof(fstat));
+						break;
+					default:
+						/* Fatal error. By returning STATUS_NO_SUCH_FILE, 
+						   the directory list operation will be aborted */
+						perror(fullpath);
+						out_uint8(out, 0);
+						return STATUS_NO_SUCH_FILE;
+				}
 			}
 
 			if (S_ISDIR(fstat.st_mode))
@@ -928,6 +900,9 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 			break;
 
 		default:
+			/* FIXME: Support FileDirectoryInformation,
+			   FileFullDirectoryInformation, and
+			   FileNamesInformation */
 
 			unimpl("IRP Query Directory sub: 0x%x\n", info_class);
 			return STATUS_INVALID_PARAMETER;
@@ -941,7 +916,7 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 static NTSTATUS
 disk_device_control(HANDLE handle, uint32 request, STREAM in, STREAM out)
 {
-	/* NX - Commentd out to shup up compiler warning uint32 result; */
+	//uint32 result;
 
 	if (((request >> 16) != 20) || ((request >> 16) != 9))
 		return STATUS_INVALID_PARAMETER;

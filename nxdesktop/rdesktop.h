@@ -78,6 +78,18 @@
 #define MAX(x,y)		(((x) > (y)) ? (x) : (y))
 #endif
 
+/* If configure does not define the endianess, try
+   to find it out */
+#if !defined(L_ENDIAN) && !defined(B_ENDIAN)
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#define L_ENDIAN
+#elif __BYTE_ORDER == __BIG_ENDIAN
+#define B_ENDIAN
+#else
+#error Unknown endianness. Edit rdesktop.h.
+#endif
+#endif /* B_ENDIAN, L_ENDIAN from configure */
+
 #include "parse.h"
 #include "constants.h"
 #include "types.h"
@@ -97,15 +109,18 @@
 
 #undef NXDESKTOP_NXKARMA_DEBUG
 
-#define NXDESKTOP_XWIN_USES_PACKED_IMAGES
-#define NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES
-#define NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
+#undef NXDESKTOP_XWIN_USES_PACKED_IMAGES
+#undef NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES
 #define NXDESKTOP_XWIN_USES_PIXMAP_CACHE
 #define NXDESKTOP_USES_NXKARMA_IN_LOOP
 #define NXDESKTOP_LOGO
 #define NXDESKTOP_ONSTART
 #define NXDESKTOP_SPLASH
 #define NXWIN_USES_PACKED_RDP_TEXT
+
+#undef NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
+
+#define	NXDESKTOP_USES_RECT_BUF
 
 #define NXDESKTOP_NUM_ATOMS 10
 

@@ -24,6 +24,7 @@
 extern uint8 *g_next_packet;
 static RDP_ORDER_STATE g_order_state;
 extern BOOL g_use_rdp5;
+extern BOOL rdp_img_cache_nxcompressed;
 
 /* Read field indicating which parameters are present */
 static void
@@ -317,7 +318,6 @@ process_rect(STREAM s, RECT_ORDER * os, uint32 present, BOOL delta)
 	}
 
 	DEBUG(("RECT(x=%d,y=%d,cx=%d,cy=%d,fg=0x%x)\n", os->x, os->y, os->cx, os->cy, os->colour));
-
 	ui_rect(os->x, os->y, os->cx, os->cy, os->colour);
 }
 
@@ -681,7 +681,6 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 		cache_put_text(os->text[os->length + 1], os->text,
 			       os->length);
 	}
-
 	ui_draw_text(os->font, os->flags, os->mixmode, os->x, os->y,
 		     os->clipleft, os->cliptop,
 		     os->clipright - os->clipleft,
@@ -705,6 +704,11 @@ process_raw_bmpcache(STREAM s)
 	in_uint8(s, cache_id);
 	in_uint8s(s, 1);	/* pad */
 	in_uint8(s, width);
+	
+	#if 0
+	fprintf(stderr,"raw w=%d",width);
+	#endif
+	
 	in_uint8(s, height);
 	in_uint8(s, bpp);
 	Bpp = (bpp + 7) / 8;
@@ -732,9 +736,7 @@ process_bmpcache(STREAM s)
 	uint16 cache_idx, size;
 	uint8 cache_id, width, height, bpp, Bpp;
 	uint8 *data;
-	#ifndef NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
 	uint8 *bmpdata;
-	#endif
 	uint16 bufsize, pad2, row_size, final_size;
 	uint8 pad1;
 	pad2 = row_size = final_size = 0xffff;	/* Shut the compiler up */
@@ -765,27 +767,31 @@ process_bmpcache(STREAM s)
 	}
 	in_uint8p(s, data, size);
 
-	DEBUG(("BMPCACHE(cx=%d,cy=%d,id=%d,idx=%d,bpp=%d,size=%d,pad1=%d,bufsize=%d,pad2=%d,rs=%d,fs=%d)\n", width, height, cache_id, cache_idx, bpp, size, pad1, bufsize, pad2, row_size, final_size));
+ 	DEBUG(("BMPCACHE(cx=%d,cy=%d,id=%d,idx=%d,bpp=%d,size=%d,pad1=%d,bufsize=%d,pad2=%d,rs=%d,fs=%d)\n", width, height, cache_id, cache_idx, bpp, size, pad1, bufsize, pad2, row_size, final_size));
 	
-	#ifndef NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
-	bmpdata = (uint8 *) xmalloc(width * height * Bpp);
-	
-	if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
+	if (rdp_img_cache_nxcompressed)
 	{
-		bitmap = ui_create_bitmap(width, height, bmpdata, size, True);
-	#else
-		bitmap = ui_create_bitmap(width, height, data, size, True);
-	#endif
-		cache_put_bitmap(cache_id, cache_idx, bitmap);
-	
-	#ifndef NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
+	    bitmap = ui_create_bitmap(width, height, data, size, True);
+	    cache_put_bitmap(cache_id, cache_idx, bitmap);
 	}
 	else
 	{
+	    bmpdata = (uint8 *) xmalloc(width * height * Bpp);
+	    if (bitmap_decompress(bmpdata, width, height, data, size, width * height * Bpp, Bpp))
+	    {
+		#if 0
+		fprintf(stderr,"cache w=%d",width);
+		#endif
+		
+		bitmap = ui_create_bitmap(width, height, bmpdata, size, False);
+		cache_put_bitmap(cache_id, cache_idx, bitmap);
+	    }
+	    else
+	    {
 		DEBUG(("Failed to decompress bitmap data\n"));
+	    }
+	    xfree(bmpdata);
 	}
-	xfree(bmpdata);
-	#endif
 }
 
 /* Process a colourmap cache order */
@@ -904,21 +910,21 @@ process_orders(STREAM s, uint16 num_orders)
 	while (processed < num_orders)
 	{
 		in_uint8(s, order_flags);
-
+		
 		if (!(order_flags & RDP_ORDER_STANDARD))
 		{
 			error("order parsing failed\n");
 			break;
 		}
-
+		
 		if (order_flags & RDP_ORDER_SECONDARY)
-		{
+		{	
 			process_secondary_order(s);
 		}
 		else
 		{
 			if (order_flags & RDP_ORDER_CHANGE)
-			{
+			{	
 				in_uint8(s, os->order_type);
 			}
 
@@ -943,6 +949,9 @@ process_orders(STREAM s, uint16 num_orders)
 
 			if (order_flags & RDP_ORDER_BOUNDS)
 			{
+				#ifdef NXDESKTOP_USES_RECT_BUF
+				flush_rects();
+				#endif
 				if (!(order_flags & RDP_ORDER_LASTBOUNDS))
 					rdp_parse_bounds(s, &os->bounds);
 
@@ -954,7 +963,14 @@ process_orders(STREAM s, uint16 num_orders)
 			}
 
 			delta = order_flags & RDP_ORDER_DELTA;
-
+			
+			if (os->order_type != RDP_ORDER_RECT)
+			{	
+			    #ifdef NXDESKTOP_USES_RECT_BUF
+			    flush_rects();
+			    #endif
+			}
+			
 			switch (os->order_type)
 			{
 				case RDP_ORDER_DESTBLT:
@@ -1001,17 +1017,28 @@ process_orders(STREAM s, uint16 num_orders)
 					unimpl("order %d\n", os->order_type);
 					return;
 			}
-
+			
 			if (order_flags & RDP_ORDER_BOUNDS)
-				ui_reset_clip();
+			{
+			    #ifdef NXDESKTOP_USES_RECT_BUF
+			    flush_rects();
+			    #endif
+			    ui_reset_clip();
+			}
 		}
 
 		processed++;
 	}
-
+	#if 0
+	/* not true when RDP_COMPRESSION is set */
 	if (s->p != g_next_packet)
 		error("%d bytes remaining\n", (int) (g_next_packet - s->p));
+	#endif	
+	#ifdef NXDESKTOP_USES_RECT_BUF
+	flush_rects();
+	#endif
 }
+
 
 /* Reset order state */
 void

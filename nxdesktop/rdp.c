@@ -41,13 +41,15 @@
 extern uint16 g_mcs_userid;
 extern char g_username[16];
 extern BOOL g_bitmap_compression;
-extern BOOL g_orders;
 extern BOOL g_encryption;
 extern BOOL g_desktop_save;
 extern BOOL g_use_rdp5;
 extern uint16 g_server_rdp_version;
 extern uint32 g_rdp5_performanceflags;
 extern int g_server_bpp;
+extern int g_width;
+extern int g_height;
+extern BOOL g_bitmap_cache;
 
 /* NX */
 extern BOOL nxdesktopUseNXTrans;
@@ -60,7 +62,9 @@ extern BOOL rdp_img_cache;
 uint8 *g_next_packet;
 uint32 g_rdp_shareid;
 
-#if WITH_DEBUG
+extern RDPCOMP g_mppc_dict;
+
+#ifdef WITH_DEBUG
 static uint32 g_packetno;
 #endif
 
@@ -96,7 +100,7 @@ rdp_recv(uint8 * type)
 	in_uint8s(rdp_s, 2);	/* userid */
 	*type = pdu_type & 0xf;
 
-#if WITH_DEBUG
+#ifdef WITH_DEBUG
 	DEBUG(("RDP packet #%d, (type %x)\n", ++g_packetno, *type));
 	hexdump(g_next_packet, length);
 #endif /*  */
@@ -197,7 +201,8 @@ rdp_send_logon_info(uint32 flags, char *domain, char *user,
 	time_t tzone;
 
 #if 0
-	// enable rdp compression
+	/* enable rdp compression */
+	/* some problems still exist with rdp5 */
 	flags |= RDP_COMPRESSION;
 #endif
 
@@ -223,6 +228,7 @@ rdp_send_logon_info(uint32 flags, char *domain, char *user,
 	}
 	else
 	{
+
 		flags |= RDP_LOGON_BLOB;
 		DEBUG_RDP5(("Sending RDP5-style Logon packet\n"));
 		packetlen = 4 +	/* Unknown uint32 */
@@ -393,7 +399,7 @@ rdp_send_fonts(uint16 seq)
 	s = rdp_init_data(8);
 
 	out_uint16(s, 0);	/* number of fonts */
-	out_uint16_le(s, 0x3e);	/* unknown */
+	out_uint16_le(s, 0);	/* pad? */
 	out_uint16_le(s, seq);	/* unknown */
 	out_uint16_le(s, 0x32);	/* entry size */
 
@@ -434,14 +440,14 @@ rdp_out_bitmap_caps(STREAM s)
 	out_uint16_le(s, RDP_CAPSET_BITMAP);
 	out_uint16_le(s, RDP_CAPLEN_BITMAP);
 
-	out_uint16_le(s, 8);	/* Preferred BPP */
+	out_uint16_le(s, g_server_bpp);	/* Preferred BPP */
 	out_uint16_le(s, 1);	/* Receive 1 BPP */
 	out_uint16_le(s, 1);	/* Receive 4 BPP */
 	out_uint16_le(s, 1);	/* Receive 8 BPP */
 	out_uint16_le(s, 800);	/* Desktop width */
 	out_uint16_le(s, 600);	/* Desktop height */
 	out_uint16(s, 0);	/* Pad */
-	out_uint16(s, 0);	/* Allow resize */
+	out_uint16(s, 1);	/* Allow resize */
 	out_uint16_le(s, g_bitmap_compression ? 1 : 0);	/* Support compression */
 	out_uint16(s, 0);	/* Unknown */
 	out_uint16_le(s, 1);	/* Unknown */
@@ -460,10 +466,12 @@ rdp_out_order_caps(STREAM s)
 	order_caps[1] = 1;	/* pat blt */
 	order_caps[2] = 1;	/* screen blt */
 	/* NX */
+	if (!g_use_rdp5)
+	    rdp_img_cache = False;
 	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt? */
 	/* char *p;
 	*(p = NULL) = 0;
-	fprintf(stderr,"img_cache: %d\n",img_cache == True ? 1 : 0); */
+	fprintf(stderr,"img_cache: %d %d\n",rdp_img_cache == True ? 1 : 0,g_use_rdp5 == True ? 1 : 0); */
 	/* NX */
 	order_caps[8] = 1;	/* line */
 	order_caps[9] = 1;	/* line */
@@ -643,15 +651,90 @@ rdp_send_confirm_active(void)
 	sec_send(s, sec_flags);
 }
 
+/* Process a general capability set */
+static void
+rdp_process_general_caps(STREAM s)
+{
+	uint16 pad2octetsB;	/* rdp5 flags? */
+
+	in_uint8s(s, 10);
+	in_uint16_le(s, pad2octetsB);
+
+	if (!pad2octetsB)
+		g_use_rdp5 = False;
+}
+
+/* Process a bitmap capability set */
+static void
+rdp_process_bitmap_caps(STREAM s)
+{
+	uint16 width, height, bpp;
+
+	in_uint16_le(s, bpp);
+	in_uint8s(s, 6);
+
+	in_uint16_le(s, width);
+	in_uint16_le(s, height);
+
+	DEBUG(("setting desktop size and bpp to: %dx%dx%d\n", width, height, bpp));
+
+	/*
+	 * The server may limit bpp and change the size of the desktop (for
+	 * example when shadowing another session).
+	 */
+	if (g_server_bpp != bpp)
+	{
+		warning("colour depth changed from %d to %d\n", g_server_bpp, bpp);
+		g_server_bpp = bpp;
+	}
+	if (g_width != width || g_height != height)
+	{
+		warning("screen size changed from %dx%d to %dx%d\n", g_width, g_height,
+				width, height);
+		g_width = width;
+		g_height = height;
+		ui_resize_window();
+	}
+}
+
 /* Respond to a demand active PDU */
 static void
 process_demand_active(STREAM s)
 {
-	uint8 type;
-	
-	in_uint32_le(s, g_rdp_shareid);
+	int n;
+	uint8 type, *next;
+	uint16 len_src_descriptor, len_combined_caps, num_capsets, capset_type, capset_length;
 
-	DEBUG(("DEMAND_ACTIVE(id=0x%x)\n", g_rdp_shareid));
+	in_uint32_le(s, g_rdp_shareid);
+	in_uint16_le(s, len_src_descriptor);
+	in_uint16_le(s, len_combined_caps);
+	in_uint8s(s, len_src_descriptor);
+
+	in_uint16_le(s, num_capsets);
+	in_uint8s(s, 2);	/* pad */
+
+	DEBUG(("DEMAND_ACTIVE(id=0x%x,num_caps=%d)\n", g_rdp_shareid, num_capsets));
+
+	for (n = 0; n < num_capsets; n++)
+	{
+		in_uint16_le(s, capset_type);
+		in_uint16_le(s, capset_length);
+
+		next = s->p + capset_length - 4;
+
+		switch (capset_type)
+		{
+			case RDP_CAPSET_GENERAL:
+				rdp_process_general_caps(s);
+				break;
+
+			case RDP_CAPSET_BITMAP:
+				rdp_process_bitmap_caps(s);
+				break;
+		}
+
+		s->p = next;
+	}
 
 	rdp_send_confirm_active();
 	rdp_send_synchronise();
@@ -661,9 +744,18 @@ process_demand_active(STREAM s)
 	rdp_recv(&type);	/* RDP_CTL_COOPERATE */
 	rdp_recv(&type);	/* RDP_CTL_GRANT_CONTROL */
 	rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0, ui_get_numlock_state(read_keyboard_state()), 0);
-	rdp_send_fonts(1);
-	rdp_send_fonts(2);
-	rdp_recv(&type);	/* RDP_PDU_UNKNOWN 0x28 */
+
+	if (g_use_rdp5)
+	{
+		rdp_send_fonts(3);
+	}
+	else
+	{
+		rdp_send_fonts(1);
+		rdp_send_fonts(2);
+	}
+
+	rdp_recv(&type);	/* RDP_PDU_UNKNOWN 0x28 (Fonts?) */
 	reset_order_state();
 }
 
@@ -827,8 +919,6 @@ process_bitmap_updates(STREAM s)
 
 		if (nxdesktopUseNXCompressedRdpImages)
 		{
-
-
 			#ifdef NXDESKTOP_RDP_DEBUG
 			fprintf(stderr, "process_bitmap_updates: Calling ui_paint_compressed_bitmap with compressed bitmap %d,%d,%d,%d,%d,%d,%d->%d.\n",
 					left, top, cx, cy, width, height, size, width * height);
@@ -856,11 +946,10 @@ process_bitmap_updates(STREAM s)
 		}
 			xfree(bmpdata);
 		}
-	#else /*NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES*/
+		#else /*NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES*/
 
 		bmpdata = xmalloc(width * height);
-
-		if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
+		if (bitmap_decompress(bmpdata, width, height, data, size, width * height, Bpp))
 		{
 			#ifdef NXDESKTOP_RDP_DEBUG
 			fprintf(stderr, "process_bitmap_updates: Calling ui_paint_bitmap with decompressed bitmap %d,%d,%d,%d,%d,%d,%d->%d.\n",
@@ -913,9 +1002,7 @@ static void
 process_update_pdu(STREAM s)
 {
 	uint16 update_type, count;
-
 	in_uint16_le(s, update_type);
-
 	switch (update_type)
 	{
 		case RDP_UPDATE_ORDERS:
@@ -951,20 +1038,28 @@ process_update_pdu(STREAM s)
 
 }
 
+/* Process a disconnect PDU */
+void
+process_disconnect_pdu(STREAM s, uint32 * ext_disc_reason)
+{
+	in_uint32_le(s, *ext_disc_reason);
+
+	DEBUG(("Received disconnect PDU\n"));
+}
+
 /* Process data PDU */
-static void
-process_data_pdu(STREAM s)
+static BOOL
+process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 {
 	uint8 data_pdu_type;
 	uint8 ctype;
 	uint16 clen;
-	int len;
-	
-	/* NX - Commented out to stop warnings */
-	/* int roff, rlen, ret;
-	static struct stream ns;
-	static signed char *dict = 0;*/
-	
+	uint32 len;
+
+	uint32 roff, rlen;
+
+	struct stream *ns = &(g_mppc_dict.ns);
+
 	in_uint8s(s, 6);	/* shareid, pad, streamid */
 	in_uint16(s, len);
 	in_uint8(s, data_pdu_type);
@@ -972,36 +1067,37 @@ process_data_pdu(STREAM s)
 	in_uint16(s, clen);
 	clen -= 18;
 
-#if 0
-	if (ctype & 0x20)
+	if (ctype & RDP_MPPC_COMPRESSED)
 	{
-		if (!dict)
-		{
-			dict = (signed char *) malloc(8200 * sizeof(signed char));
-			dict = (signed char *) memset(dict, 0, 8200 * sizeof(signed char));
-		}
+		if (mppc_expand(s->p, clen, ctype, &roff, &rlen) == -1)
+			error("error while decompressing packet\n");
 
-		ret = decompress(s->p, clen, ctype, (signed char *) dict, &roff, &rlen);
+		//len -= 18;
 
-		len -= 18;
+		/* allocate memory and copy the uncompressed data into the temporary stream */
+		ns->data = xrealloc(ns->data, rlen);
 
-		ns.data = xrealloc(ns.data, len);
+		memcpy((ns->data), (unsigned char *) (g_mppc_dict.hist + roff), rlen);
 
-		ns.data = (unsigned char *) memcpy(ns.data, (unsigned char *) (dict + roff), len);
+		ns->size = rlen;
+		ns->end = (ns->data + ns->size);
+		ns->p = ns->data;
+		ns->rdp_hdr = ns->p;
 
-		ns.size = len;
-		ns.end = ns.data + ns.size;
-		ns.p = ns.data;
-		ns.rdp_hdr = ns.p;
-
-		s = &ns;
+		s = ns;
 	}
-#endif
-
 	switch (data_pdu_type)
 	{
 		case RDP_DATA_PDU_UPDATE:
 			process_update_pdu(s);
+			break;
+
+		case RDP_DATA_PDU_CONTROL:
+			DEBUG(("Received Control PDU\n"));
+			break;
+
+		case RDP_DATA_PDU_SYNCHRONISE:
+			DEBUG(("Received Sync PDU\n"));
 			break;
 
 		case RDP_DATA_PDU_POINTER:
@@ -1018,21 +1114,21 @@ process_data_pdu(STREAM s)
 			break;
 
 		case RDP_DATA_PDU_DISCONNECT:
-			/* Normally received when user logs out or disconnects from a
-			   console session on Windows XP and 2003 Server */
-			DEBUG(("Received disconnect PDU\n"));
-			break;
+			process_disconnect_pdu(s, ext_disc_reason);
+			return True;
 
 		default:
 			unimpl("data PDU %d\n", data_pdu_type);
 	}
+	return False;
 }
 
 /* Process incoming packets */
-BOOL
-rdp_main_loop(void)
+void
+rdp_main_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 {
 	uint8 type;
+	BOOL disc = False;	/* True when a disconnect PDU was received */
 	STREAM s;
 
 	while ((s = rdp_recv(&type)) != NULL)
@@ -1041,20 +1137,16 @@ rdp_main_loop(void)
 		{
 			case RDP_PDU_DEMAND_ACTIVE:
 				process_demand_active(s);
+				*deactivated = False;
 				break;
 
 			case RDP_PDU_DEACTIVATE:
 				DEBUG(("RDP_PDU_DEACTIVATE\n"));
-				/* We thought we could detect a clean
-				   shutdown of the session by this
-				   packet, but it seems Windows 2003
-				   is sending us one of these when we
-				   reconnect to a disconnected session
-				   return True; */
+				*deactivated = True;
 				break;
 
 			case RDP_PDU_DATA:
-				process_data_pdu(s);
+				disc = process_data_pdu(s, ext_disc_reason);
 				break;
 
 			case 0:
@@ -1063,11 +1155,12 @@ rdp_main_loop(void)
 			default:
 				unimpl("PDU %d\n", type);
 		}
+	    if (disc)
+	    {
+		return;
+	    }
 	}
-	return True;
-	/* We want to detect if we got a clean shutdown, but we
-	   can't. Se above.  
-	   return False;  */
+	return;
 }
 
 /* Test a connection up to the RDP layer */

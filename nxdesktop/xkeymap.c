@@ -605,7 +605,10 @@ ensure_remote_modifiers(uint32 ev_time, key_translation tr)
 unsigned int
 read_keyboard_state()
 {
-	unsigned int state = 0;
+#ifdef RDP2VNC
+	return 0;
+#else
+	unsigned int state;
 	Window wdummy;
 	int dummy;
 	
@@ -616,6 +619,7 @@ read_keyboard_state()
 	    initial_keyboard_state = state;
 	    }
 	return initial_keyboard_state;
+#endif
 }
 
 
@@ -660,7 +664,8 @@ reset_modifier_keys()
 		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_LALT);
 
 	if (MASK_HAS_BITS(remote_modifier_state, MapRightAltMask) &&
-	    !get_key_state(state, XK_Alt_R) && !get_key_state(state, XK_Mode_switch))
+	    !get_key_state(state, XK_Alt_R) && !get_key_state(state, XK_Mode_switch)
+	    && !get_key_state(state, XK_ISO_Level3_Shift))
 		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_RALT);
 
 	reset_winkey(ev_time);

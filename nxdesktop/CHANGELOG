@@ -1,140 +1,88 @@
 ChangeLog:
 
-nxdesktop-1.3.2-21
+nxdesktop-1.4.0-25
 
-- Solved bug in the magic pixel caused by the changes on the 
-  Atoms setting procedure.
+- Fixed memory leak on ui_create_gliph.
 
-- Solved memory leak on solaris by Dario.
+- Fixed typecast bug in channels.c.
 
-nxdesktop-1.3.2-20
+- Bitmap handling completely re-written with special 
+  decompressing routines for 1, 4 and 8 BPP.
 
-- Added missing Atom that prevented the nxclient window to
-  close under determinated circunstances.
+- Added MPPC (Microsoft Point-to-Point Compression) support.
+
+- Added printer status e redirection support.
+
+- Added disk status and better redirection support.
+
+- Changed RDP layer processing to add support to new PDU 
+  messages.
+
+- Changed ISO layer to prevent freeze caused by some windows 2003
+  configurations.
   
-- Removed debug code that could print an extra error message
-  if the RDP connection dropped after stabilished.
+- Changed secure layer to reflect changes on ISO layer.
+
+- Better font handling.
+
+- Advertizing capabilitites changed to reflect the new resources.
+
+- RDP redirection now has lock control.
+
+- Better color translation added.
+
+- Added window resize support.
+
+NOTE: The window resize is from server to client only. In theory
+      it can be done from the client but will require to disconnect 
+      and reconect with the new window size.
+      It's expected RDP 6 to have dynamic resizing and seamless 
+      mode implemented.
+      The MPPC compression support is highly experimental and
+      disabled for now by default.
+
+nxdesktop-1.4.0-24
+
+- Fixed possible problem if the Rects buffer overflows.
+
+nxdesktop-1.4.0-23
+
+- Fixed problem that can be caused if nxdesktop is called 
+  by nxserver disabling RDP5.
   
-- Changed the way the new conection is tested to solve
-  problems with quick reconections on Windows XP.
+NOTE: This is not a possibility today as we don't have such
+      option now on the interface but it's a future bug squashed
+      before it's born.
 
-nxdesktop-1.3.2-19
+nxdesktop-1.4.0-22
 
-- Added message dialog to handle name lookup failure.
+- First implementation of reduced XFillRects now works.
 
-nxdesktop-1.3.2-18
+- Fixed two typos in CHANGELOG
 
-- Solved bug that was preventing dilaog errors from popping up.
-  
-NOTE: This bug was inadvertently introduced by a change in a variable
-      type due the changes on the parameters parsing.
-  
-nxdesktop-1.3.2-17
+- Added define NXDESKTOP_USES_RECT_BUF to help evaluate the
+  performance. If undefined, the old code is used.
 
-- Cosmetic changes on configure scrpit and Makefile
+NOTE: This first implementation was done in the solid XFillRect 
+      which is, by far, the most used. Now that the necessary 
+      flushing points are stablished, the others are easy to 
+      implement if necessary, due it's very low incidence.
 
-- Changed the way the default keymap is assigned.
+nxdesktop-1.4.0-21
 
-nxdesktop-1.3.2-16
+- Redirection is now enabled to allow experimentation with it.
 
-- Atom operations changed to deal with NXWin changes.
+- Initial code to minimize the use of XFillRects in place.
 
-- WM_PROTOCOLS message handler now works on linux and windows.
+NOTE: This modification is not working fully but if no windows 
+      is dragged one can use it to test the statistics.
 
-nxdesktop-1.3.2-15
+nxdesktop-1.4.0-20
 
-- Parameters parser was re-written to deal with Solaris problems.
+- Merged code from 1.3.2 branch.
 
-- Disabled debug code forgoten from last release.
+- Solved bug that prevented nxdesktop to run if called directly from 
+  the command line.
 
-- Atom operations moved to a single routine.
-
-NOTE: The WM_PROTOCOLS message handler is not working as expected yet.
-
-nxdesktop-1.3.2-14
-
-- Solved problem with wrong colors on solaris.
-
-- Added handler to WM_PROTOCOLS message.
-
-nxdesktop-1.3.2-13
-
-- Added routine to set the right Atom on the real X server.
-
-nxdesktop-1.3.2-12
-
-- Compilation warning on cache.c removed.
-
-- Solved bug that was preventing nxdesktop to use username
-  and password passed by nxclient. 
-
-nxdesktop-1.3.2-11
-
-- Solved problem related to error messages not been
-  displayed.
-  
-- The image cache now is disabled if the link type is
-  WAN or LAN.
-
-nxdesktop-1.3.2-10
-
-- Changes in configure and xwin.c to allow compilation
-  on Solaris made by Kryza.
-  
-- Implemented Karma handling to improve responsiveness.
-
-- Internal backstore now is not enabled by default.
-
-nxdesktop-1.3.2-9
-
-- Reversed modifications imported from 1.3.1 branch
-  in order to try to improve stability.
-
-nxdesktop-1.3.2-8
-
-- Added support for RDP compressed and non-compressed 
-  image cache.
-
-- Image cache is now enabled by default.
-
-- Found wrong RDP initialization parameter left from previous 
-  attempts of use the compressed image cache.
-  Return it back to the original value seens to correct 
-  the hanging problem reported.
-
-NOTE: Despite the change above seens to stop the hanging 
-      problem, more testing is required to be sure. 
-      In any case, the original way the RDP inputs are 
-      handled can (and will) be vastly improve.
-
-nxdesktop-1.3.2-7
-
-- Added extra parameter -imgcache to enable the
-  experimental image cache.
-  
-- Image cache is disabled by default now.
-
-- Removed modified RDP compressiom parameter left 
-  from experiences.
-
-nxdesktop-1.3.2-6
-
-- Changed log and initial messages.
-
-- Cleaned up compiling warnings.
-
-- Corrected typo in CHANGELOG.
-
-nxdesktop-1.3.2-5
-
-- Enabled image caching.
-
-- Comented out loop that can hang nxdesktop.
-
-NOTE: The image caching is highly experimental and, right now, 
-      is causing a worst performance than without it.
-
-nxdesktop-1.3.2-4
-
-- Imported 1.4.0-19 from the 1.4.0 development branch.
-
+NOTE: This bug was caused by a unforseen combination of having
+      the compressed rdp bitmaps activated without the NX transport.      

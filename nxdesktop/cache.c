@@ -39,6 +39,7 @@
 
 #define NUM_ELEMENTS(array) (sizeof(array) / sizeof(array[0]))
 
+
 /* BITMAP CACHE */
 static HBITMAP g_bmpcache[3][600];
 
@@ -134,6 +135,7 @@ DATABLOB *
 cache_get_text(uint16 cache_id)
 {
 	DATABLOB *text;
+
 	if (cache_id < NUM_ELEMENTS(g_textcache))
 	{
 		text = &g_textcache[cache_id];

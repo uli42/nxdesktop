@@ -125,7 +125,11 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 	{
 		info.play.encoding = AUDIO_ENCODING_LINEAR;
 		/* Do we need to swap the 16bit values? (Are we BigEndian) */
-		g_swapaudio = !(*(uint8 *) (&test));
+#ifdef B_ENDIAN
+		g_swapaudio = 1;
+#else
+		g_swapaudio = 0;
+#endif
 	}
 
 	g_samplewidth = pwfx->wBitsPerSample / 8;
