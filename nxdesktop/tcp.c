@@ -210,6 +210,10 @@ tcp_connect(char *server)
 	struct hostent *nslookup;
 	struct sockaddr_in servaddr;
 	int true = 1;
+	extern char *nxDisplay;
+	extern char *windowName;
+	char errorMsg[512];
+	char errorCaption[512];
 
 	if ((nslookup = gethostbyname(server)) != NULL)
 	{
@@ -237,6 +241,10 @@ tcp_connect(char *server)
 	{
 		error("connect: %s\n", strerror(errno));
 		close(sock);
+		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
+		snprintf(errorCaption,511,"%s",windowName);
+		NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
+		wait(NULL);
 		return False;
 	}
 

@@ -328,6 +328,10 @@ main(int argc, char *argv[])
            }
         }
 
+	strcpy(title, "nxdesktop - ");
+	strncat(title, server, sizeof(title) - sizeof("nxdesktop - "));
+
+/*
         if (!ui_open_display())
         {
            fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
@@ -343,10 +347,6 @@ main(int argc, char *argv[])
         {
           ui_get_display_size(&width, &height);
         }
-
-	strcpy(title, "nxdesktop - ");
-	strncat(title, server, sizeof(title) - sizeof("nxdesktop - "));
-
 	if (ui_create_window(windowName!=NULL?windowName:title))
 	{
            extern void nxdesktopSetAtoms(void);
@@ -365,24 +365,48 @@ main(int argc, char *argv[])
 		if (ipaq) RunOrKillNXkbd();
 		ui_destroy_window();
 	}
-/*
+*/
 	if (rdp_connect(server, flags, domain, password, shell, directory))
 	{
            extern void nxdesktopSetAtoms(void);
 	   extern void RunOrKillNXkbd();
-		if (!ui_create_window(windowName!=NULL?windowName:title))
-			return 1;
-		fprintf(stderr, "Connection successful.\n");
-		if (ipaq) RunOrKillNXkbd();
-                nxdesktopSetAtoms();
-		rdp_main_loop();
-		fprintf(stderr, "Disconnecting...\n");
-		if (ipaq) RunOrKillNXkbd();
-		ui_destroy_window();
+           rdp_disconnect();
+
+           if (!ui_open_display())
+           {
+             fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
+             return 1;
+           }
+	   if ((width == 0) || (height == 0))
+	   {
+		width = 800;
+		height = 600;
+	   }
+           if (fullscreen)
+           {
+             ui_get_display_size(&width, &height);
+           }
+
+
+	   if (!ui_create_window(windowName!=NULL?windowName:title))
+    	     return 1;
+	   if (ipaq) RunOrKillNXkbd();
+
+    	   fprintf(stderr, "Info: RDP connection successful.\n");
+
+	   rdp_connect_login(server, flags, domain, password, shell, directory);
+
+           nxdesktopSetAtoms();
+
+	   rdp_main_loop();
+	   fprintf(stderr, "Info: Disconnecting RDP ...\n");
+	   if (ipaq) RunOrKillNXkbd();
+	   ui_destroy_window();
 	}
-*/
-        else
-           return 1;
+        else{
+	   fprintf(stderr, "\nError: RDP server connection failed.\n");
+           exit(1);
+	}
 
 
         rdp_disconnect();

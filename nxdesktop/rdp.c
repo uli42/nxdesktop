@@ -805,6 +805,17 @@ rdp_connect(char *server, uint32 flags, char *domain, char *password,
         if (!sec_connect(server))
            return False;
 
+        /*rdp_send_logon_info(flags, domain, username, password,
+                            command, directory);*/
+        return True;
+}
+BOOL
+rdp_connect_login(char *server, uint32 flags, char *domain, char *password,
+            char *command, char *directory)
+{
+        if (!sec_connect(server))
+           return False;
+
         rdp_send_logon_info(flags, domain, username, password,
                             command, directory);
         return True;

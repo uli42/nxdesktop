@@ -178,6 +178,12 @@ xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state);
 extern void xkeymap_init(void);
 
 extern BOOL handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pressed);
+extern void save_remote_modifiers(uint8 scancode);
+extern void ensure_remote_modifiers(uint32 ev_time, key_translation tr);
+extern void rdp_send_scancode(uint32 time, uint16 flags, uint8 scancode);
+extern void restore_remote_modifiers(uint32 ev_time, uint8 scancode);
+
+
 
 int     nx_white;
 int     nx_red;
@@ -985,6 +991,7 @@ ui_destroy_window()
 	display = NULL;
 }
 
+#ifdef XWIN_TRANSLATE_KEY
 static uint8
 xwin_translate_key(unsigned long key)
 {
@@ -1037,6 +1044,7 @@ xwin_translate_key(unsigned long key)
 
 	return 0;
 }
+#endif
 
 static uint16
 xwin_translate_mouse(unsigned long button)

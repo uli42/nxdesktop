@@ -39,6 +39,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <sys/types.h>
+#include <sys/wait.h>
+
+
+#include "NX.h"
+
 #define VERSION "1.1.0"
 
 #ifdef WITH_DEBUG

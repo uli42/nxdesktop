@@ -35,7 +35,7 @@ case $arg in
   --without-debug*)
     ;;
   --solaris*)
-    echo "INCLUDES += -I/usr/sfw/include">> Makeconf
+    echo "INCLUDES += -I/usr/local/include -I/usr/sfw/include">> Makeconf
     echo "LDLIBS  += -L/usr/sfw/lib -lsocket -lnsl" >>Makeconf
     ;;
 

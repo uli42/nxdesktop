@@ -396,7 +396,7 @@ xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state)
 	}
 
 	if (keymap_loaded)
-		fprintf(stderr,"No translation for (keysym 0x%lx, %s)\n", keysym, get_ksname(keysym));
+		fprintf(stderr,"No translation for (keysym 0x%lx, %s)\n", (long) keysym, get_ksname(keysym));
 
 	/* not in keymap, try to interpret the raw scancode */
 	if (((int) keycode >= min_keycode) && (keycode <= 0x60))

@@ -8,7 +8,7 @@
 
 CC       = cc
 CFLAGS   = -O2 -Wall
-INCLUDES = -I/usr/X11R6/include -I../nx-X11/exports/include -I../nxcomp  -I../nxcompext -I/usr/local/include
+INCLUDES = -I/usr/X11R6/include -I../nx-X11/exports/include -I../nxcomp  -I../nxcompext 
 LDLIBS   = -L../nx-X11/exports/lib -lX11 -lXpm -L../nxcompext -lXcompext -L../nxcomp -lXcomp
 
 PREFIX   = /usr/local

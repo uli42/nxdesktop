@@ -60,6 +60,7 @@ void rdp_out_unistr(STREAM s, char *string, int len);
 void rdp_send_input(uint32 time, uint16 message_type, uint16 device_flags, uint16 param1, uint16 param2);
 void rdp_main_loop(void);
 BOOL rdp_connect(char *server, uint32 flags, char *domain, char *password, char *command, char *directory);
+BOOL rdp_connect_login(char *server, uint32 flags, char *domain, char *password, char *command, char *directory);
 void rdp_disconnect(void);
 /* secure.c */
 void sec_hash_48(uint8 *out, uint8 *in, uint8 *salt1, uint8 *salt2, uint8 salt);
