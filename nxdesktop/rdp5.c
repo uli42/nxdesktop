@@ -43,7 +43,7 @@ extern uint8 *g_next_packet;
 extern RDPCOMP g_mppc_dict;
 
 void
-rdp5_process(STREAM s, BOOL encryption)
+rdp5_process(STREAM s)
 {
 	uint16 length, count, x, y;
 	uint8 type, ctype;
@@ -53,16 +53,10 @@ rdp5_process(STREAM s, BOOL encryption)
 	struct stream *ns = &(g_mppc_dict.ns);
 	struct stream *ts;
 
-	if (encryption)
-	{
-		in_uint8s(s, 8);	/* signature */
-		sec_decrypt(s->p, s->end - s->p);
-	}
-
-#if 0
+	#ifdef NXDESKTOP_RDP5_DEBUG
 	printf("RDP5 data:\n");
 	hexdump(s->p, s->end - s->p);
-#endif
+	#endif
 
 	while (s->p < s->end)
 	{
@@ -87,7 +81,7 @@ rdp5_process(STREAM s, BOOL encryption)
 				error("error while decompressing packet\n");
 
 			/* allocate memory and copy the uncompressed data into the temporary stream */
-			ns->data = xrealloc(ns->data, rlen);
+			ns->data = (uint8 *) xrealloc(ns->data, rlen);
 
 			memcpy((ns->data), (unsigned char *) (g_mppc_dict.hist + roff), rlen);
 
@@ -137,7 +131,7 @@ rdp5_process(STREAM s, BOOL encryption)
 				process_cached_pointer_pdu(ts);
 				break;
 			default:
-				unimpl("RDP5 opcode %d\n", type);
+				unimpl("rdp5_process","RDP5 opcode %d\n", type);
 		}
 
 		s->p = next;

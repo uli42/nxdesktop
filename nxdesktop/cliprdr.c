@@ -155,7 +155,7 @@ cliprdr_process(STREAM s)
 			ui_clip_handle_data(data, length);
 			break;
 		default:
-			unimpl("CLIPRDR packet type %d\n", type);
+			unimpl("cliprdr_process","CLIPRDR packet type %d\n", type);
 	}
 }
 

@@ -129,7 +129,7 @@ rdpsnd_process_negotiate(STREAM in)
 			discardcnt = 0;
 			if (format->cbSize > MAX_CBSIZE)
 			{
-				fprintf(stderr, "cbSize too large for buffer: %d\n",
+				warning("cbSize too large for buffer: %d\n",
 					format->cbSize);
 				readcnt = MAX_CBSIZE;
 				discardcnt = format->cbSize - MAX_CBSIZE;
@@ -266,7 +266,7 @@ rdpsnd_process(STREAM s)
 			}
 			break;
 		default:
-			unimpl("RDPSND packet type %d\n", type);
+			unimpl("rdpsnd_process","RDPSND packet type %d\n", type);
 			break;
 	}
 }

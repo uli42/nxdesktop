@@ -46,6 +46,7 @@
 #include "rdesktop.h"
 #include "xproto.h"
 #include <signal.h>
+#include "proto.h"
 
 #include "version.h"
 #include "icon.h"
@@ -218,6 +219,7 @@ static BOOL g_xserver_be;
 static int g_red_shift_r, g_blue_shift_r, g_green_shift_r;
 static int g_red_shift_l, g_blue_shift_l, g_green_shift_l;
 
+/* software backing store */
 extern BOOL g_ownbackstore;
 static Pixmap g_backstore = 0;
 
@@ -311,6 +313,31 @@ unsigned int buf_key_vector;
 #define FILL_RECTANGLE_BACKSTORE(x,y,cx,cy)\
 { \
 	XFillRectangle(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, cx, cy); \
+}
+
+#define FILL_POLYGON(p,np)\
+{ \
+	XFillPolygon(g_display, g_wnd, g_gc, p, np, Complex, CoordModePrevious); \
+	if (g_ownbackstore) \
+		XFillPolygon(g_display, g_backstore, g_gc, p, np, Complex, CoordModePrevious); \
+}
+
+#define DRAW_ELLIPSE(x,y,cx,cy,m)\
+{ \
+	switch (m) \
+	{ \
+		case 0:	/* Outline */ \
+			XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
+			if (g_ownbackstore) \
+				XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
+			break; \
+		case 1: /* Filled */ \
+			XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
+				 cx, cy, 0, 360*64); \
+			if (g_ownbackstore) \
+				XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
+			break; \
+	} \
 }
 
 /* colour maps */
@@ -434,8 +461,25 @@ translate_colour(uint32 colour)
 	return make_colour(pc);
 }
 
+/* indent is confused by UNROLL8 */
+/* *INDENT-OFF* */
+
+/* repeat and unroll, similar to bitmap.c */
+/* potentialy any of the following translate */
+/* functions can use repeat but just doing */
+/* the most common ones */
+
 #define UNROLL8(stm) { stm stm stm stm stm stm stm stm }
-#define REPEAT(stm) \
+/* 2 byte output repeat */
+#define REPEAT2(stm) \
+{ \
+	while (out <= end - 8 * 2) \
+		UNROLL8(stm) \
+	while (out < end) \
+		{ stm } \
+}
+/* 4 byte output repeat */
+#define REPEAT4(stm) \
 { \
 	while (out <= end - 8 * 4) \
 		UNROLL8(stm) \
@@ -456,27 +500,31 @@ translate8to16(uint8 * data, uint8 * out, uint8 * end)
 	uint16 value;
 
 	if (g_arch_match)
-		REPEAT(*((uint16 *) out) = g_colmap[*(data++)];
-		       out += 2;)
+	{
+		REPEAT2
+		(
+			*((uint16 *) out) = g_colmap[*(data++)];
+			out += 2;
+		)
+	}
+	else if (g_xserver_be)
+	{
+		while (out < end)
+		{
+			value = (uint16) g_colmap[*(data++)];
+			*(out++) = value >> 8;
+			*(out++) = value;
+		}
+	}
 	else
-if (g_xserver_be)
-{
-	while (out < end)
 	{
-		value = (uint16) g_colmap[*(data++)];
-		*(out++) = value >> 8;
-		*(out++) = value;
+		while (out < end)
+		{
+			value = (uint16) g_colmap[*(data++)];
+			*(out++) = value;
+			*(out++) = value >> 8;
+		}
 	}
-}
-else
-{
-	while (out < end)
-	{
-		value = (uint16) g_colmap[*(data++)];
-		*(out++) = value;
-		*(out++) = value >> 8;
-	}
-}
 }
 
 /* little endian - conversion happens when colourmap is built */
@@ -513,32 +561,38 @@ translate8to32(uint8 * data, uint8 * out, uint8 * end)
 	uint32 value;
 
 	if (g_arch_match)
-		REPEAT(*((uint32 *) out) = g_colmap[*(data++)];
-		       out += 4;)
+	{
+		REPEAT4
+		(
+			*((uint32 *) out) = g_colmap[*(data++)];
+			out += 4;
+		)
+	}
+	else if (g_xserver_be)
+	{
+		while (out < end)
+		{
+			value = g_colmap[*(data++)];
+			*(out++) = value >> 24;
+			*(out++) = value >> 16;
+			*(out++) = value >> 8;
+			*(out++) = value;
+		}
+	}
 	else
-if (g_xserver_be)
-{
-	while (out < end)
 	{
-		value = g_colmap[*(data++)];
-		*(out++) = value >> 24;
-		*(out++) = value >> 16;
-		*(out++) = value >> 8;
-		*(out++) = value;
+		while (out < end)
+		{
+			value = g_colmap[*(data++)];
+			*(out++) = value;
+			*(out++) = value >> 8;
+			*(out++) = value >> 16;
+			*(out++) = value >> 24;
+		}
 	}
 }
-else
-{
-	while (out < end)
-	{
-		value = g_colmap[*(data++)];
-		*(out++) = value;
-		*(out++) = value >> 8;
-		*(out++) = value >> 16;
-		*(out++) = value >> 24;
-	}
-}
-}
+
+/* *INDENT-ON* */
 
 static void
 translate15to16(uint16 * data, uint8 * out, uint8 * end)
@@ -924,40 +978,46 @@ void nxQC(Display *d, Colormap c){
       X.pad = 0;
       X.flags = 0;
       XQueryColor(d,c,&X);
-      fprintf(stderr,"XQUERY: %x %x %x\n", X.red, X.blue, X.green);
+      #ifdef NXDESKTOP_XWIN_DEBUG
+      nxdesktopDebug("nxQC","XQUERY: %x %x %x\n", X.red, X.blue, X.green);
+      #endif
 }
 
 void
 sigusr_func (int s)
 {
-  switch (s)
-
-  {
-  case SIGUSR1:
-    DEBUG (("Received SIGUSR1, unmapping window.\n"));
-    if(ipaq)
+    switch (s)
     {
-       XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
-       XMapWindow(g_display, wnd2);
-    }
-    XUnmapWindow (g_display, g_wnd);
+    case SIGUSR1:
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("sigusr_func","Received SIGUSR1, unmapping window.\n");
+	#endif
+	if(ipaq)
+	{
+	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
+    	    XMapWindow(g_display, wnd2);
+	}
+	XUnmapWindow (g_display, g_wnd);
     break;
-  case SIGUSR2:
-    DEBUG (("Received SIGUSR2, mapping window.\n"));
-    if(ipaq)
-    {
-       XMapWindow (g_display, g_wnd);
-       XUnmapWindow(g_display, wnd2);
-    }
-    else {
-       XMapRaised (g_display, g_wnd);
-       XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
-    }
+    case SIGUSR2:
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("sigusr_func","Received SIGUSR2, unmapping window.\n");
+	#endif
+	if(ipaq)
+	{
+    	    XMapWindow (g_display, g_wnd);
+    	    XUnmapWindow(g_display, wnd2);
+	}
+	else 
+	{
+    	    XMapRaised (g_display, g_wnd);
+    	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
+	}
     break;
-  default:
+    default:
     break;
-  }
-  XFlush (g_display);
+    }
+    XFlush (g_display);
 }
 
 BOOL
@@ -1011,17 +1071,11 @@ void ui_get_display_size(int *width, int *height)
 
 int nxdesktopErrorHandler(Display *dpy, XErrorEvent *err)
 {
-  char msg[81];
-
-  XGetErrorText(dpy, err -> error_code, msg, 80);
-
-  fprintf(stderr, "Info: X request #%d failed with message '%s'.\n",
-              err -> request_code, msg);
-
-  fprintf(stderr, "Info: X sequence was %ld with resource %ld.\n",
-              err -> serial & 0xffff, err -> resourceid);
-
-  return 1;
+    char msg[81];
+    XGetErrorText(dpy, err -> error_code, msg, 80);
+    info("X request #%d failed with message '%s'.\n", err -> request_code, msg);
+    info("X sequence was %ld with resource %ld.\n", err -> serial & 0xffff, err -> resourceid);
+    return 1;
 }
 
 static void
@@ -1162,6 +1216,9 @@ ui_init(void)
 	    	    rdp_img_cache = False;
 		    rdp_img_cache_nxcompressed = False;
 		};
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug("ui_init","State of the RDP image caches %s and compressed %s.\n",rdp_img_cache,rdp_img_cache_compressed);
+		#endif
 		
 		/*
 		 * Activate shared memory PutImages
@@ -1181,11 +1238,11 @@ ui_init(void)
 
 			if (enableServer == False)
 			{
-				fprintf(stderr, "Info: Not using shared memory support in X server.\n");
+			    info("Not using shared memory support in X server.\n");
 			}
 			else
 			{
-				fprintf(stderr, "Info: Using shared memory support in X server.\n");
+			    info("Using shared memory support in X server.\n");
 			}
 		}
 
@@ -1205,10 +1262,9 @@ ui_init(void)
 			if (NXGetUnpackParameters(g_display, &entries, methods) == 0 ||
 				entries != NXNumberOfPackMethods)
 			{
-				fprintf(stderr, "ui_init: ERROR! NXGetUnpackParameters() failed on g_display '%s'.\n",
-						XDisplayName((char *)nxDisplay));
-
-				exit(1);
+				error("ui_init","NXGetUnpackParameters() failed on g_display '%s'.\n",
+				XDisplayName((char *)nxDisplay));
+				return False;
 			}
 			
 #ifdef NXWIN_USES_PACKED_RDP_TEXT
@@ -1217,7 +1273,7 @@ ui_init(void)
 			if (methods[PACK_RDP_COMPRESSED_256_COLORS] == True)
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_init: Using pack method PACK_RDP_COMPRESSED_256_COLORS.\n");
+				nxdesktopDebug("ui_init","Using pack method PACK_RDP_COMPRESSED_256_COLORS.\n");
 				#endif
 
 				nxdesktopUseNXCompressedRdpImages = True;
@@ -1226,7 +1282,7 @@ ui_init(void)
 			if (methods[PACK_RDP_PLAIN_256_COLORS] == True)
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_init: Using pack method PACK_RDP_PLAIN_256_COLORS.\n");
+				nxdesktopDebug("ui_init","Using pack method PACK_RDP_PLAIN_256_COLORS.\n");
 				#endif
 			
 				nxdesktopUseNXRdpImages = True;
@@ -1235,7 +1291,7 @@ ui_init(void)
 			if (methods[PACK_RDP_PLAIN_256_COLORS] == False &&
 			    methods[PACK_RDP_COMPRESSED_256_COLORS] == False)
 			{  
-			    fprintf(stderr, "ui_init: WARNING! No available RDP pack method on g_display '%s'.\n",
+			    warning("No available RDP pack method on g_display '%s'.\n",
 						XDisplayName((char *)nxDisplay));
 			}
 			/*if (nxdesktopPackMethod == PACK_RDP_COMPRESSED_256_COLORS &&
@@ -1271,10 +1327,10 @@ ui_init(void)
 		{
 			if (NXSetUnpackGeometry(g_display, 0, g_screen, g_visual) == 0)
 			{
-				fprintf(stderr, "ui_init: ERROR! NXSetUnpackGeometry() failed on g_display '%s'.\n",
+				error("NXSetUnpackGeometry() failed on g_display '%s'.\n",
 						XDisplayName((char *)nxDisplay));
 
-				exit(1);
+				return False;
 			}
 		}
 	}
@@ -1382,14 +1438,14 @@ void
 ui_deinit(void)
 {
 	#ifdef NXDESKTOP_DEBUG_XPUTIMAGE
-	fprintf(stderr,"create_bitmap total = %d\n",create_bitmap_total);
-	fprintf(stderr,"create_bitmap times = %d\n",create_bitmap_times);
-	fprintf(stderr,"create_glyph total = %d\n",create_glyph_total);
-	fprintf(stderr,"create_glyph times = %d\n",create_glyph_times);
-	fprintf(stderr,"paint_bitmap total = %d\n",paint_bitmap_total);
-	fprintf(stderr,"paint_bitmap times = %d\n",paint_bitmap_times);
-	fprintf(stderr,"paint_bitmap_backstore total = %d\n",paint_bitmap_backstore_total);
-	fprintf(stderr,"paint_bitmap_backstore times = %d\n",paint_bitmap_backstore_times);
+	nxdesktopDebug("XPutImage","create_bitmap total = %d\n",create_bitmap_total);
+	nxdesktopDebug("XPutImage","create_bitmap times = %d\n",create_bitmap_times);
+	nxdesktopDebug("XPutImage","create_glyph total = %d\n",create_glyph_total);
+	nxdesktopDebug("XPutImage","create_glyph times = %d\n",create_glyph_times);
+	nxdesktopDebug("XPutImage","paint_bitmap total = %d\n",paint_bitmap_total);
+	nxdesktopDebug("XPutImage","paint_bitmap times = %d\n",paint_bitmap_times);
+	nxdesktopDebug("XPutImage","paint_bitmap_backstore total = %d\n",paint_bitmap_backstore_total);
+	nxdesktopDebug("XPutImage","paint_bitmap_backstore times = %d\n",paint_bitmap_backstore_times);
 	#endif	
 	
 	if (g_IM != NULL)
@@ -1434,7 +1490,7 @@ void nxdesktopSetAtoms()
     #if NXDESKTOP_ATOMS_DEBUG
     for (i = 0; i < NXDESKTOP_NUM_ATOMS; i++)
     {
-	fprintf(stderr,"nxagentQueryAtoms: Created intern atom [%s] with id [%ld].\n",
+	nxdesktopDebug("nxagentQueryAtoms","Created intern atom [%s] with id [%ld].\n",
 		nxdesktopAtomNames[i], nxdesktopAtoms[i]);
     }
     #endif
@@ -1520,7 +1576,6 @@ ui_create_window(void)
 		/* nx_white = nxLogoColor(0xffffff); */
 		nx_white = 0xffffff;
 	}
-
 	useXpmIcon = getNXIcon(g_display, &nxIconPixmap, &nxIconShape);
     }
 
@@ -1910,8 +1965,11 @@ xwin_process_events(void)
 		XNextEvent(g_display, &xevent);
 		if ((g_IC != NULL) && (XFilterEvent(&xevent, None) == True))
 		{
-			DEBUG_KBD(("Filtering event\n"));
-			continue;
+		    #ifdef NXDESKTOP_XWIN_DEBUG
+		    nxdesktopDebug("xwin_process_events","Filtering event.\n");
+		    #endif
+		    /* DEBUG_KBD(("Filtering event\n")); */
+		    continue;
 		}
 
 		flags = 0;
@@ -1961,6 +2019,9 @@ xwin_process_events(void)
 		switch (xevent.type)
 		{
 			/* NX */
+			#ifdef NXDESKTOP_XWIN_DEBUG
+			nxdesktopDebug("xwin_process_events","Xevent type %d.\n",xevent.type);
+			#endif
 			case MapNotify:
 					if (g_fullscreen) 
 						sigusr_func(SIGUSR2);
@@ -2016,7 +2077,9 @@ xwin_process_events(void)
 				if ( (xevent.xkey.keycode == 130) && ipaq )
 				{
 					kill (pidkbd, 1);
-					/* fprintf(stderr,"signal send -HUP\n"); */
+					#ifdef NXDESKTOP_XWIN_DEBUG
+					nxdesktopDebug("xwin_process_events","signal send -HUP\n");
+					#endif
 					break;
 				}
                                 last_Xtime = xevent.xkey.time;
@@ -2300,19 +2363,15 @@ xwin_process_events(void)
 
 				/* clipboard stuff */
 			case SelectionNotify:
-				/*fprintf(stderr,"Selection Notify\n");*/
 				xclip_handle_SelectionNotify(&xevent.xselection);
 				break;
 			case SelectionRequest:
-				/*fprintf(stderr,"Selection Request\n");*/
 				xclip_handle_SelectionRequest(&xevent.xselectionrequest);
 				break;
 			case SelectionClear:
-				/*fprintf(stderr,"Selection Clear\n");*/
 				xclip_handle_SelectionClear();
 				break;
 			case PropertyNotify:
-				/*fprintf(stderr,"Property Notify\n");*/
 				xclip_handle_PropertyNotify(&xevent.xproperty);
 				break;
 		}
@@ -2327,6 +2386,11 @@ void run_events()
 
 {
     if (!xwin_process_events())
+    {
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("run_events","No more events to process.\n");
+	#endif
+    }
 	return;
 }
 
@@ -2356,8 +2420,12 @@ ui_select(int rdp_socket)
 		n = (rdp_socket > g_x_socket) ? rdp_socket : g_x_socket;
 		/* Process any events already waiting */
 		if (!xwin_process_events())
-			/* User quit */
-			return 0;
+		    {
+		    #ifdef NXDESKTOP_XWIN_DEBUG
+		    nxdesktopDebug("ui_select","User quit.\n");
+		    #endif
+		    return 0;
+		    }
 
 		FD_ZERO(&rfds);
 		FD_ZERO(&wfds);
@@ -2434,15 +2502,15 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 			bitmap_pad = 32;
 	}
 	
-	#if 0
-	fprintf(stderr, "ui_create_bitmap: dump bitmap compressed: %d , size: %d\n",compressed,size);;
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("ui_create_bitmap","dump bitmap compressed: %d , size: %d\n",compressed,size);;
 	hexdump(data,size);
 	#endif
 	
 	bitmap = XCreatePixmap(g_display, g_wnd, width, height, g_depth);
 				 
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_create_bitmap: XPutImage on pixmap %d,%d,%d,%d.\n", 0, 0, width, height);
+	nxdesktopDebug("ui_create_bitmap","XPutImage on pixmap %d,%d,%d,%d.\n", 0, 0, width, height);
 	#endif
 	
 	#ifdef NXDESKTOP_DEBUG_XPUTIMAGE	    
@@ -2452,11 +2520,11 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	
 	#ifdef NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
 	
-	# if 0
+	#ifdef NXDESKTOP_XWIN_DEBUG
 	if (compressed)
-	    fprintf(stderr,"C");
+	    nxdesktopDebug("ui_create_bitmap","Received compressed bitmap.\n");
 	else 
-	    fprintf(stderr,"N\n");
+	    nxdesktopDebug("ui_create_bitmap","Received uncompressed bitmap.\n");
 	#endif
 	
 	if (rdp_img_cache_nxcompressed)
@@ -2538,7 +2606,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		data_length = width * height;
 
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_bitmap: NXCreatePackedImage with g_owncolmap %d and g_depth %d.\n",
+		nxdesktopDebug("ui_paint_bitmap","NXCreatePackedImage with g_owncolmap %d and g_depth %d.\n",
 				g_owncolmap, g_depth);
 		#endif
 
@@ -2549,7 +2617,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		if (g_ownbackstore)
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_paint_bitmap: NXPutPackedImage on backingstore pixmap %d,%d,%d,%d (%d,%d).\n",
+			nxdesktopDebug("ui_paint_bitmap","NXPutPackedImage on backingstore pixmap %d,%d,%d,%d (%d,%d).\n",
 					x, y, cx, cy, width, height);
 			#endif
 
@@ -2566,7 +2634,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		else
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_paint_bitmap: NXPutPackedImage on window %d,%d,%d,%d (%d,%d).\n",
+			nxdesktopDebug("ui_paint_bitmap","NXPutPackedImage on window %d,%d,%d,%d (%d,%d).\n",
 					x, y, cx, cy, width, height);
 			#endif
 
@@ -2590,7 +2658,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		tdata = (g_owncolmap ? data : translate_image(width, height, data));
 
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_bitmap: XCreateImage with owncolmap %d and depth %d.\n",
+		nxdesktopDebug("ui_paint_bitmap","XCreateImage with owncolmap %d and depth %d.\n",
 				g_owncolmap, g_depth);
 		#endif
 
@@ -2602,7 +2670,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 			
 			
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_paint_bitmap: XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
+			nxdesktopDebug("ui_paint_bitmap","XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
 					x, y, cx, cy);
 			#endif
 			
@@ -2618,7 +2686,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		else
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_paint_bitmap: XPutImage on window %d,%d,%d,%d.\n",
+			nxdesktopDebug("ui_paint_bitmap","XPutImage on window %d,%d,%d,%d.\n",
 					x, y, cx, cy);
 			#endif
 			
@@ -2642,7 +2710,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	tdata = (g_owncolmap ? data : translate_image(width, height, data));
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_paint_bitmap: XCreateImage with owncolmap %d and depth %d.\n",
+	nxdesktopDebug("ui_paint_bitmap","XCreateImage with owncolmap %d and depth %d.\n",
 			owncolmap, depth);
 	#endif
 	
@@ -2652,7 +2720,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	if (g_ownbackstore)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_bitmap: XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
+		nxdesktopDebug("ui_paint_bitmap","XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
 				x, y, cx, cy);
 		#endif
 		
@@ -2668,7 +2736,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	else
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_bitmap: XPutImage on window %d,%d,%d,%d.\n",
+		nxdesktopDebug("ui_paint_bitmap","XPutImage on window %d,%d,%d,%d.\n",
 				x, y, cx, cy);
 		#endif
 		
@@ -2695,7 +2763,7 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 	XImage *image;
 
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_paint_compressed_bitmap: NXCreatePackedImage with depth %d and size %d.\n",
+	nxdesktopDebug("ui_paint_compressed_bitmap","NXCreatePackedImage with depth %d and size %d.\n",
 			g_depth, compressed_size);
 	#endif
 
@@ -2706,7 +2774,7 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 	if (image == NULL)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_compressed_bitmap: NXCreatePackedImage failure.\n");
+		nxdesktopDebug("ui_paint_compressed_bitmap","NXCreatePackedImage failure.\n");
 		#endif
 
 		return;
@@ -2716,7 +2784,7 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 	if (g_ownbackstore)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_compressed_bitmap: NXPutPackedImage on backingstore pixmap %d,%d,%d,%d (%d,%d).\n",
+		nxdesktopDebug("ui_paint_compressed_bitmap","NXPutPackedImage on backingstore pixmap %d,%d,%d,%d (%d,%d).\n",
 				x, y, cx, cy, width, height);
 		#endif
 
@@ -2733,7 +2801,7 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 	else
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_paint_compressed_bitmap: NXPutPackedImage on window %d,%d,%d,%d (%d,%d).\n",
+		nxdesktopDebug("ui_paint_compressed_bitmap","NXPutPackedImage on window %d,%d,%d,%d (%d,%d).\n",
 				x, y, cx, cy, width, height);
 		#endif
 
@@ -2787,7 +2855,7 @@ ui_create_glyph(int width, int height, uint8 * data)
 	XInitImage(image);
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_create_glyph: XPutImage on pixmap %d,%d,%d,%d.\n",
+	nxdesktopDebug("ui_create_glyph","XPutImage on pixmap %d,%d,%d,%d.\n",
 			0, 0, width, height);
 	#endif
 	
@@ -2921,7 +2989,7 @@ ui_create_colourmap(COLOURMAP * colours)
         }
 	#endif
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_create_colourmap: Creating new colormap.\n");
+	nxdesktopDebug("ui_create_colourmap","Creating new colormap.\n");
 	#endif
 	
 	if (!g_owncolmap)
@@ -2940,7 +3008,7 @@ ui_create_colourmap(COLOURMAP * colours)
 		 * 
 		 */
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_create_colourmap: !g_owncolmap used for %d numcolors.\n",ncolours);
+		nxdesktopDebug("ui_create_colourmap","g_owncolmap used for %d numcolors.\n",ncolours);
 		#endif
 		uint32 *map = (uint32 *) xmalloc(sizeof(*g_colmap) * ncolours);
 		XColor xentry[ncolours];
@@ -3068,7 +3136,7 @@ ui_destroy_colourmap(HCOLOURMAP map)
 		XFreeColormap(g_display, (Colormap) map);
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_destroy_colourmap: Destroyed colormap at %p.\n",
+	nxdesktopDebug("ui_destroy_colourmap","Destroyed colormap at %p.\n",
 			map);
 	#endif
 }
@@ -3077,7 +3145,7 @@ void
 ui_set_colourmap(HCOLOURMAP map)
 {	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_set_colourmap: Setting new colormap at address %p.\n",
+	nxdesktopDebug("ui_set_colourmap","Setting new colormap at address %p.\n",
 			map);
 	#endif
 
@@ -3117,10 +3185,10 @@ ui_set_colourmap(HCOLOURMAP map)
 		    NXSetUnpackColormap(g_display, 0, last_colormap_entries, last_colormap);
         	}
 		#ifdef NXDESKTOP_XWIN_DUMP
-		fprintf(stderr, "ui_set_colourmap: Dumping colormap entries:\n");
+		nxdesktopDebug("ui_set_colourmap","Dumping colormap entries:\n");
 		for (i = 0; i < last_colormap_entries; i++)
 		{
-		    fprintf(stderr, "ui_set_colourmap: [%d] [%p].\n",i, (void *) last_colormap[i]);
+		    nxdesktopDebug("ui_set_colourmap"," [%d] [%p].\n",i, (void *) last_colormap[i]);
 		}
 		#endif
 	    }
@@ -3189,11 +3257,17 @@ ui_patblt(uint8 opcode,
 	switch (brush->style)
 	{
 		case 0:	/* Solid */
+			#ifdef NXDESKTOP_XWIN_DEBUG
+			nxdesktopDebug("ui_patblt","brush-style 0 - Solid.\n");
+			#endif
 			SET_FOREGROUND(fgcolour);
 			FILL_RECTANGLE_BACKSTORE(x, y, cx, cy);
 			break;
 
 		case 2:	/* Hatch */
+			#ifdef NXDESKTOP_XWIN_DEBUG
+			nxdesktopDebug("ui_patblt","brush-style 2 - Hatch.\n");
+			#endif
 			fill = (Pixmap) ui_create_glyph(8, 8,
 							hatch_patterns + brush->pattern[0] * 8);
 			SET_FOREGROUND(fgcolour);
@@ -3208,6 +3282,9 @@ ui_patblt(uint8 opcode,
 			break;
 
 		case 3:	/* Pattern */
+			#ifdef NXDESKTOP_XWIN_DEBUG
+			nxdesktopDebug("ui_patblt","brush-style 3 - Pattern.\n");
+			#endif
 			for (i = 0; i != 8; i++)
 				ipattern[7 - i] = brush->pattern[i];
 			fill = (Pixmap) ui_create_glyph(8, 8, ipattern);
@@ -3223,7 +3300,7 @@ ui_patblt(uint8 opcode,
 			break;
 
 		default:
-			unimpl("brush %d\n", brush->style);
+			unimpl("ui_patblt","brush %d\n", brush->style);
 	}
 
 	RESET_FUNCTION(opcode);
@@ -3237,6 +3314,9 @@ ui_screenblt(uint8 opcode,
 	     /* dest */ int x, int y, int cx, int cy,
 	     /* src */ int srcx, int srcy)
 {
+    #ifdef NXDESKTOP_XWIN_DEBUG
+    nxdesktopDebug("ui_screenblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
+    #endif
 	SET_FUNCTION(opcode);
 	if (g_ownbackstore)
 	{
@@ -3265,6 +3345,9 @@ ui_memblt(uint8 opcode,
 	  /* dest */ int x, int y, int cx, int cy,
 	  /* src */ HBITMAP src, int srcx, int srcy)
 {
+    #ifdef NXDESKTOP_XWIN_DEBUG
+    nxdesktopDebug("ui_memblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
+    #endif
 	SET_FUNCTION(opcode);
 	XCopyArea(g_display, (Pixmap) src, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
 	if (g_ownbackstore)
@@ -3280,10 +3363,13 @@ ui_triblt(uint8 opcode,
 {
 	/* This is potentially difficult to do in general. Until someone
 	   comes up with a more efficient way of doing it I am using cases. */
-
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("ui_triblt","Opcode = %d.\n",opcode);
+	#endif
 	switch (opcode)
 	{
 		case 0x69:	/* PDSxxn */
+			
 			ui_memblt(ROP2_XOR, x, y, cx, cy, src, srcx, srcy);
 			ui_patblt(ROP2_NXOR, x, y, cx, cy, brush, bgcolour, fgcolour);
 			break;
@@ -3300,7 +3386,7 @@ ui_triblt(uint8 opcode,
 			break;
 
 		default:
-			unimpl("triblt 0x%x\n", opcode);
+			unimpl("triblt", "0x%x\n", opcode);
 			ui_memblt(ROP2_COPY, x, y, cx, cy, src, srcx, srcy);
 	}
 }
@@ -3310,6 +3396,9 @@ ui_line(uint8 opcode,
 	/* dest */ int startx, int starty, int endx, int endy,
 	/* pen */ PEN * pen)
 {
+    #ifdef NXDESKTOP_XWIN_DEBUG
+    nxdesktopDebug("ui_line","Opcode=%d, startx=%d, starty=%d, endx=%d, endy=%d.\n",opcode,startx,starty,endx,endy);
+    #endif
 	SET_FUNCTION(opcode);
 	SET_FOREGROUND(pen->colour);
 	XDrawLine(g_display, g_wnd, g_gc, startx, starty, endx, endy);
@@ -3323,6 +3412,9 @@ void
 ui_poly_line(uint8 opcode, short *points, int count,
 	/* pen */ PEN *pen)
 {
+    #ifdef NXDESKTOP_XWIN_DEBUG
+    nxdesktopDebug("ui_poly_line","Opcode=%d, count=%d.\n",opcode,count);
+    #endif
 	SET_FUNCTION(opcode);
 	SET_FOREGROUND(pen->colour);
 
@@ -3339,7 +3431,7 @@ void buf_rect(int x, int y, int cx, int cy)
     if (num_buf_rects < REC_BUF_SIZE)
     {
 	#ifdef NXDESTOP_RECT_DEBUG
-	fprintf(stderr,"buf_rect: buffed %d %d %d %d num_buf_rects = %d\n",x,y,cx,cy,num_buf_rects);
+	nxdesktopDebug("buf_rect","Buffered %d %d %d %d num_buf_rects = %d\n",x,y,cx,cy,num_buf_rects);
 	#endif
 	buf_rects[num_buf_rects].x = x;
 	buf_rects[num_buf_rects].y = y;
@@ -3348,7 +3440,12 @@ void buf_rect(int x, int y, int cx, int cy)
 	num_buf_rects++;
     }
     else
+    {
+	#ifdef NXDESTOP_RECT_DEBUG
+	nxdesktopDebug("buf_rect","Flushing %d rects.\n",num_buf_rects);
+	#endif
 	flush_rects();
+    }
 }
 
 void flush_rects()
@@ -3356,7 +3453,7 @@ void flush_rects()
     if (num_buf_rects > 0)
     {
 	#ifdef NXDESTOP_RECT_DEBUG
-	fprintf(stderr,"flush_rects: num_buf_rects %d\n",num_buf_rects);
+	nxdesktopDebug("flush_rects","num_buf_rects=%d\n",num_buf_rects);
 	#endif
 	SET_FOREGROUND(last_color);
 	XFillRectangles(g_display, g_wnd, g_gc, (XRectangle *)buf_rects, num_buf_rects);
@@ -3379,7 +3476,7 @@ ui_rect(int x, int y, int cx, int cy, int colour)
     {
 	num_buf_rects = 0;
 	#ifdef NXDESTOP_RECT_DEBUG
-	fprintf(stderr,"ui_rect: first rect\n");
+	nxdesktopDebug("ui_rect","First rect arrived\n");
 	#endif
 	last_color = colour;
 	buf_rect(x,y,cx,cy);
@@ -3390,7 +3487,7 @@ ui_rect(int x, int y, int cx, int cy, int colour)
     if (colour != last_color)
     {
 	#ifdef NXDESTOP_RECT_DEBUG
-	fprintf(stderr,"ui_rect: color change from %d to %d\n",last_color, colour);
+	nxdesktopDebug("ui_rect","Color change from %d to %d\n",last_color, colour);
 	#endif
 	flush_rects();
 	last_color = colour;
@@ -3402,6 +3499,136 @@ ui_rect(int x, int y, int cx, int cy, int colour)
     SET_FOREGROUND(colour);
     FILL_RECTANGLE(x, y, cx, cy);
     #endif
+}
+
+void
+ui_polygon(uint8 opcode,
+		/* mode */ uint8 fillmode,
+		/* dest */ POINT * point, int npoints,
+		/* brush */ BRUSH * brush, int bgcolour, int fgcolour)
+{
+	uint8 style, i, ipattern[8];
+	Pixmap fill;
+
+	SET_FUNCTION(opcode);
+
+	switch (fillmode)
+	{
+		case ALTERNATE:
+			XSetFillRule(g_display, g_gc, EvenOddRule);
+			break;
+		case WINDING:
+			XSetFillRule(g_display, g_gc, WindingRule);
+			break;
+		default:
+			unimpl("ui_polygon","fill mode %d\n", fillmode);
+	}
+
+	if (brush)
+		style = brush->style;
+	else
+		style = 0;
+
+	switch (style)
+	{
+		case 0:	/* Solid */
+			SET_FOREGROUND(fgcolour);
+			FILL_POLYGON((XPoint *) point, npoints);
+			break;
+
+		case 2:	/* Hatch */
+			fill = (Pixmap) ui_create_glyph(8, 8,
+						        hatch_patterns + brush->pattern[0] * 8);
+			SET_FOREGROUND(fgcolour);
+			SET_BACKGROUND(bgcolour);
+			XSetFillStyle(g_display, g_gc, FillOpaqueStippled);
+			XSetStipple(g_display, g_gc, fill);
+			XSetTSOrigin(g_display, g_gc, brush->xorigin, brush->yorigin);
+			FILL_POLYGON((XPoint *) point, npoints);
+			XSetFillStyle(g_display, g_gc, FillSolid);
+			XSetTSOrigin(g_display, g_gc, 0, 0);
+			ui_destroy_glyph((HGLYPH) fill);
+			break;
+
+		case 3:	/* Pattern */
+			for (i = 0; i != 8; i++)
+				ipattern[7 - i] = brush->pattern[i];
+			fill = (Pixmap) ui_create_glyph(8, 8, ipattern);
+			SET_FOREGROUND(bgcolour);
+			SET_BACKGROUND(fgcolour);
+			XSetFillStyle(g_display, g_gc, FillOpaqueStippled);
+			XSetStipple(g_display, g_gc, fill);
+			XSetTSOrigin(g_display, g_gc, brush->xorigin, brush->yorigin);
+			FILL_POLYGON((XPoint *) point, npoints);
+			XSetFillStyle(g_display, g_gc, FillSolid);
+			XSetTSOrigin(g_display, g_gc, 0, 0);
+			ui_destroy_glyph((HGLYPH) fill);
+			break;
+
+		default:
+			unimpl("ui_polygon","brush %d\n", brush->style);
+	}
+
+	RESET_FUNCTION(opcode);
+}
+
+void
+ui_ellipse(uint8 opcode,
+		/* mode */ uint8 fillmode,
+		/* dest */ int x, int y, int cx, int cy,
+		/* brush */ BRUSH * brush, int bgcolour, int fgcolour)
+{
+	uint8 style, i, ipattern[8];
+	Pixmap fill;
+
+	SET_FUNCTION(opcode);
+
+	if (brush)
+		style = brush->style;
+	else
+		style = 0;
+
+	switch (style)
+	{
+		case 0:	/* Solid */
+			SET_FOREGROUND(fgcolour);
+			DRAW_ELLIPSE(x, y, cx, cy, fillmode);
+			break;
+
+		case 2:	/* Hatch */
+			fill = (Pixmap) ui_create_glyph(8, 8,
+						        hatch_patterns + brush->pattern[0] * 8);
+			SET_FOREGROUND(fgcolour);
+			SET_BACKGROUND(bgcolour);
+			XSetFillStyle(g_display, g_gc, FillOpaqueStippled);
+			XSetStipple(g_display, g_gc, fill);
+			XSetTSOrigin(g_display, g_gc, brush->xorigin, brush->yorigin);
+			DRAW_ELLIPSE(x, y, cx, cy, fillmode);
+			XSetFillStyle(g_display, g_gc, FillSolid);
+			XSetTSOrigin(g_display, g_gc, 0, 0);
+			ui_destroy_glyph((HGLYPH) fill);
+			break;
+
+		case 3:	/* Pattern */
+			for (i = 0; i != 8; i++)
+				ipattern[7 - i] = brush->pattern[i];
+			fill = (Pixmap) ui_create_glyph(8, 8, ipattern);
+			SET_FOREGROUND(bgcolour);
+			SET_BACKGROUND(fgcolour);
+			XSetFillStyle(g_display, g_gc, FillOpaqueStippled);
+			XSetStipple(g_display, g_gc, fill);
+			XSetTSOrigin(g_display, g_gc, brush->xorigin, brush->yorigin);
+			DRAW_ELLIPSE(x, y, cx, cy, fillmode);
+			XSetFillStyle(g_display, g_gc, FillSolid);
+			XSetTSOrigin(g_display, g_gc, 0, 0);
+			ui_destroy_glyph((HGLYPH) fill);
+			break;
+
+		default:
+			unimpl("ui_ellipse","brush %d\n", brush->style);
+	}
+
+	RESET_FUNCTION(opcode);
 }
 
 /* warning, this function only draws on wnd or backstore, not both */
@@ -3448,25 +3675,15 @@ ui_draw_glyph(int mixmode,
   }\
   if (glyph != NULL)\
   {\
-    XGCValues values;\
     x1 = x + glyph->offset;\
     y1 = y + glyph->baseline;\
-    memset(&values, 0, sizeof(XGCValues));\
-    values.stipple = (Pixmap)glyph->pixmap;\
-    values.ts_x_origin = x + (short) glyph->offset;\
-    values.ts_y_origin = y + (short) glyph->baseline;\
-    XChangeGC(g_display, g_gc, GCStipple | GCTileStipXOrigin | GCTileStipYOrigin, &values);\
+    XSetStipple(g_display, g_gc, (Pixmap) glyph->pixmap);\
+    XSetTSOrigin(g_display, g_gc, x1, y1);\
     FILL_RECTANGLE_BACKSTORE(x1, y1, glyph->width, glyph->height);\
     if (flags & TEXT2_IMPLICIT_X)\
       x += glyph->width;\
   }\
 }
-
-/*
-	Just in case i need to return the XChengeGC above
-	XSetStipple(g_display, g_gc, (Pixmap) glyph->pixmap);\
-	XSetTSOrigin(g_display, g_gc, x1, y1);\
-*/
 
 void
 ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
@@ -3475,9 +3692,15 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 	     int fgcolour, uint8 * text, uint8 length)
 {
 	FONTGLYPH *glyph;
-	int i, xyoffset, x1, y1;
-/* 	DATABLOB *entry;*/
-
+	int i, j, xyoffset, x1, y1;
+	DATABLOB *entry;
+	
+	/* NX */
+	xNXRDPGlyph rdp_text[1024];
+	NXPackedImage *image;
+	int elements = 0;
+	/* NX */
+	
 	SET_FOREGROUND(bgcolour);
 
 	/* Sometimes, the boxcx value is something really large, like
@@ -3495,72 +3718,147 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 		FILL_RECTANGLE_BACKSTORE(clipx, clipy, clipcx, clipcy);
 	}
 
-#ifdef NXWIN_USES_PACKED_RDP_TEXT
+	SET_FOREGROUND(fgcolour);
+	SET_BACKGROUND(bgcolour);
+	XSetFillStyle(g_display, g_gc, FillStippled);
+	
+	/* Paint text, character by character */
+	for (i = 0; i < length;)
+	{
+		switch (text[i])
+		{
+		    
+			case 0xff:
+				if (i + 2 < length)
+					cache_put_text(text[i + 1], text, text[i + 2]);
+				else
+				{
+					error("this shouldn't be happening\n");
+					exit(1);
+				}
+				/* this will move pointer from start to first character after FF command */
+				length -= i + 3;
+				text = &(text[i + 3]);
+				i = 0;
+				break;
+
+			case 0xfe:
+				entry = cache_get_text(text[i + 1]);
+				if (entry != NULL)
+				{
+				    if ((((uint8 *) (entry->data))[1] == 0) && (!(flags & TEXT2_IMPLICIT_X)))
+				    {
+					if (flags & TEXT2_VERTICAL)
+					    y += text[i + 2];
+					else
+					    x += text[i + 2];
+				    }
+				    for (j = 0; j < entry->size; j++)
+				    {
+					if (nxdesktopUseNXTrans && nxdesktopCanPackRDPText)
+					{
+					    glyph = cache_get_font(font, ((uint8 *) (entry->data))[j]);
+					    if (!(flags & TEXT2_IMPLICIT_X))
+					    {
+						xyoffset = ((uint8 *) (entry->data))[++j];
+						if (xyoffset & 0x80)
+						    xyoffset = ((xyoffset & 0x7f) << 8) | ((uint8 *) (entry->data))[++j];
+
+						if (flags & TEXT2_VERTICAL)
+							y += xyoffset;
+						else
+							x += xyoffset;
+					    }
+					    if (glyph != NULL)
+					    {
+						#ifdef NXDESKTOP_XWIN_DEBUG
+						fprintf(stderr, "ui_draw_text: Building element [%d] with pixmap [0x%lx].\n",j, (Pixmap)glyph->pixmap);
+						#endif
+    						rdp_text[elements].x      = x + (short)glyph->offset;
+						rdp_text[elements].y      = y + (short)glyph->baseline;
+						rdp_text[elements].width  = glyph->width;
+						rdp_text[elements].height = glyph->height;
+						rdp_text[elements].pixmap = (Pixmap)glyph->pixmap;
+
+						elements++;
+
+						if (flags & TEXT2_IMPLICIT_X)									
+						    x += glyph->width;
+					    }
+					}
+					else
+					{
+					    DO_GLYPH(((uint8 *) (entry->data)), j);
+					}
+				    }
+				}
+				if (i + 2 < length)
+					i += 3;
+				else
+					i += 2;
+				length -= i;
+				/* this will move pointer from start to first character after FE command */
+				text = &(text[i]);
+				i = 0;
+				break;
+
+			default:
+				if (nxdesktopUseNXTrans && nxdesktopCanPackRDPText)
+				{
+					glyph = cache_get_font(font, text[i]);
+					if (!(flags & TEXT2_IMPLICIT_X))
+					{
+						xyoffset = text[++i];
+						if (xyoffset & 0x80)
+						    xyoffset = ((xyoffset & 0x7f) << 8) | text[++i];
+
+						if (flags & TEXT2_VERTICAL)
+							y += xyoffset;
+						else
+							x += xyoffset;
+					}
+
+					if (glyph != NULL)
+					{
+						#ifdef NXDESKTOP_XWIN_DEBUG
+						fprintf(stderr, "ui_draw_text: Building element [%d] with pixmap [0x%lx].\n",i, (Pixmap)glyph->pixmap);
+						#endif
+
+						rdp_text[elements].x      = x + (short)glyph->offset;
+						rdp_text[elements].y      = y + (short)glyph->baseline;
+						rdp_text[elements].width  = glyph->width;
+						rdp_text[elements].height = glyph->height;
+						rdp_text[elements].pixmap = (Pixmap)glyph->pixmap;
+
+						elements++;
+
+						if (flags & TEXT2_IMPLICIT_X)
+							x += glyph->width;
+					}
+				}
+				else
+				{
+					DO_GLYPH(text, i);
+				}
+				i++;
+				break;
+		}
+	}
 	
 	if (nxdesktopUseNXTrans && nxdesktopCanPackRDPText)
 	{
-	
-		xNXRDPGlyph rdp_text[length];
-		NXPackedImage *image;
-		int elements = 0;
-	
-		/*
-		 * Fill PACK_RDP_TEXT array, character by character.
-		 */
-
-		for (i = 0; i < length; i++)
-		{
-			glyph = cache_get_font(font, text[i]);
-
-			if (!(flags & TEXT2_IMPLICIT_X))
-			{
-				xyoffset = text[++i];
-				if (xyoffset & 0x80)
-					xyoffset = ((xyoffset & 0x7f) << 8) | text[++i];
-
-				if (flags & TEXT2_VERTICAL)
-					y += xyoffset;
-				else
-					x += xyoffset;
-			}
-
-			if (glyph != NULL)
-			{
-				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_draw_text: Building element [%d] with pixmap [0x%lx].\n",
-						i, (Pixmap)glyph->pixmap);
-				#endif
-
-				rdp_text[elements].x      = x + (short)glyph->offset;
-				rdp_text[elements].y      = y + (short)glyph->baseline;
-				rdp_text[elements].width  = glyph->width;
-				rdp_text[elements].height = glyph->height;
-				rdp_text[elements].pixmap = (Pixmap)glyph->pixmap;
-
-				elements++;
-
-				if (flags & TEXT2_IMPLICIT_X)
-					x += glyph->width;
-			}
-		}
-
 		image = NXEncodeRDPText(g_display, TRANSLATE(bgcolour), TRANSLATE(fgcolour),
 						(mixmode == MIX_TRANSPARENT ? FillStippled :
 							FillOpaqueStippled), &rdp_text[0], elements);
-
 		if (image)
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_draw_text: Using packed image with drawable [0x%lx] and gc [0x%lx].\n",
-					g_wnd, g_gc);
+			fprintf(stderr, "ui_draw_text: Using packed image with drawable [0x%lx] and gc [0x%lx].\n",g_wnd, g_gc);
 			#endif
 
-			NXPutPackedImage(g_display, 0, (g_ownbackstore) ? g_backstore : g_wnd, 
-				         g_gc, image, PACK_RDP_TEXT,
-						1, 0, 0, 0, 0, elements, 1);
-
+			NXPutPackedImage(g_display, 0, (g_ownbackstore) ? g_backstore : g_wnd, g_gc, image, PACK_RDP_TEXT, 1, 0, 0, 0, 0, elements, 1);
 			NXDestroyPackedImage(image);
-		}
+		}	
 
 		/*
 		 * Synchronize GC and force dirty state.
@@ -3572,33 +3870,9 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 		SET_BACKGROUND(bgcolour);
 		XSetFillStyle(g_display, g_gc, FillStippled);
 		XSetFillStyle(g_display, g_gc, FillSolid);
-
-		if (g_ownbackstore)
-		{
-			if (boxcx > 1)
-				XCopyArea(g_display, g_backstore, g_wnd, g_gc, boxx,
-				  boxy, boxcx, boxcy, boxx, boxy);
-			else
-				XCopyArea(g_display, g_backstore, g_wnd, g_gc, clipx,
-				  clipy, clipcx, clipcy, clipx, clipy);
-		}	
-	}
-	else
-	{
-#endif
-	SET_FOREGROUND(fgcolour);
-	SET_BACKGROUND(bgcolour);
-	/* XSetFillStyle(g_display, g_gc, FillStippled); */
-	XSetFillStyle(g_display, g_gc, (mixmode == MIX_TRANSPARENT)
-		      ? FillStippled : FillOpaqueStippled);
-		      
-	/* Paint text, character by character */
-	for (i = 0; i < length; i++)
-	{
-		DO_GLYPH(text, i);
 		
 	}
-
+	
 	XSetFillStyle(g_display, g_gc, FillSolid);
 
 	if (g_ownbackstore)
@@ -3610,10 +3884,6 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, clipx,
 				  clipy, clipcx, clipcy, clipx, clipy);
 	}
-#ifdef NXWIN_USES_PACKED_RDP_TEXT
-	}	
-#endif
-	
 }
 
 void
@@ -3626,7 +3896,7 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 	int i;
 
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_desktop_save: Called with offset [%d]. Using pixmap cache.\n",
+	nxdesktopDebug("ui_desktop_save","Called with offset [%d]. Using pixmap cache.\n",
 			offset);
 	#endif
 
@@ -3667,14 +3937,14 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 			pixmap_cache[i].offset = offset;
 
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_desktop_save: Saved area in pixmap cache [%lx] index [%d].\n",
+			nxdesktopDebug("ui_desktop_save","Saved area in pixmap cache [%lx] index [%d].\n",
 					cache, i);
 			#endif
 
 			if (g_ownbackstore)
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_desktop_save: XCopyArea from backingstore to pixmap cache %d,%d,%d,%d.\n",
+				nxdesktopDebug("ui_desktop_save","XCopyArea from backingstore to pixmap cache %d,%d,%d,%d.\n",
 						x, y, cx, cy);
 				#endif
 
@@ -3683,7 +3953,7 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 			else
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_desktop_save: XCopyArea from window to pixmap cache %d,%d,%d,%d.\n",
+				nxdesktopDebug("ui_desktop_save","XCopyArea from window to pixmap cache %d,%d,%d,%d.\n",
 						x, y, cx, cy);
 				#endif
 
@@ -3697,7 +3967,7 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 	if (i == PIXCACHE_ENTRIES)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_desktop_save: PANIC! Couldn't find any free pixmap cache slot.\n");
+		nxdesktopDebug("ui_desktop_save","PANIC! Couldn't find any free pixmap cache slot.\n");
 		#endif
 	}
 
@@ -3707,7 +3977,7 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 	XImage *image;
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_desktop_save: Called with offset [%d]. Not using pixmap cache.\n",
+	nxdesktopDebug("ui_desktop_save","Called with offset [%d]. Not using pixmap cache.\n",
 			offset);
 	#endif
 	/* NX */
@@ -3715,7 +3985,7 @@ ui_desktop_save(uint32 offset, int x, int y, int cx, int cy)
 	if (g_ownbackstore)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_desktop_save: XGetImage from backingstore pixmap %d,%d,%d,%d.\n",
+		nxdesktopDebug("ui_desktop_save","XGetImage from backingstore pixmap %d,%d,%d,%d.\n",
 				x, y, cx, cy);
 		#endif
 		image = XGetImage(g_display, g_backstore, x, y, cx, cy, AllPlanes, ZPixmap);
@@ -3745,7 +4015,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	int i;
 
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_desktop_restore: Called with offset [%d]. Using pixmap cache.\n",
+	nxdesktopDebug("ui_desktop_restore","Called with offset [%d]. Using pixmap cache.\n",
 			offset);
 	#endif
 
@@ -3759,7 +4029,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 			if (g_ownbackstore)
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_desktop_restore: XCopyArea from pixmap cache to backingstore %d,%d,%d,%d.\n",
+				nxdesktopDebug("ui_desktop_restore","XCopyArea from pixmap cache to backingstore %d,%d,%d,%d.\n",
 						x, y, cx, cy);
 				#endif
 
@@ -3769,7 +4039,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 			else
 			{
 				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_desktop_restore: XCopyArea from pixmap cache to window %d,%d,%d,%d.\n",
+				nxdesktopDebug("ui_desktop_restore","XCopyArea from pixmap cache to window %d,%d,%d,%d.\n",
 						x, y, cx, cy);
 				#endif
 
@@ -3777,7 +4047,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 			}
 
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_desktop_restore: Restored area from pixmap cache [%lx] index [%d].\n",
+			nxdesktopDebug("ui_desktop_restore","Restored area from pixmap cache [%lx] index [%d].\n",
 					cache, i);
 			#endif
 
@@ -3794,7 +4064,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	if (i == PIXCACHE_ENTRIES)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_desktop_restore: PANIC! Couldn't find pixmap cache slot.\n");
+		nxdesktopDebug("ui_desktop_restore","PANIC! Couldn't find pixmap cache slot.\n");
 		#endif
 	}
 
@@ -3806,7 +4076,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	uint8 *data;
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
-	fprintf(stderr, "ui_desktop_restore: Called with offset [%d]. Not using pixmap cache.\n",
+	nxdesktopDebug("ui_desktop_restore","Called with offset [%d]. Not using pixmap cache.\n",
 			offset);
 	#endif
 
@@ -3821,7 +4091,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	if (g_ownbackstore)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_desktop_restore: XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
+		nxdesktopDebug("ui_desktop_restore","XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
 				x, y, cx, cy);
 		#endif
 		
@@ -3836,7 +4106,7 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	else
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		fprintf(stderr, "ui_desktop_restore: XPutImage on window %d,%d,%d,%d.\n",
+		nxdesktopDebug("ui_desktop_restore","XPutImage on window %d,%d,%d,%d.\n",
 				x, y, cx, cy);
 		#endif
 		
@@ -3863,8 +4133,8 @@ void nomachineLogo(Window win, GC gc, int scale)
     int w, h, c, w2, h2;
 
 #ifdef NXDESKTOP_LOGO_DEBUG
-    fprintf(stderr,"nomachineLogo: begin\n");
-    fprintf(stderr,"nomachineLogo: gen params are: %d %x %x %x\n",
+    nxdesktopDebug("nomachineLogo","begin\n");
+    nxdesktopDebug("nomachineLogo","gen params are: %d %x %x %x\n",
             nx_depth, nx_red,
             nx_white, nx_black);
 #endif
@@ -3895,7 +4165,7 @@ void nomachineLogo(Window win, GC gc, int scale)
     XFillPolygon(g_display, win, gc, rect, 4, Convex, CoordModeOrigin);
 
 #ifdef NXDESKTOP_LOGO_DEBUG
-    fprintf(stderr,"filled first poly\n");
+    nxdesktopDebug("nomachineLogo","filled first poly\n");
 #endif
 
     XSetForeground(g_display, gc, nx_red);
@@ -3909,7 +4179,7 @@ void nomachineLogo(Window win, GC gc, int scale)
     XFillPolygon(g_display, win, gc, rect, 4, Convex, CoordModeOrigin);
 
 #ifdef NXDESKTOP_LOGO_DEBUG
-    fprintf(stderr,"filled red rect\n");
+    nxdesktopDebug("nomachineLogo","filled red rect\n");
 #endif
 
     rect[0].x = w2-9*c;	       rect[0].y = h2-7*c;
@@ -3940,7 +4210,9 @@ void nomachineLogo(Window win, GC gc, int scale)
     XSetBackground(g_display, gc, nx_white);
 
     XFillPolygon(g_display, win, gc, m, 12, Nonconvex, CoordModeOrigin);
-
+    #ifdef NXDESKTOP_LOGO_DEBUG
+    nxdesktopDebug("nomachineLogo","filled M\n");
+    #endif
     /* end M */
 
     /* begin ! */
@@ -3957,12 +4229,16 @@ void nomachineLogo(Window win, GC gc, int scale)
     rect[3].x = w2-7*c;	       rect[3].y = h2+5*c;
 
     XFillPolygon(g_display, win, gc, rect, 4, Convex, CoordModeOrigin);
+    #ifdef NXDESKTOP_LOGO_DEBUG
+    nxdesktopDebug("nomachineLogo","filled !\n");
+    #endif
+
 
 /*    XFlush(g_display);*/
     XSync(g_display, True);
 
 #ifdef NXDESKTOP_LOGO_DEBUG
-    fprintf(stderr,"nomachineLogo: end\n");
+    nxdesktopDebug("nomachineLogo","end\n");
 #endif
 }
 #endif
@@ -4051,7 +4327,7 @@ Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)
 			       &IconShape,
 			       NULL);
      if (status != XpmSuccess) {
-        fprintf(stderr, "XpmError: %s\n", XpmGetErrorString(status));
+        error("XpmError: %s\n", XpmGetErrorString(status));
         /* exit(1); */
 	existXpmIcon = False;
      }
@@ -4078,11 +4354,11 @@ Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)
 
 void RunOrKillNXkbd()
 {
-  fprintf(stderr, "nxkbd is running\n");
+  info("nxkbd is running\n");
   if (xkbdRunning)
   {
 #ifdef NXAGENT_XKBD_DEBUG
-    fprintf(stderr, "Events: nxkbd now is NOT running\n");
+    nxdesktopDebug("RunOrKillNXkbd","nxkbd now is NOT running\n");
 #endif
     xkbdRunning = False;
     kill( pidkbd, 9 );
@@ -4114,19 +4390,19 @@ void RunOrKillNXkbd()
       case 0:
         execvp(kbdargs[0], kbdargs);
 #ifdef NXAGENT_XKBD_DEBUG
-        fprintf(stderr, "Events: execvp of nxkbd failed\n");
+	nxdesktopDebug("RunOrKillNXkbd","execvp of nxkbd failed\n");
 #endif
         exit(1);
       case -1:
 #ifdef NXAGENT_XKBD_DEBUG
-        fprintf(stderr, "Events: can't fork to run nxkbd\n");
+        nxdesktopDebug("RunOrKillNXkbd","can't fork to run nxkbd\n");
 #endif
         break;
       default:
         ;
     }
 #ifdef NXAGENT_XKBD_DEBUG
-    fprintf(stderr, "Events: nxkbd now is running on $DISPLAY %s\n", kbddisplay);
+    nxdesktopDebug("RunOrKillNXkbd","nxkbd now is running on $DISPLAY %s\n", kbddisplay);
 #endif
     xkbdRunning = True;
   }

@@ -299,7 +299,6 @@ sec_decrypt(uint8 * data, int length)
 	}
 
 	RC4(&rc4_decrypt_key, length, data, data);
-
 	use_count++;
 }
 
@@ -529,7 +528,7 @@ sec_parse_public_key(STREAM s, uint8 ** modulus, uint8 ** exponent)
 	in_uint32_le(s, modulus_len);
 	if (modulus_len != SEC_MODULUS_SIZE + SEC_PADDING_SIZE)
 	{
-		error("modulus len 0x%x\n", modulus_len);
+		error("Modulus len 0x%x\n", modulus_len);
 		return False;
 	}
 
@@ -558,7 +557,7 @@ sec_parse_x509_key(X509 * cert)
 	epk = X509_get_pubkey(cert);
 	if (NULL == epk)
 	{
-		error("Failed to extract public key from certificate\n");
+		error("Failed to extract public key from certificate.\n");
 		return False;
 	}
 
@@ -626,10 +625,13 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 					/* Care factor: zero! */
 					/* Actually, it would probably be a good idea to check if the public key is signed with this key, and then store this 
 					   key as a known key of the hostname. This would prevent some MITM-attacks. */
+					#ifdef NXDESKTOP_SEC_DEBUG
+					warning("Unexpected key arrived (Microsoft?). Going along anyway.\n");
+					#endif
 					break;
 
 				default:
-					unimpl("crypt tag 0x%x\n", tag);
+					unimpl("set_parse_crypt_info","crypt tag 0x%x\n", tag);
 			}
 
 			s->p = next_tag;
@@ -662,6 +664,7 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 			if (ignorecert == NULL)
 			{	/* XXX: error out? */
 				DEBUG_RDP5(("got a bad cert: this will probably screw up the rest of the communication\n"));
+				warning("Received a bad cert: this will probably damage the rest of the communication\n");
 			}
 
 #ifdef WITH_DEBUG_RDP5
@@ -718,6 +721,7 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 		if (!sec_parse_x509_key(server_cert))
 		{
 			DEBUG_RDP5(("Didn't parse X509 correctly\n"));
+			error("Didn't parse X509 correctly\n");
 			return False;
 		}
 		return True;	/* There's some garbage here we don't care about */
@@ -737,6 +741,7 @@ sec_process_crypt_info(STREAM s)
 	if (!sec_parse_crypt_info(s, &rc4_key_size, &server_random, &modulus, &exponent))
 	{
 		DEBUG(("Failed to parse crypt info\n"));
+		error("Failed to parse crypt info\n");
 		return;
 	}
 
@@ -829,7 +834,7 @@ sec_process_mcs_data(STREAM s)
 				break;
 
 			default:
-				unimpl("response tag 0x%x\n", tag);
+				unimpl("sec_process_mcs_data","response tag 0x%x\n", tag);
 		}
 
 		s->p = next_tag;
@@ -838,14 +843,26 @@ sec_process_mcs_data(STREAM s)
 
 /* Receive secure transport packet */
 STREAM
-sec_recv(void)
+sec_recv(uint8 * rdpver)
 {
 	uint32 sec_flags;
 	uint16 channel;
 	STREAM s;
 
-	while ((s = mcs_recv(&channel)) != NULL)
+	while ((s = mcs_recv(&channel, rdpver)) != NULL)
 	{
+		if (rdpver != NULL)
+		{
+			if (*rdpver != 3)
+			{
+				if (*rdpver & 0x80)
+				{
+					in_uint8s(s, 8);	/* signature */
+					sec_decrypt(s->p, s->end - s->p);
+				}
+				return s;
+			}
+		}
 		if (g_encryption || !g_licence_issued)
 		{
 			in_uint32_le(s, sec_flags);
@@ -887,7 +904,10 @@ sec_connect(char *server, char *username)
 	sec_out_mcs_data(&mcs_data);
 
 	if (!mcs_connect(server, &mcs_data, username))
+	    {
+		error("Sec layer connection failed\n");
 		return False;
+	    }
 
 	/*      sec_process_mcs_data(&mcs_data); */
 	if (g_encryption)

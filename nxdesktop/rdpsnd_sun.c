@@ -127,7 +127,6 @@ BOOL
 wave_out_set_format(WAVEFORMATEX * pwfx)
 {
 	audio_info_t info;
-	int test = 1;
 
 	ioctl(g_dsp_fd, AUDIO_DRAIN, 0);
 	g_swapaudio = False;

@@ -77,6 +77,8 @@ int g_win_button_size = 0;	/* If zero, disable single app mode */
 BOOL g_bitmap_compression = True;
 BOOL g_sendmotion = True;
 BOOL g_bitmap_cache = True;
+BOOL g_bitmap_cache_persist_enable = False;
+BOOL g_bitmap_cache_precache = True;
 BOOL g_encryption = True;
 BOOL packet_encryption = True;
 BOOL g_desktop_save = True;
@@ -167,15 +169,16 @@ usage(char *program)
 	fprintf(stderr, "   -N: enable numlock syncronization\n");
 	fprintf(stderr, "   -X: embed into another window with a given id.\n");
 	fprintf(stderr, "   -a: connection colour depth\n");
-	fprintf(stderr,
-		"   -x: RDP5 experience (m[odem 28.8], b[roadband], l[an] or hex number)\n");
+	fprintf(stderr, "   -z: enable rdp compression\n");
+	fprintf(stderr, "   -x: RDP5 experience (m[odem 28.8], b[roadband], l[an] or hex nr.)\n");
+	fprintf(stderr, "   -P: use persistent bitmap caching\n");
 	fprintf(stderr, "   -r: enable specified device redirection (this flag can be repeated)\n");
 	fprintf(stderr,
 		"         '-r comport:COM1=/dev/ttyS0': enable serial redirection of /dev/ttyS0 to COM1\n");
 	fprintf(stderr, "             or      COM1=/dev/ttyS0,COM2=/dev/ttyS1\n");
 	fprintf(stderr,
-		"         '-r disk:A=/mnt/floppy': enable redirection of /mnt/floppy to A:\n");
-	fprintf(stderr, "             or   A=/mnt/floppy,D=/mnt/cdrom'\n");
+		"         '-r disk:floppy=/mnt/floppy': enable redirection of /mnt/floppy to 'floppy' share\n");
+	fprintf(stderr, "             or   'floppy=/mnt/floppy,cdrom=/mnt/cdrom'\n");
 	fprintf(stderr, "         '-r clientname=<client name>': Set the client name displayed\n");
 	fprintf(stderr, "             for redirected disks\n");
 	fprintf(stderr,
@@ -291,7 +294,7 @@ print_disconnect_reason(uint16 reason)
 				text = "Unknown reason";
 			}
 	}
-	fprintf(stderr, "disconnect: %s.\n", text);
+	error("Disconnect: %s.\n", text);
 }
 
 static BOOL
@@ -417,12 +420,12 @@ main(int argc, char *argv[])
 #define VNCOPT
 #endif
 	/* Parse the extra parameters from the NXAgent */
-	#if 0
+	//#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 1;i<argc; i++)
 	{
-	    fprintf(stderr,"par1 '%i' '%s'\n",i,argv[i]);
+	    nxdesktopDebug("Paramenters first phase","'%i' '%s'\n",i,argv[i]);
 	}
-	#endif
+	//#endif
 	nx_argv[0] = argv[0];
 	i = 1;
 	while (i<argc)
@@ -447,12 +450,12 @@ main(int argc, char *argv[])
 	nx_argv[nx_argc] = NULL;
 	#endif
 	
-	#if 0
+	//#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 0; i<=nx_argc; i++)
-	    fprintf(stderr,"par2 '%i' '%s'\n",i,nx_argv[i]);
-	#endif
+	    nxdesktopDebug("Paramenters second phase","'%i' '%s'\n",i,nx_argv[i]);
+	//#endif
 	
-	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmCDKS:T:NX:a:x:r:045h?")) != -1)
+	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?")) != -1)
 	{
 		switch (c)
 		{
@@ -523,7 +526,7 @@ main(int argc, char *argv[])
 				g_width = strtol(optarg, &p, 10);
 				if (g_width <= 0)
 				{
-					error("invalid geometry\n");
+					error("Invalid geometry\n");
 					return 1;
 				}
 
@@ -532,7 +535,7 @@ main(int argc, char *argv[])
 
 				if (g_height <= 0)
 				{
-					error("invalid geometry\n");
+					error("Invalid geometry\n");
 					return 1;
 				}
 
@@ -597,7 +600,7 @@ main(int argc, char *argv[])
 
 				if (*p)
 				{
-					error("invalid button size\n");
+					error("Invalid button size\n");
 					return 1;
 				}
 
@@ -621,9 +624,14 @@ main(int argc, char *argv[])
 				if (g_server_bpp != 8 && g_server_bpp != 16 && g_server_bpp != 15
 				    && g_server_bpp != 24)
 				{
-					error("invalid server bpp\n");
+					error("Invalid server bpp\n");
 					return 1;
 				}
+				break;
+
+			case 'z':
+				DEBUG(("rdp compression enabled\n"));
+				flags |= RDP_COMPRESSION;
 				break;
 
 			case 'x':
@@ -646,6 +654,10 @@ main(int argc, char *argv[])
 				{
 					g_rdp5_performanceflags = strtol(optarg, NULL, 16);
 				}
+				break;
+
+			case 'P':
+				g_bitmap_cache_persist_enable = True;
 				break;
 
 			case 'r':
@@ -769,7 +781,7 @@ main(int argc, char *argv[])
 		pw = getpwuid(getuid());
 		if ((pw == NULL) || (pw->pw_name == NULL))
 		{
-			error("could not determine username, use -u\n");
+			error("Could not determine username, use -u\n");
 			return 1;
 		}
 
@@ -780,7 +792,7 @@ main(int argc, char *argv[])
 	{
 		if (gethostname(fullhostname, sizeof(fullhostname)) == -1)
 		{
-			error("could not determine local hostname, use -n\n");
+			error("Could not determine local hostname, use -n\n");
 			return 1;
 		}
 
@@ -800,7 +812,6 @@ main(int argc, char *argv[])
 	{
 	    
            char *filePass = nxdesktopReadPasswdFromFile((char *)passwordFile);
-	   
            if (filePass != NULL)
            {
               strcpy(password, filePass);
@@ -808,7 +819,7 @@ main(int argc, char *argv[])
            }
            else
            {
-              fprintf(stderr,"invalid pass from file\n");
+              error("Invalid pass from file\n");
            }
         }
 	
@@ -819,7 +830,7 @@ main(int argc, char *argv[])
 	}
 
 	/* NX */
-	fprintf(stderr, "Info: Connecting to RDP server '%s'\n",server);
+	info("Connecting to RDP server '%s'\n",server);
 	/* NX */
 		
 #ifdef RDP2VNC
@@ -831,7 +842,7 @@ main(int argc, char *argv[])
 	
 	if (!ui_open_display())
 	    {
-		fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
+		error("Nxdesktop cannot open X display.\n");
 		return 1;
 	    }
 	if (!ui_init())
@@ -845,7 +856,7 @@ main(int argc, char *argv[])
 
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
-		fprintf(stderr, "Error: Connection to RDP server '%s' failed.\n",server);
+		error("Connection to RDP server '%s' failed.\n",server);
 		return 1;
 	}
 	else
@@ -864,9 +875,9 @@ main(int argc, char *argv[])
 		g_encryption = False;
 	
 	/* NX */
-	fprintf(stderr, "Info: Connected to RDP server '%s'\n",server);
+	info("Connected to RDP server '%s'\n",server);
 	
-	fprintf(stderr, "Info: Color depth %d.\n",g_server_bpp);
+	info("Color depth %d.\n",g_server_bpp);
 	/* NX */
 
 	DEBUG(("Connection successful.\n"));
@@ -884,7 +895,7 @@ main(int argc, char *argv[])
 
 	DEBUG(("Disconnecting...\n"));
 	rdp_disconnect();
-	fprintf(stderr, "Info: Disconnecting from RDP server '%s'\n",server);
+	info("Disconnecting from RDP server '%s'\n",server);
 	ui_deinit();
 
 	if (ext_disc_reason >= 2)
@@ -1036,7 +1047,32 @@ error(char *format, ...)
 {
 	va_list ap;
 
-	fprintf(stderr, "ERROR: ");
+	fprintf(stderr, "Error: ");
+
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+}
+
+void
+info(char *format, ...)
+{
+	va_list ap;
+
+	fprintf(stderr, "Info: ");
+
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+}
+
+
+void
+nxdesktopDebug(char *function_name, char *format, ...)
+{
+	va_list ap;
+
+	fprintf(stderr, "%s Debug: ",function_name);
 
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
@@ -1049,7 +1085,7 @@ warning(char *format, ...)
 {
 	va_list ap;
 
-	fprintf(stderr, "WARNING: ");
+	fprintf(stderr, "Warning: ");
 
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
@@ -1058,11 +1094,11 @@ warning(char *format, ...)
 
 /* report an unimplemented protocol feature */
 void
-unimpl(char *format, ...)
+unimpl(char *function_name, char *format, ...)
 {
 	va_list ap;
 
-	fprintf(stderr, "NOT IMPLEMENTED: ");
+	fprintf(stderr, "%s Not Implemented: ",function_name);
 
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
@@ -1291,6 +1327,98 @@ save_licence(unsigned char *data, int length)
 	close(fd);
 	xfree(tmppath);
 	xfree(path);
+}
+
+/* Create the bitmap cache directory */
+BOOL
+rd_pstcache_mkdir(void)
+{
+	char *home;
+	char bmpcache_dir[256];
+
+	home = getenv("HOME");
+
+	if (home == NULL)
+		return False;
+
+	sprintf(bmpcache_dir, "%s/%s", home, ".rdesktop");
+
+	if ((mkdir(bmpcache_dir, S_IRWXU) == -1) && errno != EEXIST)
+	{
+		perror(bmpcache_dir);
+		return False;
+	}
+
+	sprintf(bmpcache_dir, "%s/%s", home, ".rdesktop/cache");
+
+	if ((mkdir(bmpcache_dir, S_IRWXU) == -1) && errno != EEXIST)
+	{
+		perror(bmpcache_dir);
+		return False;
+	}
+
+	return True;
+}
+
+/* open a file in the .rdesktop directory */
+int
+rd_open_file(char *filename)
+{
+	char *home;
+	char fn[256];
+	int fd;
+
+	home = getenv("HOME");
+	if (home == NULL)
+		return -1;
+	sprintf(fn, "%s/.rdesktop/%s", home, filename);
+	fd = open(fn, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+	if (fd == -1)
+		perror(fn);
+	return fd;
+}
+
+/* close file */
+void
+rd_close_file(int fd)
+{
+	close(fd);
+}
+
+/* read from file*/
+int
+rd_read_file(int fd, void *ptr, int len)
+{
+	return read(fd, ptr, len);
+}
+
+/* write to file */
+int
+rd_write_file(int fd, void *ptr, int len)
+{
+	return write(fd, ptr, len);
+}
+
+/* move file pointer */
+int
+rd_lseek_file(int fd, int offset)
+{
+	return lseek(fd, offset, SEEK_SET);
+}
+
+/* do a write lock on a file */
+BOOL
+rd_lock_file(int fd, int start, int len)
+{
+	struct flock lock;
+
+	lock.l_type = F_WRLCK;
+	lock.l_whence = SEEK_SET;
+	lock.l_start = start;
+	lock.l_len = len;
+	if (fcntl(fd, F_SETLK, &lock) == -1)
+		return False;
+	return True;
 }
 
 /* the NX mods implementation starts here */
@@ -1524,7 +1652,9 @@ char *argv[];
     
     if (!strcmp(argv[i], "-kbtype"))
     {
-	fprintf(stderr,"INFO: -kbtype parameter issued\n");
+	#ifdef NXDESKTOP_KBD_DEBUG
+	info("-kbtype parameter issued\n");
+	#endif
 	return 2;
     }
 
@@ -1600,7 +1730,7 @@ void NXTranslateKeymap()
 	case 0x041d: strcpy(keymapname, "sv"); break;
 	case 0x041e: strcpy(keymapname, "th"); break;
 	case 0x041f: strcpy(keymapname, "tr"); break;
-	default: fprintf(stderr, "Warning: unknown keyboard layout [%X].\n", keylayout);
+	default: warning("unknown keyboard layout [%X].\n", keylayout);
     }
     DEBUG_KBD(("keymapname is [%s].\n", keymapname));
 }
@@ -1610,12 +1740,12 @@ void NXTranslateKeymap()
 void ShowHeaderInfo(void)
 
 {
-	fprintf(stderr, "\nNXDESKTOP - Version %i.%i.%i\n\n",NXDESKTOP_MAJOR_VERSION,NXDESKTOP_MINOR_VERSION,NXDESKTOP_RELEASE);
-	fprintf(stderr, "Remote Desktop Protocol client for NX.\n");
-	fprintf(stderr, "Copyright (C) 2001, 2004 NoMachine.\n");
-	fprintf(stderr, "See http://www.nomachine.com/ for more information.\n\n");
-	fprintf(stderr, "Based on rdesktop version "VERSION"\n"), 
-	fprintf(stderr, "Copyright (C) 1999-2003 Matt Chapman.\n");
-	fprintf(stderr, "See http://www.rdesktop.org/ for more information.\n\n");
-	fprintf(stderr, "Info: Agent running with pid '%d'.\n", getpid());
+    fprintf(stderr,"\nNXDESKTOP - Version %i.%i.%i\n\n",NXDESKTOP_MAJOR_VERSION,NXDESKTOP_MINOR_VERSION,NXDESKTOP_RELEASE);
+    fprintf(stderr,"Remote Desktop Protocol client for NX.\n");
+    fprintf(stderr,"Copyright (C) 2001, 2004 NoMachine.\n");
+    fprintf(stderr,"See http://www.nomachine.com/ for more information.\n\n");
+    fprintf(stderr,"Based on rdesktop version "VERSION"\n");
+    fprintf(stderr,"Copyright (C) 1999-2003 Matt Chapman.\n");
+    fprintf(stderr,"See http://www.rdesktop.org/ for more information.\n\n");
+    info("Agent running with pid '%d'.\n", getpid());
 }

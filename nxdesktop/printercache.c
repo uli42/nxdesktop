@@ -310,7 +310,7 @@ printercache_process(STREAM s)
 			break;
 		default:
 
-			unimpl("RDPDR Printer Cache Packet Type: %d\n", type);
+			unimpl("printercache_process","RDPDR Printer Cache Packet Type: %d\n", type);
 			break;
 	}
 }

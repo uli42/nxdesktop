@@ -38,46 +38,115 @@
 #include "rdesktop.h"
 
 #define NUM_ELEMENTS(array) (sizeof(array) / sizeof(array[0]))
+#define TOUCH(id, idx) (g_bmpcache[id][idx].usage = ++g_stamp)
+#define IS_PERSISTENT(id) (g_pstcache_fd[id] > 0)
+
+extern int g_pstcache_fd[];
+
+uint32 g_stamp;
+int g_num_bitmaps_in_memory[3];
 
 
 /* BITMAP CACHE */
-static HBITMAP g_bmpcache[3][600];
+static BMPCACHEENTRY g_bmpcache[3][0xa00];
+static HBITMAP g_volatile_bc[3];
+
+/* Remove the least-recently used bitmap from the cache */
+void
+cache_remove_lru_bitmap(uint8 cache_id)
+{
+	int i;
+	uint16 cache_idx = 0;
+	uint32 m = (uint32) - 1;
+	BMPCACHEENTRY *pbce;
+
+	for (i = 0; i < NUM_ELEMENTS(g_bmpcache[cache_id]); i++)
+	{
+		if (g_bmpcache[cache_id][i].bitmap && g_bmpcache[cache_id][i].usage < m)
+		{
+			cache_idx = i;
+			m = g_bmpcache[cache_id][i].usage;
+		}
+	}
+
+	pbce = &g_bmpcache[cache_id][cache_idx];
+	ui_destroy_bitmap(pbce->bitmap);
+	--g_num_bitmaps_in_memory[cache_id];
+	pbce->bitmap = 0;
+	pbce->usage = 0;
+}
 
 /* Retrieve a bitmap from the cache */
 HBITMAP
 cache_get_bitmap(uint8 cache_id, uint16 cache_idx)
 {
-	HBITMAP bitmap;
+	HBITMAP *pbitmap;
 
 	if ((cache_id < NUM_ELEMENTS(g_bmpcache)) && (cache_idx < NUM_ELEMENTS(g_bmpcache[0])))
 	{
-		bitmap = g_bmpcache[cache_id][cache_idx];
-		if (bitmap != NULL)
-			return bitmap;
+		pbitmap = &g_bmpcache[cache_id][cache_idx].bitmap;
+		if ((*pbitmap != 0) || pstcache_load_bitmap(cache_id, cache_idx))
+		{
+			if (IS_PERSISTENT(cache_id))
+				TOUCH(cache_id, cache_idx);
+
+			return *pbitmap;
+		}
+	}
+	else if ((cache_id < NUM_ELEMENTS(g_volatile_bc)) && (cache_idx == 0x7fff))
+	{
+		return g_volatile_bc[cache_id];
 	}
 
-	error("get bitmap %d:%d\n", cache_id, cache_idx);
+	error("Get Bitmap %d:%d\n", cache_id, cache_idx);
 	return NULL;
 }
 
 /* Store a bitmap in the cache */
 void
-cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap)
+cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap, uint32 stamp)
 {
 	HBITMAP old;
 
 	if ((cache_id < NUM_ELEMENTS(g_bmpcache)) && (cache_idx < NUM_ELEMENTS(g_bmpcache[0])))
 	{
-		old = g_bmpcache[cache_id][cache_idx];
+		old = g_bmpcache[cache_id][cache_idx].bitmap;
+		if (old != NULL)
+		{
+			ui_destroy_bitmap(old);
+		}
+		else
+		{
+			if (++g_num_bitmaps_in_memory[cache_id] > BMPCACHE2_C2_CELLS)
+				cache_remove_lru_bitmap(cache_id);
+		}
+
+		g_bmpcache[cache_id][cache_idx].bitmap = bitmap;
+		g_bmpcache[cache_id][cache_idx].usage = stamp;
+	}
+	else if ((cache_id < NUM_ELEMENTS(g_volatile_bc)) && (cache_idx == 0x7fff))
+	{
+		old = g_volatile_bc[cache_id];
 		if (old != NULL)
 			ui_destroy_bitmap(old);
-
-		g_bmpcache[cache_id][cache_idx] = bitmap;
+		g_volatile_bc[cache_id] = bitmap;
 	}
 	else
 	{
-		error("put bitmap %d:%d\n", cache_id, cache_idx);
+		error("Put Bitmap %d:%d\n", cache_id, cache_idx);
 	}
+}
+
+/* Updates the persistent bitmap cache MRU information on exit */
+void
+cache_save_state(void)
+{
+	int id, idx;
+
+	for (id = 0; id < NUM_ELEMENTS(g_bmpcache); id++)
+		if (IS_PERSISTENT(id))
+			for (idx = 0; idx < NUM_ELEMENTS(g_bmpcache[id]); idx++)
+				pstcache_touch_bitmap(id, idx, g_bmpcache[id][idx].usage);
 }
 
 
@@ -97,7 +166,7 @@ cache_get_font(uint8 font, uint16 character)
 			return glyph;
 	}
 
-	error("get font %d:%d\n", font, character);
+	error("Get Font %d:%d\n", font, character);
 	return NULL;
 }
 
@@ -122,7 +191,7 @@ cache_put_font(uint8 font, uint16 character, uint16 offset,
 	}
 	else
 	{
-		error("put font %d:%d\n", font, character);
+		error("Put Font %d:%d\n", font, character);
 	}
 }
 
@@ -143,7 +212,7 @@ cache_get_text(uint16 cache_id)
 			return text;
 	}
 
-	error("get text %d\n", cache_id);
+	error("Get Text %d\n", cache_id);
 	return NULL;
 }
 
@@ -165,7 +234,7 @@ cache_put_text(uint16 cache_id, void *data, int length)
 	}
 	else
 	{
-		error("put text %d\n", cache_id);
+		error("Put Text %d\n", cache_id);
 	}
 }
 
@@ -200,7 +269,7 @@ cache_get_desktop(uint32 offset, int cx, int cy, int bytes_per_pixel)
 		return &g_deskcache[offset];
 	}
 
-	error("get desktop %d:%d\n", offset, length);
+	error("Get Desktop %d:%d\n", offset, length);
 	return NULL;
 }
 
@@ -225,7 +294,7 @@ cache_put_desktop(uint32 offset, int cx, int cy, int scanline, int bytes_per_pix
 	}
 	else
 	{
-		error("put desktop %d:%d\n", offset, length);
+		error("Put Desktop %d:%d\n", offset, length);
 	}
 }
 
@@ -246,7 +315,7 @@ cache_get_cursor(uint16 cache_idx)
 			return cursor;
 	}
 
-	error("get cursor %d\n", cache_idx);
+	error("Get Cursor %d\n", cache_idx);
 	return NULL;
 }
 
@@ -266,6 +335,6 @@ cache_put_cursor(uint16 cache_idx, HCURSOR cursor)
 	}
 	else
 	{
-		error("put cursor %d\n", cache_idx);
+		error("Put Cursor %d\n", cache_idx);
 	}
 }

@@ -35,7 +35,7 @@ extern int errno;
 
 extern RDPDR_DEVICE g_rdpdr_device[];
 
-static PARALLEL_DEVICE *
+/*static PARALLEL_DEVICE *
 get_parallel_data(HANDLE handle)
 {
 	int index;
@@ -47,7 +47,7 @@ get_parallel_data(HANDLE handle)
 	}
 	return NULL;
 }
-
+*/
 
 /* Enumeration of devices from rdesktop.c        */
 /* returns numer of units found and initialized. */
@@ -98,7 +98,7 @@ parallel_create(uint32 device_id, uint32 access, uint32 share_mode, uint32 dispo
 	parallel_fd = open(g_rdpdr_device[device_id].local_path, O_RDWR);
 	if (parallel_fd == -1)
 	{
-		perror("open");
+		error("Open - parallel status access denied");
 		return STATUS_ACCESS_DENIED;
 	}
 
@@ -188,7 +188,7 @@ parallel_device_control(HANDLE handle, uint32 request, STREAM in, STREAM out)
 		default:
 
 			printf("\n");
-			unimpl("UNKNOWN IOCTL %d\n", request);
+			unimpl("paralel_device_control","UNKNOWN IOCTL %d\n", request);
 	}
 	return STATUS_SUCCESS;
 }

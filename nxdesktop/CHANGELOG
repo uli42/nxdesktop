@@ -1,5 +1,115 @@
 ChangeLog:
 
+nxdesktop-1.4.0-47
+
+- Corrected debug parameter of RDP5.
+
+- Improved formating of RDP packet dumps.
+
+- Added new debug flag, NXDESKTOP_ORDERS_DEBUG to help
+  debug the RDP packets order process.
+
+nxdesktop-1.4.0-46
+
+- Added missing debug flag to avoid -kbtype message.
+
+nxdesktop-1.4.0-45
+
+- Added debug flag to remove a unnecessary warning message.
+
+- The default Makeconf file had a debug flag. Removed.
+
+nxdesktop-1.4.0-44
+
+- Allocated size hints are now been correctly freed.
+
+- Error, debug, information and warning messages were improved and
+  standarized. Much more information on the categories above were
+  added, specialy concerning the network communication layers:
+  RDP, TCP, MCS, ISO and SEC. Each layer now has it's own debug
+  activation flag such as: NXDESKTOP_MCS_DEBUG, NXDESKTOP_TCP_DEBUG,
+  NXDESKTOP_ISO_DEBUG, NXDESKTOP_RDP_DEBUG, NXDESKTOP_XWIN_DEBUG,
+  NXDESKTOP_SEC_DEBUG, NXDESKTOP_RDP5_DEBUG.
+      
+- Improved the error handling allowing nxdesktop to terminate 
+  gracefully in the eventuality of communication problems.
+  
+NOTE: Those changes above were implemented previously in 
+      nxdesktop-1.4.1 series and backported.
+
+nxdesktop-1.4.0-43
+
+- The text rendering is now fully compatible with NX and
+  the newest RDP specifications avaliable.
+  
+- Changes on order.c to adequate to the modifications
+  above.
+  
+- Small changes on variables types in cache.c and parallel.c
+  to avoid compiler warnings.
+  
+- Removed CVS directories copied into nxdesktop tree by mistake.
+
+nxdesktop-1.4.0-42
+
+- Typo in CHANGELOG corrected.
+
+- Two new paramenters added: -z and -P.
+  -z enables the MPPC compression and  
+  -P enables the persistent bitmap caching recently implemented.
+  Both features are disabled by default.
+
+- Changed PDU manipulation to work with the updated text rendering
+  process.
+
+- Text rendering re-written to solve the problem with GroupWise
+  client and better compatibility with the latest changes on RDP5.
+  
+NOTE: The new text rendering process is working nicely but still 
+      needs further optimization to improve performance and be 
+      fully compatible with the text caching process.
+
+nxdesktop-1.4.0-41
+
+- A small change was made to minimize the problem with wrongly 
+  wrapping text in GroupWise client when used on windows
+  servers with the latest patches.
+  
+NOTE: This is not a real solution, just minimizes the problem.
+      A definitive solution will be implemented on monday.
+
+nxdesktop-1.4.0-40
+
+- Solved problem with bitmaps on windows 2003 caused by the 
+  changes on the caching process. 
+
+nxdesktop-1.4.0-39
+
+- Persistent bitmap cache implemented but inactive.
+  It's been reported that the newest patch for windows
+  servers can deny acesss if the RDP client does not report
+  correct handling capability of bitmap cache version 2 for RDP5.
+  This new bitmap cache was implemented but to avoid further 
+  problems, it just reports correctly the new parameters 
+  but the persistent cache is disabled.
+
+nxdesktop-1.4.0-38
+
+- Solved problem of RDP session hanging on windows servers 
+  updated with the latest patches.
+  This problem was caused by a change on the encryption
+  procedures into the windows server.
+
+nxdesktop-1.4.0-37
+
+- Merged with nxdesktop-1.4.0-36-ADI1
+
+- Solved problem with the clipboard when executed from windows
+  client.
+  
+NOTE: Many thanks to Dario for his help with this clipboard
+      problem.
+
 nxdesktop-1.4.0-36
 
 - Removed debug code forgot behind by mistake.

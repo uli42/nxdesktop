@@ -283,6 +283,8 @@ rdpdr_send_available(void)
 	{
 		out_uint32_le(s, g_rdpdr_device[i].device_type);
 		out_uint32_le(s, i);	/* RDP Device ID */
+		/* Is it possible to use share names longer than 8 chars?
+		   /astrand */
 		out_uint8p(s, g_rdpdr_device[i].name, 8);
 
 		switch (g_rdpdr_device[i].device_type)
@@ -696,7 +698,7 @@ rdpdr_process_irp(STREAM s)
 			break;
 
 		default:
-			unimpl("IRP major=0x%x minor=0x%x\n", major, minor);
+			unimpl("rdpdr_process_irp","IRP major=0x%x minor=0x%x\n", major, minor);
 			break;
 	}
 
@@ -804,7 +806,7 @@ rdpdr_process(STREAM s)
 			return;
 		}
 	}
-	unimpl("RDPDR packet type %c%c%c%c\n", magic[0], magic[1], magic[2], magic[3]);
+	unimpl("rdpdr_process","RDPDR packet type %c%c%c%c\n", magic[0], magic[1], magic[2], magic[3]);
 }
 
 BOOL

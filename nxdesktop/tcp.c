@@ -127,7 +127,8 @@ tcp_send(STREAM s)
 		sent = send(sock, s->data + total, length - total, 0);
 		if (sent <= 0)
 		{
-			error("send: %s\n", strerror(errno));
+			error("tcp_send: %s\n", strerror(errno));
+			s = NULL;
 			return;
 		}
 
@@ -141,7 +142,7 @@ tcp_send(STREAM s)
 	#ifdef NXDESKTOP_TCP_DEBUG
 	if ((tcpWritten / 1024) > kiloWritten)
 	{
-		fprintf(stderr, "tcp_send: %ld total bytes written.\n", tcpWritten);
+		nxdesktopDebug("tcp_send","%ld total bytes written.\n", tcpWritten);
 	}
 	#endif
 }
@@ -197,14 +198,17 @@ tcp_recv(STREAM s, uint32 length)
 	while (length > 0)
 	{
 		if (!ui_select(sock))
-			/* User quit */
-			return NULL;
+		    {
+		    /* User quit */
+		    return NULL;
+		    s = NULL;
+		    }
 
 		rcvd = recv(sock, s->end, length, 0);
 		
 		if (rcvd < 0)
 		{
-			error("recv: %s\n", strerror(errno));
+			error("tcp_recv: Receiving error %s\n", strerror(errno));
 			close(sock);
 			if (nxDisplay[0] != 0)
 			{
@@ -213,11 +217,13 @@ tcp_recv(STREAM s, uint32 length)
 		    	    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
 		    	    wait(NULL);
 			}
+			s = NULL;
 			return NULL;
 		}
 		else if (rcvd == 0)
 		{
-			error("Connection closed\n");
+			error("tcp_recv: Connection closed\n");
+			s = NULL;
 			return NULL;
 		}
 		
@@ -236,7 +242,7 @@ tcp_recv(STREAM s, uint32 length)
 		    if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
         		{
 			    #ifdef NXDESKTOP_NXKARMA_DEBUG
-                	    fprintf(stderr,"Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
+                	    nxdesktopDebug("tcp_recv","Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
 			    #endif
 			
 			    NXSync(g_display, NXSyncWaitForLink, 0);
@@ -244,7 +250,7 @@ tcp_recv(STREAM s, uint32 length)
     			    {
 			    }
 			    #ifdef NXDESKTOP_NXKARMA_DEBUG
-                	    fprintf(stderr,"Karma received\n");
+                	    nxdesktopDebug("tcp_recv","Karma received\n");
 			    #endif
                 	    bytesFromLastKarma = 0;
 			}
@@ -263,7 +269,7 @@ tcp_recv(STREAM s, uint32 length)
 	#ifdef NXDESKTOP_TCP_DEBUG
 	if ((tcpRead / 1024) > kiloRead)
 	{
-		fprintf(stderr, "tcp_recv: %ld total bytes read.\n", tcpRead);
+	    nxdesktopDebug("tcp_recv","%ld total bytes read.\n", tcpRead);
 	}
 	#endif
 
@@ -297,7 +303,7 @@ tcp_connect(char *server)
 
 	if (n < 0)
 	{
-		error("getaddrinfo: %s\n", gai_strerror(n));
+		error("getaddrinfo failed: %s\n", gai_strerror(n));
 		return False;
 	}
 
@@ -319,7 +325,7 @@ tcp_connect(char *server)
 
 	if (sock == -1)
 	{
-		error("%s: unable to connect\n", server);
+		error("Unable to connect to '%s'\n", server);
 		return False;
 	}
 
@@ -328,15 +334,15 @@ tcp_connect(char *server)
 	struct hostent *nslookup;
 	struct sockaddr_in servaddr;
 
-	//if (sock_done)
-	//    return True;
+	if (sock_done)
+	    return True;
 	if ((nslookup = gethostbyname(server)) != NULL)
 	{
 		memcpy(&servaddr.sin_addr, nslookup->h_addr, sizeof(servaddr.sin_addr));
 	}
 	else if ((servaddr.sin_addr.s_addr = inet_addr(server)) == INADDR_NONE)
 	{
-		error("%s: unable to resolve host\n", server);
+		error("Unable to resolve host '%s'\n", server);
 		if (nxDisplay[0] != 0)
 		{
 		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nUnable to resolve host.",server);
@@ -349,7 +355,7 @@ tcp_connect(char *server)
 
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		error("socket: %s\n", strerror(errno));
+		error("Connection to RDP server '%s' failed. Reason is %d: %s.\n",server,errno,strerror(errno));
 		if (nxDisplay[0] != 0)
 		{
 		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
@@ -379,7 +385,7 @@ tcp_connect(char *server)
 		{
 			errno = 110;
 		}
-		error("connect: %s\n", strerror(errno));
+		error("Connection to RDP server '%s' failed. Reason is %d: %s.\n",server,errno,strerror(errno));
 		close(sock);
 		sigaction(SIGALRM, NULL, &sigact);
 		if (nxDisplay[0] != 0)
@@ -406,7 +412,7 @@ tcp_connect(char *server)
 		 setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
 				&rdp_bufsize, sizeof(rdp_bufsize)) < 0)
 	{
-		fprintf(stderr, "tcp_connect: Cannot resize receive buffer to %d. Error is '%s'.\n",
+		error("Cannot resize receive buffer to %d. Error is '%s'.\n",
 					rdp_bufsize, strerror(errno));
 		close(sock);
 

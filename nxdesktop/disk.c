@@ -265,7 +265,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 
 				default:
 
-					perror("opendir");
+					error("Opendir\n");
 					return STATUS_NO_SUCH_FILE;
 			}
 		}
@@ -309,14 +309,14 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 					return STATUS_OBJECT_NAME_COLLISION;
 				default:
 
-					perror("open");
+					error("Open\n");
 					return STATUS_NO_SUCH_FILE;
 			}
 		}
 
 		/* all read and writes of files should be non blocking */
 		if (fcntl(handle, F_SETFL, O_NONBLOCK) == -1)
-			perror("fcntl");
+			error("FCNTL\n");
 	}
 
 	if (handle >= MAX_OPEN_FILES)
@@ -383,7 +383,7 @@ disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * re
 			case EISDIR:
 				return STATUS_FILE_IS_A_DIRECTORY;
 			default:
-				perror("read");
+				error("Read");
 				return STATUS_INVALID_PARAMETER;
 		}
 	}
@@ -404,7 +404,7 @@ disk_write(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * r
 
 	if (n < 0)
 	{
-		perror("write");
+		error("Write");
 		*result = 0;
 		switch (errno)
 		{
@@ -432,7 +432,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 	// Get information about file
 	if (fstat(handle, &filestat) != 0)
 	{
-		perror("stat");
+		perror("Stat");
 		out_uint8(out, 0);
 		return STATUS_ACCESS_DENIED;
 	}
@@ -495,7 +495,7 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 
 		default:
 
-			unimpl("IRP Query (File) Information class: 0x%x\n", info_class);
+			unimpl("disk_query_information","IRP Query (File) Information class: 0x%x\n", info_class);
 			return STATUS_INVALID_PARAMETER;
 	}
 	return STATUS_SUCCESS;
@@ -619,7 +619,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 
 			if (rename(pfinfo->path, fullpath) != 0)
 			{
-				perror("rename");
+				error("Rename");
 				return STATUS_ACCESS_DENIED;
 			}
 			break;
@@ -674,14 +674,14 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 			   work with Linux FAT fs */
 			if (ftruncate(handle, length) != 0)
 			{
-				perror("ftruncate");
+				error("FTruncate");
 				return STATUS_DISK_FULL;
 			}
 
 			break;
 		default:
 
-			unimpl("IRP Set File Information class: 0x%x\n", info_class);
+			unimpl("disk_set_information","IRP Set File Information class: 0x%x\n", info_class);
 			return STATUS_INVALID_PARAMETER;
 	}
 	return STATUS_SUCCESS;
@@ -698,7 +698,7 @@ FsVolumeInfo(char *fpath)
 
 	/* initialize */
 	memset(&info, 0, sizeof(info));
-	strcpy(info.label, "RDESKTOP");
+	strcpy(info.label, "NXDESKTOP");
 	strcpy(info.type, "RDPFS");
 
 	fdfs = setmntent(MNTENT_PATH, "r");
@@ -747,7 +747,7 @@ FsVolumeInfo(char *fpath)
 
 	/* initialize */
 	memset(&info, 0, sizeof(info));
-	strcpy(info.label, "RDESKTOP");
+	strcpy(info.label, "NXDESKTOP");
 	strcpy(info.type, "RDPFS");
 
 #endif
@@ -766,7 +766,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 
 	if (STATFS_FN(pfinfo->path, &stat_fs) != 0)
 	{
-		perror("statfs");
+		error("StatFS");
 		return STATUS_ACCESS_DENIED;
 	}
 
@@ -814,7 +814,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 
 		default:
 
-			unimpl("IRP Query Volume Information class: 0x%x\n", info_class);
+			unimpl("disk_query_volume_information","IRP Query Volume Information class: 0x%x\n", info_class);
 			return STATUS_INVALID_PARAMETER;
 	}
 	return STATUS_SUCCESS;
@@ -921,7 +921,7 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 			   FileFullDirectoryInformation, and
 			   FileNamesInformation */
 
-			unimpl("IRP Query Directory sub: 0x%x\n", info_class);
+			unimpl("disk_query_directory","IRP Query Directory sub: 0x%x\n", info_class);
 			return STATUS_INVALID_PARAMETER;
 	}
 
@@ -949,7 +949,7 @@ disk_device_control(HANDLE handle, uint32 request, STREAM in, STREAM out)
 		case 25:	// ?
 		case 42:	// ?
 		default:
-			unimpl("DISK IOCTL %d\n", request);
+			unimpl("disk_device_control","DISK IOCTL %d\n", request);
 			return STATUS_INVALID_PARAMETER;
 	}
 

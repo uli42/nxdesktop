@@ -60,7 +60,7 @@ get_property_value(char *propname, long max_length,
 	property = XInternAtom(g_display, propname, True);
 	if (property == None)
 	{
-		fprintf(stderr, "Atom %s does not exist\n", propname);
+		error("Atom %s does not exist\n", propname);
 		return (-1);
 	}
 
@@ -74,25 +74,25 @@ get_property_value(char *propname, long max_length,
 
 	if (result != Success)
 	{
-		fprintf(stderr, "XGetWindowProperty failed\n");
+		error("XGetWindowProperty failed\n");
 		return (-1);
 	}
 
 	if (actual_type_return == None || actual_format_return == 0)
 	{
-		fprintf(stderr, "Root window is missing property %s\n", propname);
+		error("Root window is missing property %s\n", propname);
 		return (-1);
 	}
 
 	if (bytes_after_return)
 	{
-		fprintf(stderr, "%s is too big for me\n", propname);
+		error("%s is too big for me\n", propname);
 		return (-1);
 	}
 
 	if (actual_format_return != 32)
 	{
-		fprintf(stderr, "%s has bad format\n", propname);
+		error("%s has bad format\n", propname);
 		return (-1);
 	}
 
@@ -111,11 +111,14 @@ get_current_desktop(void)
 	int current_desktop;
 
 	if (get_property_value("_NET_CURRENT_DESKTOP", 1, &nitems_return, &prop_return) < 0)
-		return (-1);
+	{
+	    error("Unable to get current desktop number\n");
+	    return (-1);
+	}
 
 	if (nitems_return != 1)
 	{
-		fprintf(stderr, "_NET_CURRENT_DESKTOP has bad length\n");
+		error("_NET_CURRENT_DESKTOP has bad length\n");
 		return (-1);
 	}
 
@@ -143,12 +146,15 @@ get_current_workarea(uint32 * x, uint32 * y, uint32 * width, uint32 * height)
 	const uint32 max_prop_length = 32 * 4;	/* Max 32 desktops */
 
 	if (get_property_value("_NET_WORKAREA", max_prop_length, &nitems_return, &prop_return) < 0)
-		return (-1);
+	{
+	    error("Unable to get workarea geometry\n");
+	    return (-1);
+	}
 
 	if (nitems_return % 4)
 	{
-		fprintf(stderr, "_NET_WORKAREA has odd length\n");
-		return (-1);
+	    error("_NET_WORKAREA has odd length\n");
+	    return (-1);
 	}
 
 	current_desktop = get_current_desktop();

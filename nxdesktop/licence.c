@@ -342,6 +342,6 @@ licence_process(STREAM s)
 			break;
 
 		default:
-			unimpl("licence tag 0x%x\n", tag);
+			unimpl("license_process","licence tag 0x%x\n", tag);
 	}
 }

@@ -36,6 +36,7 @@
 /**************************************************************************/
 
 #include "rdesktop.h"
+#include "proto.h"
 
 uint16 g_mcs_userid;
 extern VCHANNEL g_channels[];
@@ -171,9 +172,9 @@ mcs_recv_connect_response(STREAM mcs_data)
 	int length;
 	STREAM s;
 
-	s = iso_recv();
+	s = iso_recv(NULL);
 	if (s == NULL)
-		return False;
+	    return False;
 
 	ber_parse_header(s, MCS_CONNECT_RESPONSE, &length);
 
@@ -244,7 +245,7 @@ mcs_recv_aucf(uint16 * mcs_userid)
 	uint8 opcode, result;
 	STREAM s;
 
-	s = iso_recv();
+	s = iso_recv(NULL);
 	if (s == NULL)
 		return False;
 
@@ -293,7 +294,7 @@ mcs_recv_cjcf(void)
 	uint8 opcode, result;
 	STREAM s;
 
-	s = iso_recv();
+	s = iso_recv(NULL);
 	if (s == NULL)
 		return False;
 
@@ -358,15 +359,17 @@ mcs_send(STREAM s)
 
 /* Receive an MCS transport data packet */
 STREAM
-mcs_recv(uint16 * channel)
+mcs_recv(uint16 * channel, uint8 * rdpver)
 {
 	uint8 opcode, appid, length;
 	STREAM s;
 
-	s = iso_recv();
+	s = iso_recv(rdpver);
 	if (s == NULL)
 		return NULL;
-
+	if (rdpver != NULL)
+		if (*rdpver != 3)
+			return s;
 	in_uint8(s, opcode);
 	appid = opcode >> 2;
 	if (appid != MCS_SDIN)
@@ -377,14 +380,12 @@ mcs_recv(uint16 * channel)
 		}
 		return NULL;
 	}
-
 	in_uint8s(s, 2);	/* userid */
 	in_uint16_be(s, *channel);
 	in_uint8s(s, 1);	/* flags */
 	in_uint8(s, length);
 	if (length & 0x80)
 		in_uint8s(s, 1);	/* second byte of length */
-
 	return s;
 }
 
@@ -395,32 +396,56 @@ mcs_connect(char *server, STREAM mcs_data, char *username)
 	unsigned int i;
 
 	if (!iso_connect(server, username))
-		return False;
-
+	{
+	    error("Iso connection to %s for user %s failed.\n",server,username);
+	    return False;
+	}
+	#ifdef NXDESKTOP_MCS_DEBUG
+	else
+	{
+	    nxdesktopDebug("mcs_connect","iso connection sucessful.\n");
+	}
+	#endif
+	
 	mcs_send_connect_initial(mcs_data);
 	if (!mcs_recv_connect_response(mcs_data))
-		goto error;
+	{
+	    error("mcs initial connection failed.\n");
+	    goto error;
+	}
 
 	mcs_send_edrq();
 
 	mcs_send_aurq();
 	if (!mcs_recv_aucf(&g_mcs_userid))
-		goto error;
+	{
+	    error("mcs aucf failed.\n");
+	    goto error;
+	}
 
 	mcs_send_cjrq(g_mcs_userid + MCS_USERCHANNEL_BASE);
 
 	if (!mcs_recv_cjcf())
-		goto error;
+	{
+	    error("mcs cjrq (user id) failed.\n");
+	    goto error;
+	}
 
 	mcs_send_cjrq(MCS_GLOBAL_CHANNEL);
 	if (!mcs_recv_cjcf())
-		goto error;
+	{
+	    error("mcs cjrq (global channel) failed.\n");
+	    goto error;
+	}
 
 	for (i = 0; i < g_num_channels; i++)
 	{
 		mcs_send_cjrq(g_channels[i].mcs_id);
 		if (!mcs_recv_cjcf())
-			goto error;
+		{
+		    error("mcs cjrq (channels selection) failed.\n");
+		    goto error;
+		}
 	}
 	return True;
 
@@ -433,5 +458,8 @@ mcs_connect(char *server, STREAM mcs_data, char *username)
 void
 mcs_disconnect(void)
 {
+	#ifdef NXDESKTOP_MCS_DEBUG
+	nxdesktopDebug("mcs_disconnect","processing mcs disconnection\n");
+	#endif
 	iso_disconnect();
 }

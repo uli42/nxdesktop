@@ -388,8 +388,6 @@ xclip_init(void)
 	if (!cliprdr_init())
 		return;
 
-	
-
 	primary_atom = XInternAtom(g_display, "PRIMARY", False);
 	clipboard_atom = XInternAtom(g_display, "CLIPBOARD", False);
 	targets_atom = XInternAtom(g_display, "TARGETS", False);
@@ -409,7 +407,7 @@ xclip_init(void)
 	rdesktop_clipboard_formats_atom =
 		XInternAtom(g_display, "_RDESKTOP_CLIPBOARD_FORMATS", False);
 	XSelectInput(g_display, DefaultRootWindow(g_display), PropertyChangeMask);
-	
-	xclip_handle_SelectionClear();
-	
+	/* NX */
+	XSetSelectionOwner(g_display, XA_PRIMARY, DefaultRootWindow(g_display), CurrentTime); 
+	/* NX */
 }

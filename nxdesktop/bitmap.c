@@ -22,7 +22,7 @@
 /*                                                                        */
 /* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
-/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software    */
 /* are copyright of NoMachine. Redistribution and use of the present      */
 /* software is allowed according to terms specified in the file LICENSE   */
 /* which comes in the source distribution.                                */
@@ -276,7 +276,7 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 					REPEAT(line[x] = 0)
 					break;
 				default:
-					unimpl("bitmap opcode 0x%x\n", opcode);
+					unimpl("bitmapdecompress1", "bitmap opcode 0x%x\n", opcode);
 					return False;
 			}
 		}
@@ -475,7 +475,7 @@ bitmap_decompress2(uint8 * output, int width, int height, uint8 * input, int siz
 					REPEAT(line[x] = 0)
 					break;
 				default:
-					unimpl("bitmap opcode 0x%x\n", opcode);
+					unimpl("bitmapdecompress2","bitmap opcode 0x%x\n", opcode);
 					return False;
 			}
 		}
@@ -761,7 +761,7 @@ bitmap_decompress3(uint8 * output, int width, int height, uint8 * input, int siz
 					)
 					break;
 				default:
-					unimpl("bitmap opcode 0x%x\n", opcode);
+					unimpl("bitmapdecompress3","bitmap opcode 0x%x\n", opcode);
 					return False;
 			}
 		}
@@ -1000,7 +1000,7 @@ bitmap_decompressx(uint8 *output, int width, int height, uint8 *input, int size,
 					break;
 
 				default:
-					unimpl("bitmap opcode 0x%x\n", opcode);
+					unimpl("bitmapdecompressx","bitmap opcode 0x%x\n", opcode);
 					return False;
 			}
 		}
@@ -1031,7 +1031,7 @@ bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size
 	}
 #else
 	BOOL rv;
-  rv = bitmap_decompressx(output, width, height, input, size, Bpp);
+	rv = bitmap_decompressx(output, width, height, input, size, Bpp);
 #endif
 	return rv;
 }

@@ -665,7 +665,7 @@ serial_device_control(HANDLE handle, uint32 request, STREAM in, STREAM out)
 			break;
 #endif
 		default:
-			unimpl("SERIAL IOCTL %d\n", request);
+			unimpl("serial_device_control","SERIAL IOCTL %d\n", request);
 			return STATUS_INVALID_PARAMETER;
 	}
 
