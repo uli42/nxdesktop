@@ -37,14 +37,18 @@
 #define KEYMAP_MASK 0xffff
 #define KEYMAP_MAX_LINE_LENGTH 80
 
-extern Display *display;
+extern Display *g_display;
+extern Window g_wnd;
 extern char keymapname[16];
 extern int keylayout;
-/*
-extern BOOL g_enable_compose;
 extern int g_win_button_size;
+extern BOOL g_enable_compose;
 extern BOOL g_use_rdp5;
-*/
+extern BOOL g_numlock_sync;
+/* NX */
+static BOOL first_time_read_keyboard = True;
+static unsigned int initial_keyboard_state;
+/* NX */
 static BOOL keymap_loaded;
 static key_translation keymap[KEYMAP_SIZE];
 static int min_keycode;
@@ -52,15 +56,6 @@ static uint16 remote_modifier_state = 0;
 static uint16 saved_remote_modifier_state = 0;
 
 static void update_modifier_state(uint8 scancode, BOOL pressed);
-
-void rdp_send_scancode(uint32 time, uint16 flags, uint8 scancode);
-
-char *get_ksname(uint32 keysym);
-void ensure_remote_modifiers(uint32 ev_time, key_translation tr);
-
-extern BOOL get_key_state(unsigned int state, uint32 keysym);
-
-
 
 static void
 add_to_keymap(char *keyname, uint8 scancode, uint16 modifiers, char *mapname)
@@ -81,7 +76,6 @@ add_to_keymap(char *keyname, uint8 scancode, uint16 modifiers, char *mapname)
 	keymap[keysym & KEYMAP_MASK].modifiers = modifiers;
 
 	return;
-
 }
 
 
@@ -99,8 +93,8 @@ xkeymap_read(char *mapname)
 	uint16 modifiers;
 
 
-	strcpy(path, "/usr/NX/share/keymaps-windows/");
-	strncat(path, mapname, sizeof(path) - sizeof("/usr/NX/share/keymaps-windows/"));
+	strcpy(path, KEYMAP_PATH);
+	strncat(path, mapname, sizeof(path) - sizeof(KEYMAP_PATH));
 
 	fp = fopen(path, "r");
 	if (fp == NULL)
@@ -112,7 +106,7 @@ xkeymap_read(char *mapname)
 		fp = fopen(inplace_path, "r");
 		if (fp == NULL)
 		{
-			error("Failed to open keymap %s\n", inplace_path);
+			error("Failed to open keymap %s\n", path);
 			return False;
 		}
 	}
@@ -146,17 +140,16 @@ xkeymap_read(char *mapname)
 		/* map */
 		if (strncmp(line, "map ", 4) == 0)
 		{
-        		keylayout = strtol(line + 4, NULL, 16);
+			keylayout = strtol(line + 4, NULL, 16);
 			DEBUG_KBD(("Keylayout 0x%x\n", keylayout));
-        		continue;
+			continue;
 		}
 
 		/* compose */
 		if (strncmp(line, "enable_compose", 15) == 0)
 		{
 			DEBUG_KBD(("Enabling compose handling\n"));
-/*			g_enable_compose = True;
-*/
+			g_enable_compose = True;
 			continue;
 		}
 
@@ -212,12 +205,11 @@ xkeymap_read(char *mapname)
 			MASK_ADD_BITS(modifiers, MapInhibitMask);
 		}
 
-
 		add_to_keymap(keyname, scancode, modifiers, mapname);
 
 		if (strstr(line_rest, "addupper"))
 		{
-			/* Automatically add uppercase key, with same modifiers
+			/* Automatically add uppercase key, with same modifiers 
 			   plus shift */
 			for (p = keyname; *p; p++)
 				*p = toupper((int) *p);
@@ -252,7 +244,7 @@ xkeymap_init(void)
 			keymap_loaded = True;
 	}
 
-	XDisplayKeycodes(display, &min_keycode, (int *) &max_keycode);
+	XDisplayKeycodes(g_display, &min_keycode, (int *) &max_keycode);
 }
 
 static void
@@ -267,15 +259,40 @@ send_winkey(uint32 ev_time, BOOL pressed, BOOL leftkey)
 
 	if (pressed)
 	{
-		/* RDP4 doesn't support winkey. Fake with Ctrl-Esc */
-		rdp_send_scancode(ev_time, RDP_KEYPRESS, SCANCODE_CHAR_LCTRL);
-		rdp_send_scancode(ev_time, RDP_KEYPRESS, SCANCODE_CHAR_ESC);
+		if (g_use_rdp5)
+		{
+			rdp_send_scancode(ev_time, RDP_KEYPRESS, winkey);
+		}
+		else
+		{
+			/* RDP4 doesn't support winkey. Fake with Ctrl-Esc */
+			rdp_send_scancode(ev_time, RDP_KEYPRESS, SCANCODE_CHAR_LCTRL);
+			rdp_send_scancode(ev_time, RDP_KEYPRESS, SCANCODE_CHAR_ESC);
+		}
 	}
 	else
 	{
 		/* key released */
-		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_ESC);
-		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_LCTRL);
+		if (g_use_rdp5)
+		{
+			rdp_send_scancode(ev_time, RDP_KEYRELEASE, winkey);
+		}
+		else
+		{
+			rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_ESC);
+			rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_LCTRL);
+		}
+	}
+}
+
+static void
+reset_winkey(uint32 ev_time)
+{
+	if (g_use_rdp5)
+	{
+		/* For some reason, it seems to suffice to release
+		 *either* the left or right winkey. */
+		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_LWIN);
 	}
 }
 
@@ -292,10 +309,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 				|| get_key_state(state, XK_Control_R)))
 			{
 				/* Ctrl-Alt-Enter: toggle full screen */
-/*
 				if (pressed)
 					xwin_toggle_fullscreen();
-*/
 				return True;
 			}
 			break;
@@ -311,6 +326,7 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 			}
 			/* No release sequence */
 			return True;
+			break;
 
 		case XK_Pause:
 			/* According to MS Keyboard Scan Code
@@ -337,27 +353,34 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 					       0x1d, 0);
 			}
 			return True;
+			break;
 
 		case XK_Meta_L:	/* Windows keys */
 		case XK_Super_L:
 		case XK_Hyper_L:
 			send_winkey(ev_time, pressed, True);
 			return True;
+			break;
 
 		case XK_Meta_R:
 		case XK_Super_R:
 		case XK_Hyper_R:
 			send_winkey(ev_time, pressed, False);
 			return True;
+			break;
 
 		case XK_space:
-                       break;
 			/* Prevent access to the Windows system menu in single app mode */
-/*
 			if (g_win_button_size
 			    && (get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R)))
 				return True;
-*/
+			break;
+		case XK_Num_Lock:
+			/* FIXME: We might want to do RDP_INPUT_SYNCHRONIZE here, if g_numlock_sync */
+			if (!g_numlock_sync)
+				/* Inhibit */
+				return True;
+			break;
 
 	}
 	return False;
@@ -396,7 +419,7 @@ xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state)
 	}
 
 	if (keymap_loaded)
-		fprintf(stderr,"No translation for (keysym 0x%lx, %s)\n", (long) keysym, get_ksname(keysym));
+		warning("No translation for (keysym 0x%lx, %s)\n", keysym, get_ksname(keysym));
 
 	/* not in keymap, try to interpret the raw scancode */
 	if (((int) keycode >= min_keycode) && (keycode <= 0x60))
@@ -504,28 +527,32 @@ ensure_remote_modifiers(uint32 ev_time, key_translation tr)
 	if (is_modifier(tr.scancode))
 		return;
 
-	/* NumLock */
-	if (MASK_HAS_BITS(tr.modifiers, MapNumLockMask)
-	    != MASK_HAS_BITS(remote_modifier_state, MapNumLockMask))
+	if (!g_numlock_sync)
 	{
-		/* The remote modifier state is not correct */
-		uint16 new_remote_state;
-
-		if (MASK_HAS_BITS(tr.modifiers, MapNumLockMask))
+		/* NumLock */
+		if (MASK_HAS_BITS(tr.modifiers, MapNumLockMask)
+		    != MASK_HAS_BITS(remote_modifier_state, MapNumLockMask))
 		{
-			DEBUG_KBD(("Remote NumLock state is incorrect, activating NumLock.\n"));
-			new_remote_state = KBD_FLAG_NUMLOCK;
-			remote_modifier_state = MapNumLockMask;
-		}
-		else
-		{
-			DEBUG_KBD(("Remote NumLock state is incorrect, deactivating NumLock.\n"));
-			new_remote_state = 0;
-			remote_modifier_state = 0;
-		}
+			/* The remote modifier state is not correct */
+			uint16 new_remote_state;
 
-		rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0, new_remote_state, 0);
+			if (MASK_HAS_BITS(tr.modifiers, MapNumLockMask))
+			{
+				DEBUG_KBD(("Remote NumLock state is incorrect, activating NumLock.\n"));
+				new_remote_state = KBD_FLAG_NUMLOCK;
+				remote_modifier_state = MapNumLockMask;
+			}
+			else
+			{
+				DEBUG_KBD(("Remote NumLock state is incorrect, deactivating NumLock.\n"));
+				new_remote_state = 0;
+				remote_modifier_state = 0;
+			}
+
+			rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0, new_remote_state, 0);
+		}
 	}
+
 
 	/* Shift. Left shift and right shift are treated as equal; either is fine. */
 	if (MASK_HAS_BITS(tr.modifiers, MapShiftMask)
@@ -575,9 +602,40 @@ ensure_remote_modifiers(uint32 ev_time, key_translation tr)
 }
 
 
-void
-reset_modifier_keys(unsigned int state)
+unsigned int
+read_keyboard_state()
 {
+	unsigned int state = 0;
+	Window wdummy;
+	int dummy;
+	
+	if (first_time_read_keyboard) 
+	    {
+	    XQueryPointer(g_display, g_wnd, &wdummy, &wdummy, &dummy, &dummy, &dummy, &dummy, &state);
+	    first_time_read_keyboard = False;
+	    initial_keyboard_state = state;
+	    }
+	return initial_keyboard_state;
+}
+
+
+uint16
+ui_get_numlock_state(unsigned int state)
+{
+	uint16 numlock_state = 0;
+
+	if (get_key_state(state, XK_Num_Lock))
+		numlock_state = KBD_FLAG_NUMLOCK;
+
+	return numlock_state;
+}
+
+
+void
+reset_modifier_keys()
+{
+	unsigned int state = read_keyboard_state();
+
 	/* reset keys */
 	uint32 ev_time;
 	ev_time = time(NULL);
@@ -604,6 +662,11 @@ reset_modifier_keys(unsigned int state)
 	if (MASK_HAS_BITS(remote_modifier_state, MapRightAltMask) &&
 	    !get_key_state(state, XK_Alt_R) && !get_key_state(state, XK_Mode_switch))
 		rdp_send_scancode(ev_time, RDP_KEYRELEASE, SCANCODE_CHAR_RALT);
+
+	reset_winkey(ev_time);
+
+	if (g_numlock_sync)
+		rdp_send_input(ev_time, RDP_INPUT_SYNCHRONIZE, 0, ui_get_numlock_state(state), 0);
 }
 
 
@@ -645,7 +708,7 @@ update_modifier_state(uint8 scancode, BOOL pressed)
 		case SCANCODE_CHAR_NUMLOCK:
 			/* KeyReleases for NumLocks are sent immediately. Toggle the
 			   modifier state only on Keypress */
-			if (pressed)
+			if (pressed && !g_numlock_sync)
 			{
 				BOOL newNumLockState;
 				newNumLockState =
@@ -654,7 +717,6 @@ update_modifier_state(uint8 scancode, BOOL pressed)
 				MASK_CHANGE_BIT(remote_modifier_state,
 						MapNumLockMask, newNumLockState);
 			}
-			break;
 	}
 
 #ifdef WITH_DEBUG_KBD

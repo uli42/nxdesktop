@@ -1,107 +1,55 @@
 ChangeLog:
 
-nxdesktop-1.3.2-1
+nxdesktop-1.3.2-9
 
-- Corrected typos in CHANGELOG inherited from 1.3.1.
+- Reversed modifications imported from 1.3.1 branch
+  in order to try to improve stability.
 
-- Corrected compilation error caused by building 1.3.1 with a
-  superseded version of nxcompext.
+nxdesktop-1.3.2-8
 
-- Changed text of the error message of the dialog box added in
-  version 1.3.1-7.
+- Added support for RDP compressed and non-compressed 
+  image cache.
 
-- Removed xwin.c backup file left behind by mistake. 
+- Image cache is now enabled by default.
 
-- Opened the 1.3.2 development branch.
+- Found wrong RDP initialization parameter left from previous 
+  attempts of use the compressed image cache.
+  Return it back to the original value seens to correct 
+  the hanging problem reported.
 
-nxdesktop-1.3.1-8
+NOTE: Despite the change above seens to stop the hanging 
+      problem, more testing is required to be sure. 
+      In any case, the original way the RDP inputs are 
+      handled can (and will) be vastly improve.
 
-- Fixed compilation error introduced by accident in 1.3.1-7.
+nxdesktop-1.3.2-7
 
-- Updating version string to 1.3.1. 
+- Added extra parameter -imgcache to enable the
+  experimental image cache .
+  
+- Image cache is disabled by default now.
 
-nxdesktop-1.3.1-7
+- Removed modified RDP compressiom parameter left 
+  from experiences.
 
-- Added dialog box and error handling to deal with windows 2003
-  connection problem.
+nxdesktop-1.3.2-6
 
-nxdesktop-1.3.1-6
+- Changed log and initial messages.
 
-- New caption and more detail information in connection error
-  dialog box.
+- Cleaned up compiling warnings.
 
-nxdesktop-1.3.1-5
+- Corrected typo in CHANGELOG.
 
-- Fixed a problem in the initialization procedure. The new code
-  performs the needed operations on the X layer before opening
-  the connection to the RDP server.
+nxdesktop-1.3.2-5
 
-nxdesktop-1.3.1-4
+- Enabled image caching.
 
-- Fixed compilation warnings on linux.
+- Comented out loop that can hang nxdesktop.
 
-nxdesktop-1.3.1-3
+NOTE: The image caching is highly experimental and, right now, 
+      is causing a worst performance than without it.
 
-- Improved error dialog box, give more info about reason of problem.
+nxdesktop-1.3.2-4
 
-nxdesktop-1.3.1-2
+- Imported 1.4.0-19 from the 1.4.0 development branch.
 
-- Compilation bug on solaris fixed.
-
-- New procedure for error reporting. When connection to remote RDP
-  server fails we invoke nxclient to show a dialog box with problem
-  description. This box remains till user presses OK.
-
-nxdesktop-1.3.1-1
-
-- Opened the 1.3.1 development branch.
-
-nxdesktop-1.3.0-11
-
-- Default directory for keymaps changed to /usr/NX/share/keymaps-windows
-  to avoid incompatibilities with old xmodmap generated maps.
-
-nxdesktop-1.3.0-10
-
-- Modified the hex keyboard layout to names function to use only the
-  existing file names (provided with rdesktop 1.3 keymaps).
-
-nxdesktop-1.3.0-9
-
-- Added support for 16 bpp X server display for big-endian platforms.
-- Added printout on RDP connection startup.
-
-nxdesktop-1.3.0-8
-
-- Corrected bug that avoided to use <ALT-GR> modifier key.
-
-nxdesktop-1.3.0-7
-
-- Added rdesktop 1.3 like keyboard support with backward compatibility
-  with nxclient hex keylayout codes.
-
-- The windows server name is gotten from the last parameter (argc -1)
-  to avoid problems with different return count optind of getopt
-  function on Solaris OSs.
-
-- Now, as in the original version of rdesktop, the desktop tries to
-  open the X window before attempting to start the RDP session.
-
-nxdesktop-1.3.0-6
-
-- On parsing non-rdesktop parameters, variable "pre_count" is
-  incremented different on Solaris OSs.
-
-nxdesktop-1.3.0-5
-
-- Reflected changes introduced in NXGetControlParameters().
-
-nxdesktop-1.3.0-4
-
-- Use resource 0 in NXPutPackedImage() and other NX requests
-  to comply with new prototypes.
-
-nxdesktop-1.3.0-3
-
-- Added initialization of MIT-SHM through a call to the new
-  NXGetShmemParameters() function.

@@ -109,6 +109,7 @@ Right 0xcd localstate
 #
 # Numpad
 #
+Num_Lock 0x45
 KP_Divide 0xb5
 KP_Multiply 0x37
 KP_Subtract 0x4a
@@ -154,4 +155,3 @@ KP_Prior 0x49
 #
 Caps_Lock 0x0 inhibit
 Multi_key 0x0 inhibit
-Num_Lock 0x0 inhibit

@@ -1,7 +1,7 @@
-/*
+/* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Entrypoint and utility functions
-   Copyright (C) Matthew Chapman 1999-2001
+   Copyright (C) Matthew Chapman 1999-2003
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,9 +20,9 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2004 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
-/* NXDESKTOP, NX protocol compression and NX extensions to this software    */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
 /* software is allowed according to terms specified in the file LICENSE   */
 /* which comes in the source distribution.                                */
@@ -35,83 +35,243 @@
 /*                                                                        */
 /**************************************************************************/
 
-#include <stdlib.h>		/* malloc realloc free */
 #include <stdarg.h>		/* va_list va_start va_end */
 #include <unistd.h>		/* read close getuid getgid getpid getppid gethostname */
 #include <fcntl.h>		/* open */
 #include <pwd.h>		/* getpwuid */
+#include <termios.h>		/* tcgetattr tcsetattr */
 #include <sys/stat.h>		/* stat */
 #include <sys/time.h>		/* gettimeofday */
 #include <sys/times.h>		/* times */
+#include <ctype.h>		/* toupper */
+#include <errno.h>
 #include "rdesktop.h"
+#include "version.h"
 
-extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
-
-#undef NXDESKTOP_DISABLE_DESKTOP_SAVE
-
-#define NXDESKTOP_VERSION       "1.3.2"
-#define NXDESKTOP_RDP_BUFSIZE   4096
-
-char username[16];
-char hostname[16];
-int width;
-int height;
-int xo;
-int yo;
-int keylayout = 0x409;
-BOOL bitmap_compression = True;
-BOOL sendmotion = True;
-BOOL orders = True;
-BOOL licence = True;
-BOOL encryption = True;
-
-#ifdef NXDESKTOP_DISABLE_DESKTOP_SAVE
-BOOL desktop_save = False;
-#else
-BOOL desktop_save = True;
+#ifdef EGD_SOCKET
+#include <sys/socket.h>		/* socket connect */
+#include <sys/un.h>		/* sockaddr_un */
 #endif
 
-BOOL fullscreen = False;
+#ifdef WITH_OPENSSL
+#include <openssl/md5.h>
+#else
+#include "crypto/md5.h"
+#endif
+
+char g_title[64] = "";
+char g_username[64];
+char hostname[16];
+char keymapname[16];
+int keylayout = 0x409;		/* Defaults to US keyboard layout */
+
+int g_width = 800;		/* width is special: If 0, the
+				   geometry will be fetched from
+				   _NET_WORKAREA. If negative,
+				   absolute value specifies the
+				   percent of the whole screen. */
+int g_height = 600;
+int tcp_port_rdp = TCP_PORT_RDP;
+int g_server_bpp = 8;
+int g_win_button_size = 0;	/* If zero, disable single app mode */
+BOOL g_bitmap_compression = True;
+BOOL g_sendmotion = True;
+BOOL g_orders = True;
+BOOL g_encryption = True;
+BOOL packet_encryption = True;
+BOOL g_desktop_save = True;
+BOOL g_fullscreen = False;
+BOOL g_grab_keyboard = True;
+BOOL g_hide_decorations = False;
+/* NX */
+BOOL g_use_rdp5 = True;
+BOOL img_cache = True;
+/* NX */
+BOOL g_console_session = False;
+BOOL g_numlock_sync = False;
+extern BOOL g_owncolmap;
+extern BOOL g_ownbackstore;
+extern uint32 g_embed_wnd;
+extern void nxdesktopSetAtoms(void);
+extern void RunOrKillNXkbd();
+uint32 g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
+
+#ifdef WITH_RDPSND
+BOOL g_rdpsnd = False;
+#endif
+
+extern RDPDR_DEVICE g_rdpdr_device[];
+extern uint32 g_num_devices;
+
+#ifdef RDP2VNC
+extern int rfb_port;
+extern int defer_time;
+void
+rdp2vnc_connect(char *server, uint32 flags, char *domain, char *password,
+		char *shell, char *directory);
+#endif
+
+/* Here starts the NX mods */
+static int agentArgument(int argc , char *argv[], int i);
+void NXTranslateKeymap();
+void ShowHeaderInfo();
+static char *nxdesktopReadPasswdFromFile(char *fname);
+#undef NXDESKTOP_DISABLE_DESKTOP_SAVE
+#define NXDESKTOP_RDP_BUFSIZE   4096
+char *nxDisplay  = NULL;
 BOOL ipaq = False;
 BOOL magickey = True;
+extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
+int xo;
+int yo;
 char *windowName = NULL;
-char *nxDisplay  = NULL;
-int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
 char *passwordFile = NULL;
-
-char keymapname[16];
-
-
-static int agentArgument(int argc , char *argv[], int i);
-static char *nxdesktopReadPasswdFromFile(char *fname);
-
-extern void RunOrKillNXkbd();
-
-void NXTranslateKeymap();
-
+int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
+/* end NX mods */
 
 /* Display usage information */
 static void
 usage(char *program)
 {
-	printf("Usage: %s [options] server\n\n", program);
-	printf("   -u: user name\n");
-	printf("   -d: domain\n");
-	printf("   -s: shell\n");
-	printf("   -c: working directory\n");
-	printf("   -p: password (autologon)\n");
-	printf("   -n: client hostname\n");
-	printf("   -k: keyboard layout (hex)\n");
-	printf("   -g: desktop geometry (WxH)\n");
-	printf("   -f: full-screen mode\n");
-	printf("   -b: force bitmap updates\n");
-	printf("   -e: disable encryption (French TS)\n");
-	printf("   -m: do not send motion events\n");
-	printf("   -l: do not request licence\n");
-	printf("   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
-	printf("   -B: set receive buffer of RDP socket to value (default %d)\n\n", rdp_bufsize);
+	fprintf(stderr, "rdesktop: A Remote Desktop Protocol client.\n");
+	fprintf(stderr, "Version " VERSION ". Copyright (C) 1999-2003 Matt Chapman.\n");
+	fprintf(stderr, "See http://www.rdesktop.org/ for more information.\n\n");
+
+	fprintf(stderr, "Usage: %s [options] server[:port]\n", program);
+#ifdef RDP2VNC
+	fprintf(stderr, "   -V: vnc port\n");
+	fprintf(stderr, "   -Q: defer time (ms)\n");
+#endif
+	fprintf(stderr, "   -u: user name\n");
+	fprintf(stderr, "   -d: domain\n");
+	fprintf(stderr, "   -s: shell\n");
+	fprintf(stderr, "   -c: working directory\n");
+	fprintf(stderr, "   -p: password (- to prompt)\n");
+	fprintf(stderr, "   -n: client hostname\n");
+	fprintf(stderr, "   -k: keyboard layout on server (en-us, de, sv, etc.)\n");
+	fprintf(stderr, "   -g: desktop geometry (WxH)\n");
+	fprintf(stderr, "   -f: full-screen mode\n");
+	fprintf(stderr, "   -b: force bitmap updates\n");
+	fprintf(stderr, "   -v: use BackingStore of X-server (if available)\n");
+	fprintf(stderr, "   -e: disable encryption (French TS)\n");
+	fprintf(stderr, "   -E: disable encryption from client to server\n");
+	fprintf(stderr, "   -m: do not send motion events\n");
+	fprintf(stderr, "   -C: use private colour map\n");
+	fprintf(stderr, "   -D: hide window manager decorations\n");
+	fprintf(stderr, "   -K: keep window manager key bindings\n");
+	fprintf(stderr, "   -S: caption button size (single application mode)\n");
+	fprintf(stderr, "   -T: window title\n");
+	fprintf(stderr, "   -N: enable numlock syncronization\n");
+	fprintf(stderr, "   -X: embed into another window with a given id.\n");
+	fprintf(stderr, "   -a: connection colour depth\n");
+	fprintf(stderr, "   -x: RDP5 experience (m[odem 28.8], b[roadband], l[an] or hex number)\n");
+	fprintf(stderr, "   -r: enable specified device redirection (this flag can be repeated)\n");
+	fprintf(stderr,
+		"         '-r comport:COM1=/dev/ttyS0': enable serial redirection of /dev/ttyS0 to COM1\n");
+	fprintf(stderr, "             or      COM1=/dev/ttyS0,COM2=/dev/ttyS1\n");
+	fprintf(stderr,
+		"         '-r disk:A=/mnt/floppy': enable redirection of /mnt/floppy to A:\n");
+	fprintf(stderr, "             or   A=/mnt/floppy,D=/mnt/cdrom'\n");
+	fprintf(stderr,
+		"         '-r lptport:LPT1=/dev/lp0': enable parallel redirection of /dev/lp0 to LPT1\n");
+	fprintf(stderr, "             or      LPT1=/dev/lp0,LPT2=/dev/lp1\n");
+	fprintf(stderr, "         '-r printer:mydeskjet': enable printer redirection\n");
+	fprintf(stderr,
+		"             or      mydeskjet=\"HP LaserJet IIIP\" to enter server driver as well\n");
+	fprintf(stderr, "         '-r sound:[local|off|remote]': enable sound redirection\n");
+	fprintf(stderr, "                     remote would leave sound on server\n");
+	fprintf(stderr, "   -0: attach to console\n");
+	fprintf(stderr, "   -4: use RDP version 4\n");
+	fprintf(stderr, "   -5: use RDP version 5 (default)\n");
+	fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
+	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n\n", rdp_bufsize);
 }
 
+static BOOL
+read_password(char *password, int size)
+{
+	struct termios tios;
+	BOOL ret = False;
+	int istty = 0;
+	char *p;
+
+	if (tcgetattr(STDIN_FILENO, &tios) == 0)
+	{
+		fprintf(stderr, "Password: ");
+		tios.c_lflag &= ~ECHO;
+		tcsetattr(STDIN_FILENO, TCSANOW, &tios);
+		istty = 1;
+	}
+
+	if (fgets(password, size, stdin) != NULL)
+	{
+		ret = True;
+
+		/* strip final newline */
+		p = strchr(password, '\n');
+		if (p != NULL)
+			*p = 0;
+	}
+
+	if (istty)
+	{
+		tios.c_lflag |= ECHO;
+		tcsetattr(STDIN_FILENO, TCSANOW, &tios);
+		fprintf(stderr, "\n");
+	}
+
+	return ret;
+}
+
+static void
+parse_server_and_port(char *server)
+{
+	char *p;
+#ifdef IPv6
+	int addr_colons;
+#endif
+
+#ifdef IPv6
+	p = server;
+	addr_colons = 0;
+	while (*p)
+		if (*p++ == ':')
+			addr_colons++;
+	if (addr_colons >= 2)
+	{
+		/* numeric IPv6 style address format - [1:2:3::4]:port */
+		p = strchr(server, ']');
+		if (*server == '[' && p != NULL)
+		{
+			if (*(p + 1) == ':' && *(p + 2) != '\0')
+				tcp_port_rdp = strtol(p + 2, NULL, 10);
+			/* remove the port number and brackets from the address */
+			*p = '\0';
+			strncpy(server, server + 1, strlen(server));
+		}
+	}
+	else
+	{
+		/* dns name or IPv4 style address format - server.example.com:port or 1.2.3.4:port */
+		p = strchr(server, ':');
+		if (p != NULL)
+		{
+			tcp_port_rdp = strtol(p + 1, NULL, 10);
+			*p = 0;
+		}
+	}
+#else /* no IPv6 support */
+	p = strchr(server, ':');
+	if (p != NULL)
+	{
+		tcp_port_rdp = strtol(p + 1, NULL, 10);
+		*p = 0;
+	}
+#endif /* IPv6 */
+
+}
+
+/* Read the extra parameters from the NXAgent */
 
 int pre_parse_agent(int argc, char *argv[])
 {
@@ -122,47 +282,63 @@ int pre_parse_agent(int argc, char *argv[])
   return count;
 }
 
-
-
-
 /* Client program */
 int
 main(int argc, char *argv[])
 {
+	char server[64];
 	char fullhostname[64];
 	char domain[16];
-	char password[16];
-	char shell[32];
+	char password[64];
+	char shell[128];
 	char directory[32];
-	char title[32];
+	BOOL prompt_password, rdp_retval = False;
 	struct passwd *pw;
-	char *server, *p;
 	uint32 flags;
-	int c,pre_count;
-
-	fprintf(stderr, "\nNXDESKTOP - Version " NXDESKTOP_VERSION "\n\n");
-	fprintf(stderr, "Remote Desktop Protocol client for NX.\n");
-	fprintf(stderr, "Copyright (C) 2001,2003 NoMachine.\n");
-	fprintf(stderr, "See http://www.nomachine.com/ for more information.\n\n");
-	fprintf(stderr, "Based on rdesktop version " VERSION ".\n");
-	fprintf(stderr, "Copyright (C) 1999-2001 Matt Chapman.\n");
-	fprintf(stderr, "See http://www.rdesktop.org/ for more information.\n\n");
-
-        fprintf(stderr, "Info: Agent running with pid '%d'.\n", getpid());
-
+	char *p;
+	int c;
+	int pre_count;
+	int username_option = 0;
+	/* show initial info */
+	ShowHeaderInfo();
+	
 	flags = RDP_LOGON_NORMAL;
+	prompt_password = False;
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
 	strcpy(keymapname, "en-us");
+	g_embed_wnd = 0;
 
+	g_num_devices = 0;
+
+#ifdef RDP2VNC
+#define VNCOPT "V:Q:"
+#else
+#define VNCOPT
+#endif
 	pre_count = pre_parse_agent(argc, argv);
-	while ((c = getopt(argc, argv, "(:u:d:s:c:p:n:k:g:B:(fibemlh?M")) != -1)
+	while ((c = getopt(argc, argv, VNCOPT "(:u:d:s:c:p:n:k:g:(fibXeEmBlMCDKS:T:NXa:r:04x:v5h?")) != -1)
 	{
 		switch (c)
 		{
-		        case '(':
+			case '(':
 			        break;
+#ifdef RDP2VNC
+			case 'V':
+				rfb_port = strtol(optarg, NULL, 10);
+				if (rfb_port < 100)
+					rfb_port += 5900;
+				break;
+
+			case 'Q':
+				defer_time = strtol(optarg, NULL, 10);
+				if (defer_time < 0)
+					defer_time = 0;
+				break;
+#endif
+
 			case 'u':
-				STRNCPY(username, optarg, sizeof(username));
+				STRNCPY(g_username, optarg, sizeof(g_username));
+				username_option = 1;
 				break;
 
 			case 'd':
@@ -178,8 +354,19 @@ main(int argc, char *argv[])
 				break;
 
 			case 'p':
+				if ((optarg[0] == '-') && (optarg[1] == 0))
+				{
+					prompt_password = True;
+					break;
+				}
+
 				STRNCPY(password, optarg, sizeof(password));
 				flags |= RDP_LOGON_AUTO;
+
+				/* try to overwrite argument so it won't appear in ps */
+				p = optarg;
+				while (*p)
+					*(p++) = 'X';
 				break;
 
 			case 'n':
@@ -187,62 +374,222 @@ main(int argc, char *argv[])
 				break;
 
 			case 'k':
-				keylayout = strtol(optarg, NULL, 16);
-				if (keylayout == 0)
-				{
-					error("Invalid keyboard layout\n");
-					return 1;
-				}
+				STRNCPY(keymapname, optarg, sizeof(keymapname));
 				break;
 
 			case 'g':
-				width = strtol(optarg, &p, 10);
-				if (*p == 'x')
-					height = strtol(p+1, NULL, 10);
-
-				if ((width == 0) || (height == 0))
+				g_fullscreen = False;
+				if (!strcmp(optarg, "workarea"))
 				{
-					error("Invalid geometry\n");
+					g_width = g_height = 0;
+					break;
+				}
+
+				g_width = strtol(optarg, &p, 10);
+				if (g_width <= 0)
+				{
+					error("invalid geometry\n");
 					return 1;
 				}
+
+				if (*p == 'x')
+					g_height = strtol(p + 1, NULL, 10);
+
+				if (g_height <= 0)
+				{
+					error("invalid geometry\n");
+					return 1;
+				}
+
+				if (*p == '%')
+					g_width = -g_width;
+
 				break;
 
 			case 'f':
-				fullscreen = True;
+				g_fullscreen = True;
 				xo = -1;
 				yo = -1;
 				break;
 			
 			case 'i':
-				fullscreen = True;
+				g_fullscreen = True;
                                 ipaq = True;
 				xo = -1;
 				yo = -1;
 				break;
 
 			case 'b':
-				orders = False;
+				g_orders = False;
+				break;
+
+			case 'v': /* supposed to be B - changed to keep compat. with NX desktop */
+				g_ownbackstore = False;
 				break;
 
 			case 'e':
-				encryption = False;
+				g_encryption = False;
 				break;
-
+				
+			case 'E':
+				packet_encryption = False;
+				break;
+				
 			case 'm':
-				sendmotion = False;
+				g_sendmotion = False;
 				break;
 
-			case 'l':
-				licence = False;
+			case 'C':
+				g_owncolmap = True;
 				break;
-		        case 'M':
+
+			case 'D':
+				g_hide_decorations = True;
+				break;
+
+			case 'K':
+				g_grab_keyboard = False;
+				break;
+
+			case 'S':
+				if (!strcmp(optarg, "standard"))
+				{
+					g_win_button_size = 18;
+					break;
+				}
+
+				g_win_button_size = strtol(optarg, &p, 10);
+
+				if (*p)
+				{
+					error("invalid button size\n");
+					return 1;
+				}
+
+				break;
+
+			case 'T':
+				STRNCPY(g_title, optarg, sizeof(g_title));
+				break;
+
+			case 'N':
+				g_numlock_sync = True;
+				break;
+
+			case 'X':
+				g_embed_wnd = strtol(optarg, NULL, 10);
+				break;
+				
+			case 'a':
+				g_server_bpp = strtol(optarg, NULL, 10);
+				if (g_server_bpp != 8 && g_server_bpp != 16 && g_server_bpp != 15
+				    && g_server_bpp != 24)
+				{
+					error("invalid server bpp\n");
+					return 1;
+				}
+				break;
+
+			case 'x':
+				
+				if (strncmp("modem", optarg, 1) == 0)
+				{
+					g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
+				}
+				else if (strncmp("broadband", optarg, 1) == 0)
+				{
+					g_rdp5_performanceflags = RDP5_NO_WALLPAPER;
+				}
+				else if (strncmp("lan", optarg, 1) == 0)
+				{
+					g_rdp5_performanceflags = RDP5_DISABLE_NOTHING;
+				}
+				else
+				{
+					g_rdp5_performanceflags = strtol(optarg, NULL, 16);
+				}
+				break;
+				
+			case 'r':
+
+				if (strncmp("sound", optarg, 5) == 0)
+				{
+					optarg += 5;
+
+					if (*optarg == ':')
+					{
+						*optarg++;
+						while ((p = next_arg(optarg, ',')))
+						{
+							if (strncmp("remote", optarg, 6) == 0)
+								flags |= RDP_LOGON_LEAVE_AUDIO;
+
+							if (strncmp("local", optarg, 5) == 0)
+#ifdef WITH_RDPSND
+								g_rdpsnd = True;
+#else
+								warning("Not compiled with sound support");
+#endif
+
+							if (strncmp("off", optarg, 3) == 0)
+								g_rdpsnd = False;
+
+							optarg = p;
+						}
+					}
+					else
+					{
+#ifdef WITH_RDPSND
+						g_rdpsnd = True;
+#else
+						warning("Not compiled with sound support");
+#endif
+					}
+				}
+				else if (strncmp("disk", optarg, 4) == 0)
+				{
+					/* -r disk:h:=/mnt/floppy */
+					disk_enum_devices(&g_num_devices, optarg + 4);
+				}
+				else if (strncmp("comport", optarg, 7) == 0)
+				{
+					serial_enum_devices(&g_num_devices, optarg + 7);
+				}
+				else if (strncmp("lptport", optarg, 7) == 0)
+				{
+					parallel_enum_devices(&g_num_devices, optarg + 7);
+				}
+				else if (strncmp("printer", optarg, 7) == 0)
+				{
+					printer_enum_devices(&g_num_devices, optarg + 7);
+				}
+				else
+				{
+					warning("Unknown -r argument\n\n\tPossible arguments are: comport, disk, lptport, printer, sound\n");
+				}
+				break;
+
+			case '0':
+				g_console_session = True;
+				break;
+
+			case '4':
+				g_use_rdp5 = False;
+				break;
+
+			case '5':
+				g_use_rdp5 = True;
+				break;
+			
+			/* NX options */
+			case 'M':
 				magickey = False;
 				break;
 			case 'B':
 				rdp_bufsize = strtol(optarg, NULL, 10);
 				if (rdp_bufsize <= 0)
 				{
-					error("Invalid value '%s' for option -B. Try '-B nnn' with nnn > 0.\n");
+					error("Invalid value '%s' for option -B. Try '-R nnn' with nnn > 0.\n");
 					return 1;
 				}
 				else if (rdp_bufsize < 1024)
@@ -250,6 +597,7 @@ main(int argc, char *argv[])
 					rdp_bufsize = 1024;
 				}
 				break;
+			/* End NX options */
 			case 'h':
 			case '?':
 			default:
@@ -257,34 +605,34 @@ main(int argc, char *argv[])
 				return 1;
 		}
 	}
-
 #ifdef __sun
         if (pre_count > 1 )
           pre_count--;
 #endif
 
-        optind += pre_count;
-
+	optind += pre_count;
+		
 	if (argc - optind < 1)
 	{
 		usage(argv[0]);
 		return 1;
 	}
 
-	server = argv[argc - 1];
+	STRNCPY(server, argv[optind], sizeof(server));
+	parse_server_and_port(server);
 
-        NXTranslateKeymap();
-
-        if (username[0] == 0)
+	NXTranslateKeymap();
+	
+	if (!username_option)
 	{
 		pw = getpwuid(getuid());
 		if ((pw == NULL) || (pw->pw_name == NULL))
 		{
-			error("Could not determine username, use -u\n");
+			error("could not determine username, use -u\n");
 			return 1;
 		}
 
-		STRNCPY(username, pw->pw_name, sizeof(username));
+		STRNCPY(g_username, pw->pw_name, sizeof(g_username));
 	}
 
 	if (hostname[0] == 0)
@@ -301,21 +649,14 @@ main(int argc, char *argv[])
 
 		STRNCPY(hostname, fullhostname, sizeof(hostname));
 	}
-        if (passwordFile == NULL)
+	/* read the passwordfile or fallback to the prompt or standard comandline option */
+	if (passwordFile == NULL)
         {
-	        if (!strcmp(password, "-"))
-	        {
-        		p = getpass("Password: ");
-		        if (p == NULL)
-		        {
-        			error("failed to read password\n");
-			        return 0;
-		        }
-		        STRNCPY(password, p, sizeof(password));
-                }
+		if (prompt_password && read_password(password, sizeof(password)))
+			flags |= RDP_LOGON_AUTO;
 	}
-        else
-        {
+	else
+	{
            char *filePass = nxdesktopReadPasswdFromFile(passwordFile);
            if (filePass != NULL)
            {
@@ -327,111 +668,162 @@ main(int argc, char *argv[])
               fprintf(stderr,"invalid pass from file\n");
            }
         }
-
-	strcpy(title, "nxdesktop - ");
-	strncat(title, server, sizeof(title) - sizeof("nxdesktop - "));
-
-/*
-        if (!ui_open_display())
-        {
-           fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
-           return 1;
-        }
-
-	if ((width == 0) || (height == 0))
+	
+	if (g_title[0] == 0)
 	{
-		width = 800;
-		height = 600;
-	}
-        if (fullscreen)
-        {
-          ui_get_display_size(&width, &height);
-        }
-	if (ui_create_window(windowName!=NULL?windowName:title))
-	{
-           extern void nxdesktopSetAtoms(void);
-        	if (!rdp_connect(server, flags, domain, password, shell,
-	                     directory))
-                {
-		   fprintf(stderr, "\nError: RDP server connection failed.\n");
-                   return 1;
-                }
-
-		fprintf(stderr, "Info: RDP connection successful.\n");
-		if (ipaq) RunOrKillNXkbd();
-                nxdesktopSetAtoms();
-		rdp_main_loop();
-		fprintf(stderr, "Info: Disconnecting RDP ...\n");
-		if (ipaq) RunOrKillNXkbd();
-		ui_destroy_window();
-	}
-*/
-	if (rdp_connect(server, flags, domain, password, shell, directory))
-	{
-           extern void nxdesktopSetAtoms(void);
-	   extern void RunOrKillNXkbd();
-           rdp_disconnect();
-
-           if (!ui_open_display())
-           {
-             fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
-             return 1;
-           }
-	   if ((width == 0) || (height == 0))
-	   {
-		width = 800;
-		height = 600;
-	   }
-           if (fullscreen)
-           {
-             ui_get_display_size(&width, &height);
-           }
-
-
-	   if (!ui_create_window(windowName!=NULL?windowName:title))
-    	     return 1;
-	   if (ipaq) RunOrKillNXkbd();
-
-    	   fprintf(stderr, "Info: RDP connection successful.\n");
-
-	   rdp_connect_login(server, flags, domain, password, shell, directory);
-
-           nxdesktopSetAtoms();
-
-	   rdp_main_loop();
-	   fprintf(stderr, "Info: Disconnecting RDP ...\n");
-	   if (ipaq) RunOrKillNXkbd();
-	   ui_destroy_window();
-	}
-        else{
-	   fprintf(stderr, "\nError: RDP server connection failed.\n");
-           exit(1);
+		strcpy(g_title, "nxdesktop - ");
+		strncat(g_title, server, sizeof(g_title) - sizeof("nxdesktop - "));
 	}
 
-
-        rdp_disconnect();
+	/* NX */
+	fprintf(stderr, "Info: Connecting to RDP server '%s'\n",server);
+	/* NX */
+		
+#ifdef RDP2VNC
+	rdp2vnc_connect(server, flags, domain, password, shell, directory);
 	return 0;
+#else
+	if (!ui_open_display())
+		{
+		fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
+		return 1;
+		}
+	
+	if (!ui_init())
+		return 1;
+
+#ifdef WITH_RDPSND
+	if (g_rdpsnd)
+		rdpsnd_init();
+#endif
+	rdpdr_init();
+	
+	
+	if (!rdp_connect(server, flags, domain, password, shell, directory))
+	{
+		fprintf(stderr, "Error: Connection to RDP server '%s' failed.\n",server);
+		return 1;
+	}
+	else
+	{
+	    
+	    
+	   if ((g_width == 0) || (g_height == 0))
+	   {
+		g_width = 800;
+		g_height = 600;
+	   }
+	    if (g_fullscreen)
+            {
+		ui_get_display_size(&g_width, &g_height);
+	    }	
+		
+	}
+	/* By setting encryption to False here, we have an encrypted login 
+	   packet but unencrypted transfer of other packets */
+	if (!packet_encryption)
+		g_encryption = False;
+	
+	/* NX */
+	fprintf(stderr, "Info: Connected to RDP server '%s'\n",server);
+	
+	fprintf(stderr, "Info: Color depth %d.\n",g_server_bpp);
+	/* NX */
+
+	DEBUG(("Connection successful.\n"));
+	memset(password, 0, sizeof(password));
+	
+	if (ui_create_window())
+	{	
+	    /* NX */
+	    if (ipaq) RunOrKillNXkbd();
+	    /* NX */
+	    rdp_retval = rdp_main_loop();
+	    if (ipaq) RunOrKillNXkbd();
+	    ui_destroy_window();
+	}
+
+	DEBUG(("Disconnecting...\n"));
+	rdp_disconnect();
+	fprintf(stderr, "Info: Disconnecting from RDP server '%s'\n",server);
+	ui_deinit();
+
+	if (True == rdp_retval)
+		return 0;
+	else
+		return 2;
+	
+
+#endif
+
 }
+
+#ifdef EGD_SOCKET
+/* Read 32 random bytes from PRNGD or EGD socket (based on OpenSSL RAND_egd) */
+static BOOL
+generate_random_egd(uint8 * buf)
+{
+	struct sockaddr_un addr;
+	BOOL ret = False;
+	int fd;
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd == -1)
+		return False;
+
+	addr.sun_family = AF_UNIX;
+	memcpy(addr.sun_path, EGD_SOCKET, sizeof(EGD_SOCKET));
+	if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == -1)
+		goto err;
+
+	/* PRNGD and EGD use a simple communications protocol */
+	buf[0] = 1;		/* Non-blocking (similar to /dev/urandom) */
+	buf[1] = 32;		/* Number of requested random bytes */
+	if (write(fd, buf, 2) != 2)
+		goto err;
+
+	if ((read(fd, buf, 1) != 1) || (buf[0] == 0))	/* Available? */
+		goto err;
+
+	if (read(fd, buf, 32) != 32)
+		goto err;
+
+	ret = True;
+
+      err:
+	close(fd);
+	return ret;
+}
+#endif
 
 /* Generate a 32-byte random for the secure transport code. */
 void
-generate_random(uint8 *random)
+generate_random(uint8 * random)
 {
 	struct stat st;
 	struct tms tmsbuf;
-	uint32 *r = (uint32 *) random;
-	int fd;
+	MD5_CTX md5;
+	uint32 *r;
+	int fd, n;
 
-	/* If we have a kernel random device, use it. */
+	/* If we have a kernel random device, try that first */
 	if (((fd = open("/dev/urandom", O_RDONLY)) != -1)
 	    || ((fd = open("/dev/random", O_RDONLY)) != -1))
 	{
-		read(fd, random, 32);
+		n = read(fd, random, 32);
 		close(fd);
-		return;
+		if (n == 32)
+			return;
 	}
 
+#ifdef EGD_SOCKET
+	/* As a second preference use an EGD */
+	if (generate_random_egd(random))
+		return;
+#endif
+
 	/* Otherwise use whatever entropy we can gather - ideas welcome. */
+	r = (uint32 *) random;
 	r[0] = (getpid()) | (getppid() << 16);
 	r[1] = (getuid()) | (getgid() << 16);
 	r[2] = times(&tmsbuf);	/* system uptime (clocks) */
@@ -440,6 +832,13 @@ generate_random(uint8 *random)
 	r[5] = st.st_atime;
 	r[6] = st.st_mtime;
 	r[7] = st.st_ctime;
+
+	/* Hash both halves with MD5 to obscure possible patterns */
+	MD5_Init(&md5);
+	MD5_Update(&md5, random, 16);
+	MD5_Final(random, &md5);
+	MD5_Update(&md5, random + 16, 16);
+	MD5_Final(random + 16, &md5);
 }
 
 /* malloc; exit if out of memory */
@@ -488,6 +887,19 @@ error(char *format, ...)
 	va_end(ap);
 }
 
+/* report a warning */
+void
+warning(char *format, ...)
+{
+	va_list ap;
+
+	fprintf(stderr, "WARNING: ");
+
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+}
+
 /* report an unimplemented protocol feature */
 void
 unimpl(char *format, ...)
@@ -506,8 +918,7 @@ void
 hexdump(unsigned char *p, unsigned int len)
 {
 	unsigned char *line = p;
-	unsigned int thisline, offset = 0;
-	unsigned int i;
+	int i, thisline, offset = 0;
 
 	while (offset < len)
 	{
@@ -520,12 +931,10 @@ hexdump(unsigned char *p, unsigned int len)
 			printf("%02x ", line[i]);
 
 		for (; i < 16; i++)
-				printf("   ");
+			printf("   ");
 
 		for (i = 0; i < thisline; i++)
-			printf("%c",
-			       (line[i] >= 0x20
-				&& line[i] < 0x7f) ? line[i] : '.');
+			printf("%c", (line[i] >= 0x20 && line[i] < 0x7f) ? line[i] : '.');
 
 		printf("\n");
 		offset += thisline;
@@ -533,6 +942,204 @@ hexdump(unsigned char *p, unsigned int len)
 	}
 }
 
+/*
+  input: src is the string we look in for needle.
+  	 Needle may be escaped by a backslash, in
+	 that case we ignore that particular needle.
+  return value: returns next src pointer, for
+  	succesive executions, like in a while loop
+	if retval is 0, then there are no more args.
+  pitfalls:
+  	src is modified. 0x00 chars are inserted to
+	terminate strings.
+	return val, points on the next val chr after ins
+	0x00
+
+	example usage:
+	while( (pos = next_arg( optarg, ',')) ){
+		printf("%s\n",optarg);
+		optarg=pos;
+	}
+
+*/
+char *
+next_arg(char *src, char needle)
+{
+	char *nextval;
+	char *p;
+	char *mvp = 0;
+
+	/* EOS */
+	if (*src == (char) 0x00)
+		return 0;
+
+	p = src;
+	/*  skip escaped needles */
+	while ((nextval = strchr(p, needle)))
+	{
+		mvp = nextval - 1;
+		/* found backslashed needle */
+		if (*mvp == '\\' && (mvp > src))
+		{
+			/* move string one to the left */
+			while (*(mvp + 1) != (char) 0x00)
+			{
+				*mvp = *(mvp + 1);
+				*mvp++;
+			}
+			*mvp = (char) 0x00;
+			p = nextval;
+		}
+		else
+		{
+			p = nextval + 1;
+			break;
+		}
+
+	}
+
+	/* more args available */
+	if (nextval)
+	{
+		*nextval = (char) 0x00;
+		return ++nextval;
+	}
+
+	/* no more args after this, jump to EOS */
+	nextval = src + strlen(src);
+	return nextval;
+}
+
+
+void
+toupper_str(char *p)
+{
+	while (*p)
+	{
+		if ((*p >= 'a') && (*p <= 'z'))
+			*p = toupper((int) *p);
+		p++;
+	}
+}
+
+
+/* not all clibs got ltoa */
+#define LTOA_BUFSIZE (sizeof(long) * 8 + 1)
+
+char *
+l_to_a(long N, int base)
+{
+	static char ret[LTOA_BUFSIZE];
+
+	char *head = ret, buf[LTOA_BUFSIZE], *tail = buf + sizeof(buf);
+
+	register int divrem;
+
+	if (base < 36 || 2 > base)
+		base = 10;
+
+	if (N < 0)
+	{
+		*head++ = '-';
+		N = -N;
+	}
+
+	tail = buf + sizeof(buf);
+	*--tail = 0;
+
+	do
+	{
+		divrem = N % base;
+		*--tail = (divrem <= 9) ? divrem + '0' : divrem + 'a' - 10;
+		N /= base;
+	}
+	while (N);
+
+	strcpy(head, tail);
+	return ret;
+}
+
+
+int
+load_licence(unsigned char **data)
+{
+	char *home, *path;
+	struct stat st;
+	int fd, length;
+
+	home = getenv("HOME");
+	if (home == NULL)
+		return -1;
+
+	path = (char *) xmalloc(strlen(home) + strlen(hostname) + sizeof("/.rdesktop/licence."));
+	sprintf(path, "%s/.rdesktop/licence.%s", home, hostname);
+
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		return -1;
+
+	if (fstat(fd, &st))
+		return -1;
+
+	*data = (uint8 *) xmalloc(st.st_size);
+	length = read(fd, *data, st.st_size);
+	close(fd);
+	xfree(path);
+	return length;
+}
+
+void
+save_licence(unsigned char *data, int length)
+{
+	char *home, *path, *tmppath;
+	int fd;
+
+	home = getenv("HOME");
+	if (home == NULL)
+		return;
+
+	path = (char *) xmalloc(strlen(home) + strlen(hostname) + sizeof("/.rdesktop/licence."));
+
+	sprintf(path, "%s/.rdesktop", home);
+	if ((mkdir(path, 0700) == -1) && errno != EEXIST)
+	{
+		perror(path);
+		return;
+	}
+
+	/* write licence to licence.hostname.new, then atomically rename to licence.hostname */
+
+	sprintf(path, "%s/.rdesktop/licence.%s", home, hostname);
+	tmppath = (char *) xmalloc(strlen(path) + sizeof(".new"));
+	strcpy(tmppath, path);
+	strcat(tmppath, ".new");
+
+	fd = open(tmppath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1)
+	{
+		perror(tmppath);
+		return;
+	}
+
+	if (write(fd, data, length) != length)
+	{
+		perror(tmppath);
+		unlink(tmppath);
+	}
+	else if (rename(tmppath, path) == -1)
+	{
+		perror(path);
+		unlink(tmppath);
+	}
+
+	close(fd);
+	xfree(tmppath);
+	xfree(path);
+}
+
+/* the NX mods implementation starts here */
+
+/* agentArgument parses the extra agent paramenters */
 
 int agentArgument (argc, argv, i)
     int	argc;
@@ -542,6 +1149,16 @@ int agentArgument (argc, argv, i)
   if (!strcmp(argv[i], "-sync"))
   {
     argv[i][1]='(';
+    return 0;
+  }
+  if (!strcmp(argv[i], "-imgcache"))
+  {
+    argv[i][1]='(';
+    if (++i < argc)
+    {
+	img_cache=True;
+	return 1;
+    }
     return 0;
   }
   if (!strcmp(argv[i], "-full"))
@@ -602,16 +1219,16 @@ int agentArgument (argc, argv, i)
     {
       if (!strcmp(argv[i],"fullscreen"))
       {
-          fullscreen = True;
+          g_fullscreen = True;
       }
       else if (!strcmp(argv[i],"ipaq"))
       {
-          fullscreen = True;
+          g_fullscreen = True;
           ipaq = True;
       }
       else {
           int j = 0;
-          XParseGeometry(argv[i], &xo, &yo, &width, &height);
+          XParseGeometry(argv[i], &xo, &yo, &g_width, &g_height);
           while(argv[i][j]){
               if(argv[i][j] == '+'){
                   argv[i][j] = 'x';
@@ -908,6 +1525,8 @@ char *nxdesktopReadPasswdFromFile(char *fname)
     return (char *)passwd;
 }
 
+/* Translates the keymap number received to the internal rdesktop keymap name */
+
 void NXTranslateKeymap()
 {
   switch(keylayout)
@@ -949,8 +1568,17 @@ void NXTranslateKeymap()
  DEBUG_KBD(("keymapname is [%s].\n", keymapname));
 }
 
+/* show_startup_info - Just show some header information */
 
+void ShowHeaderInfo(void)
 
-
-
-
+{
+	fprintf(stderr, "\nNXDESKTOP - Version %i.%i.%i\n\n",NXDESKTOP_MAJOR_VERSION,NXDESKTOP_MINOR_VERSION,NXDESKTOP_RELEASE);
+	fprintf(stderr, "Remote Desktop Protocol client for NX.\n");
+	fprintf(stderr, "Copyright (C) 2001, 2004 NoMachine.\n");
+	fprintf(stderr, "See http://www.nomachine.com/ for more information.\n\n");
+	fprintf(stderr, "Based on rdesktop version "VERSION"\n"), 
+	fprintf(stderr, "Copyright (C) 1999-2003 Matt Chapman.\n");
+	fprintf(stderr, "See http://www.rdesktop.org/ for more information.\n\n");
+	fprintf(stderr, "Info: Agent running with pid '%d'.\n", getpid());
+}

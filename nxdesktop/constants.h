@@ -7,7 +7,7 @@
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 2 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -76,8 +76,6 @@ enum MCS_PDU_TYPE
 #define SEC_TAG_CLI_CHANNELS    0xc003
 #define SEC_TAG_CLI_4           0xc004
 
-#define SEC_TAG_SRV_3		0x0c03
-
 #define SEC_TAG_PUBKEY		0x0006
 #define SEC_TAG_KEYSIG		0x0008
 
@@ -88,14 +86,14 @@ enum MCS_PDU_TYPE
 #define LICENCE_HWID_SIZE	20
 #define LICENCE_SIGNATURE_SIZE	16
 
-#define LICENCE_TAG_DEMAND	0x201
-#define LICENCE_TAG_AUTHREQ	0x202
-#define LICENCE_TAG_ISSUE	0x203
-#define LICENCE_TAG_REISSUE	0x204
-#define LICENCE_TAG_PRESENT	0x212
-#define LICENCE_TAG_REQUEST	0x213
-#define LICENCE_TAG_AUTHRESP	0x215
-#define LICENCE_TAG_RESULT	0x2ff
+#define LICENCE_TAG_DEMAND	0x01
+#define LICENCE_TAG_AUTHREQ	0x02
+#define LICENCE_TAG_ISSUE	0x03
+#define LICENCE_TAG_REISSUE	0x04
+#define LICENCE_TAG_PRESENT	0x12
+#define LICENCE_TAG_REQUEST	0x13
+#define LICENCE_TAG_AUTHRESP	0x15
+#define LICENCE_TAG_RESULT	0xff
 
 #define LICENCE_TAG_USER	0x000f
 #define LICENCE_TAG_HOST	0x0010
@@ -239,9 +237,19 @@ enum RDP_INPUT_DEVICE
 #define RDP_SOURCE		"MSTSC"
 
 /* Logon flags */
-#define RDP_LOGON_NORMAL	0x33
-#define RDP_LOGON_AUTO		0x8
-#define RDP_LOGON_BLOB		0x100
+#define RDP_LOGON_AUTO		0x0008
+#define RDP_LOGON_NORMAL	0x0033
+#define RDP_COMPRESSION		0x0080
+#define RDP_LOGON_BLOB		0x0100
+#define RDP_LOGON_LEAVE_AUDIO	0x2000
+
+#define RDP5_DISABLE_NOTHING	0x00
+#define RDP5_NO_WALLPAPER	0x01
+#define RDP5_NO_FULLWINDOWDRAG	0x02
+#define RDP5_NO_MENUANIMATIONS	0x04
+#define RDP5_NO_THEMING		0x08
+#define RDP5_NO_CURSOR_SHADOW	0x20
+#define RDP5_NO_CURSORSETTINGS	0x40 /* disables cursor blinking */
 
 /* Keymap flags */
 #define MapRightShiftMask   (1<<0)
@@ -316,6 +324,35 @@ enum RDP_INPUT_DEVICE
 
 /* NT status codes for RDPDR */
 #define STATUS_SUCCESS			0x00000000
+#define STATUS_PENDING                  0x00000103
+
+#define STATUS_NO_MORE_FILES            0x80000006
+#define STATUS_DEVICE_PAPER_EMPTY       0x8000000e
+#define STATUS_DEVICE_POWERED_OFF       0x8000000f
+#define STATUS_DEVICE_OFF_LINE          0x80000010
+#define STATUS_DEVICE_BUSY              0x80000011
+
+#define STATUS_INVALID_HANDLE           0xc0000008
 #define STATUS_INVALID_PARAMETER	0xc000000d
+#define STATUS_NO_SUCH_FILE             0xc000000f
 #define STATUS_INVALID_DEVICE_REQUEST	0xc0000010
 #define STATUS_ACCESS_DENIED		0xc0000022
+#define STATUS_OBJECT_NAME_COLLISION    0xc0000035
+#define STATUS_DISK_FULL                0xc000007f
+#define STATUS_FILE_IS_A_DIRECTORY      0xc00000ba
+#define STATUS_NOT_SUPPORTED            0xc00000bb
+#define STATUS_TIMEOUT                  0xc0000102
+#define STATUS_CANCELLED                0xc0000120
+
+
+/* RDPDR constants */
+#define RDPDR_MAX_DEVICES               0x10
+#define DEVICE_TYPE_SERIAL              0x01
+#define DEVICE_TYPE_PARALLEL            0x02
+#define DEVICE_TYPE_PRINTER             0x04
+#define DEVICE_TYPE_DISK                0x08
+#define DEVICE_TYPE_SCARD               0x20
+
+#define FILE_DIRECTORY_FILE             0x00000001
+#define FILE_NON_DIRECTORY_FILE         0x00000040
+#define FILE_OPEN_FOR_FREE_SPACE_QUERY  0x00800000

@@ -67,29 +67,9 @@
 extern "C" {
 #endif
 
-/*
- * Get rid of all warnings.
- * This is maybe NX specific.
- */
-
-void error();
-#include <string.h>
-#ifndef xmalloc
-#ifdef __FreeBSD__
-#include <stdlib.h>
-#else
-#include <malloc.h>
-#endif
-#define xmalloc malloc
-#endif
-#ifndef xfree
-#ifdef __FreeBSD__
-#include <stdlib.h>
-#else
-#include <malloc.h>
-#endif
-#define xfree free
-#endif
+void error(char *format, ...);
+void *xmalloc(int size);
+void xfree(void *mem);
 
 #define BNerr(context,err)   error("crypto error\n");
 #define OPENSSL_malloc(size) xmalloc(size)
@@ -123,7 +103,9 @@ void error();
  * be on.  Again this in only really a problem on machines
  * using "long long's", are 32bit, and are not using my assembler code. */
 #if defined(MSDOS) || defined(WINDOWS) || defined(WIN32) || defined(linux)
-#define BN_DIV2W
+# ifndef BN_DIV2W
+#  define BN_DIV2W
+# endif
 #endif
 
 /* assuming long is 64bit - this is the DEC Alpha
@@ -186,7 +168,7 @@ void error();
 #define BN_BYTES	4
 #define BN_BITS2	32
 #define BN_BITS4	16
-#ifdef WIN32
+#ifdef _MSC_VER
 /* VC++ doesn't like the LL suffix */
 #define BN_MASK		(0xffffffffffffffffL)
 #else
@@ -362,6 +344,7 @@ void	BN_CTX_end(BN_CTX *ctx);
 int     BN_rand(BIGNUM *rnd, int bits, int top,int bottom);
 int     BN_pseudo_rand(BIGNUM *rnd, int bits, int top,int bottom);
 int	BN_rand_range(BIGNUM *rnd, BIGNUM *range);
+int	BN_pseudo_rand_range(BIGNUM *rnd, BIGNUM *range);
 int	BN_num_bits(const BIGNUM *a);
 int	BN_num_bits_word(BN_ULONG);
 BIGNUM *BN_new(void);
@@ -436,7 +419,6 @@ int	BN_is_prime(const BIGNUM *p,int nchecks,
 int	BN_is_prime_fasttest(const BIGNUM *p,int nchecks,
 		void (*callback)(int,int,void *),BN_CTX *ctx,void *cb_arg,
 		int do_trial_division);
-void	ERR_load_BN_strings(void );
 
 BN_MONT_CTX *BN_MONT_CTX_new(void );
 void BN_MONT_CTX_init(BN_MONT_CTX *ctx);
@@ -507,4 +489,3 @@ int BN_bntest_rand(BIGNUM *rnd, int bits, int top,int bottom);
 }
 #endif
 #endif
-

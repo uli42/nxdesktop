@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Master include file
-   Copyright (C) Matthew Chapman 1999-2000
+   Copyright (C) Matthew Chapman 1999-2004
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -38,14 +38,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
 
-#include <sys/types.h>
-#include <sys/wait.h>
+#define VERSION "1.3.1"
 
-
-#include "NX.h"
-
-#define VERSION "1.1.0"
+#undef WITH_DEBUG
 
 #ifdef WITH_DEBUG
 #define DEBUG(args)	printf args;
@@ -53,15 +50,42 @@
 #define DEBUG(args)
 #endif
 
-#define STRNCPY(dst,src,n) { strncpy(dst,src,n-1); dst[n-1] = 0; }
+#ifdef WITH_DEBUG_KBD
+#define DEBUG_KBD(args) printf args;
+#else
+#define DEBUG_KBD(args)
+#endif
 
+#ifdef WITH_DEBUG_RDP5
+#define DEBUG_RDP5(args) printf args;
+#else
+#define DEBUG_RDP5(args)
+#endif
+
+#ifdef WITH_DEBUG_CLIPBOARD
+#define DEBUG_CLIPBOARD(args) printf args;
+#else
+#define DEBUG_CLIPBOARD(args)
+#endif
+
+#define STRNCPY(dst,src,n)	{ strncpy(dst,src,n-1); dst[n-1] = 0; }
+
+#ifndef MIN
+#define MIN(x,y)		(((x) < (y)) ? (x) : (y))
+#endif
+
+#ifndef MAX
+#define MAX(x,y)		(((x) > (y)) ? (x) : (y))
+#endif
+
+#include "parse.h"
 #include "constants.h"
 #include "types.h"
-#include "parse.h"
 
 #ifndef MAKE_PROTO
 #include "proto.h"
 #endif
+
 
 /*
  * NX enhancements.
@@ -69,16 +93,17 @@
 
 #undef  NXDESKTOP_XWIN_USES_FLUSH_IN_LOOP
 #undef  NXDESKTOP_XWIN_USES_SYNC_IN_LOOP
+#undef	NXDESKTOP_DEBUG_XPUTIMAGE
 
 #define NXDESKTOP_XWIN_USES_PACKED_IMAGES
 #define NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES
+#define NXDESKTOP_IMGCACHE_USES_COMPRESSED_IMAGES
 #define NXDESKTOP_XWIN_USES_PIXMAP_CACHE
 #define NXDESKTOP_USES_NXKARMA_IN_LOOP
 #define NXDESKTOP_LOGO
 #define NXDESKTOP_ONSTART
 #define NXDESKTOP_SPLASH
 #define NXWIN_USES_PACKED_RDP_TEXT
-
 
 /*
  * This is size of our cache reported to remote server.
@@ -100,3 +125,5 @@
 
 #endif
 
+#include "NX.h"
+#include <sys/wait.h>

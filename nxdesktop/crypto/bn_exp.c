@@ -510,7 +510,7 @@ err:
 	}
 #endif
 
-#if MONT_MUL_MOD
+#ifdef MONT_MUL_MOD
 int BN_mod_exp_mont(BIGNUM *rr, BIGNUM *a, const BIGNUM *p,
 		    const BIGNUM *m, BN_CTX *ctx, BN_MONT_CTX *in_mont)
 	{

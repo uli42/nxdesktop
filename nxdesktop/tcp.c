@@ -1,13 +1,13 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - TCP layer
-   Copyright (C) Matthew Chapman 1999-2001
+   Copyright (C) Matthew Chapman 1999-2002
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 2 of the License, or
    (at your option) any later version.
-
+   
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -43,8 +43,14 @@
 #include <netinet/tcp.h>	/* TCP_NODELAY */
 #include <arpa/inet.h>		/* inet_addr */
 #include <errno.h>		/* errno */
+#include <signal.h>		/* sigaction - NX */
 #include "rdesktop.h"
 
+#ifndef INADDR_NONE
+#define INADDR_NONE ((unsigned long) -1)
+#endif
+
+// NX
 #undef  NXDESKTOP_TCP_DEBUG
 #undef  NXDESKTOP_TCP_DUMP
 
@@ -59,11 +65,14 @@ extern int rdp_bufsize;
 static int rdpDump = -1;
 
 #endif
+// NX
 
 static int sock;
 static struct stream in;
 static struct stream out;
+extern int tcp_port_rdp;
 
+// NX
 extern int  nxdesktopStopKarmaSz;
 static long bytesFromLastKarma = 0;
 
@@ -71,10 +80,11 @@ static long bytesFromLastKarma = 0;
 static unsigned long tcpRead;
 static unsigned long tcpWritten;
 #endif
+// NX
 
 /* Initialise TCP transport data packet */
 STREAM
-tcp_init(int maxlen)
+tcp_init(uint32 maxlen)
 {
 	#ifdef NXDESKTOP_TCP_DUMP
 	if (rdpDump == -1)
@@ -82,10 +92,10 @@ tcp_init(int maxlen)
 		rdpDump = open("/tmp/rdp.dump", O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU);
 	}
 	#endif
-
-	if ((unsigned int)maxlen > out.size)
+	
+	if (maxlen > out.size)
 	{
-		out.data = xrealloc(out.data, maxlen);
+		out.data = (uint8 *) xrealloc(out.data, maxlen);
 		out.size = maxlen;
 	}
 
@@ -131,8 +141,9 @@ tcp_send(STREAM s)
 
 /* Receive a message on the TCP layer */
 STREAM
-tcp_recv(int length)
+tcp_recv(STREAM s, uint32 length)
 {
+	unsigned int new_length, end_offset, p_offset;
 	int rcvd = 0;
 	/* NX */
 	char errorMsg[512];
@@ -143,36 +154,63 @@ tcp_recv(int length)
 	int kiloRead = tcpRead / 1024;
 #endif
 
-        if ((unsigned int)length > in.size)
+	if (s == NULL)
 	{
-		in.data = xrealloc(in.data, length);
-		in.size = length;
+		/* read into "new" stream */
+		if (length > in.size)
+		{
+			in.data = (uint8 *) xrealloc(in.data, length);
+			in.size = length;
+		}
+		in.end = in.p = in.data;
+		s = &in;
+		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
+    		bytesFromLastKarma += length;
+		#endif
+	}
+	else
+	{
+		/* append to existing stream */
+		new_length = (s->end - s->data) + length;
+		if (new_length > s->size)
+		{
+			p_offset = s->p - s->data;
+			end_offset = s->end - s->data;
+			s->data = (uint8 *) xrealloc(s->data, new_length);
+			s->size = new_length;
+			s->p = s->data + p_offset;
+			s->end = s->data + end_offset;
+		}
+		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
+    		bytesFromLastKarma += new_length;
+		#endif
 	}
 
-	in.end = in.p = in.data;
+// Original bytes... aqui
 
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-        bytesFromLastKarma += length;
-#endif
 
 	while (length > 0)
 	{
+		if (!ui_select(sock, False))
+			/* User quit */
+			return NULL;
 
-                ui_select(sock, False);
-
-                rcvd = recv(sock, in.end, length, 0);
-
-		if (rcvd == -1)
+		rcvd = recv(sock, s->end, length, 0);
+		/* NX */
+		if (rcvd < 0)
 		{
-		    //error("recv: %s\n", strerror(errno));
-		    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
-		    snprintf(errorCaption,511,"Error");
-		    NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
-		    wait(NULL);
-		    //return False
-		    return NULL;
+			/*error("recv: %s\n", strerror(errno));*/
+			snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
+		    	snprintf(errorCaption,511,"Error");
+		    	NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
+		    	wait(NULL);
+			return NULL;
 		}
-
+		else if (rcvd == 0)
+		{
+			error("Connection closed\n");
+			return NULL;
+		}
 		#ifdef NXDESKTOP_TCP_DUMP
 		if (rdpDump != -1 && rcvd > 0)
 		{
@@ -185,11 +223,12 @@ tcp_recv(int length)
 		#ifdef NXDESKTOP_TCP_DEBUG
 		tcpRead += rcvd;
 		#endif
-
-		in.end += rcvd;
+		/* NX */
+		s->end += rcvd;
 		length -= rcvd;
 	}
-
+	
+	/* NX */
 	#ifdef NXDESKTOP_TCP_DEBUG
 	if ((tcpRead / 1024) > kiloRead)
 	{
@@ -201,35 +240,82 @@ tcp_recv(int length)
         if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
         {
 #ifdef NXDESKTOP_NXKARMA_DEBUG
-                fprintf(stderr,"Karma will be sent, received bytes [%d]\n", bytesFromLastKarma);
+                fprintf(stderr,"Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
 #endif
                 ui_select(sock, True);
                 bytesFromLastKarma = 0;
-        }
+	}
 #endif
-
-
-	return &in;
+	/* NX */
+	
+	return s;
 }
 
 /* Establish a connection on the TCP layer */
 BOOL
 tcp_connect(char *server)
 {
-	struct hostent *nslookup;
-	struct sockaddr_in servaddr;
-	int true = 1;
+	int true_value = 1;
+	/* NX */
 	extern char *nxDisplay;
 	extern char *windowName;
 	char errorMsg[512];
 	char errorCaption[512];
+	struct sigaction /*sigact*/;
+	/* NX */
+
+#ifdef IPv6
+
+	int n;
+	struct addrinfo hints, *res, *ressave;
+	char tcp_port_rdp_s[10];
+
+	snprintf(tcp_port_rdp_s, 10, "%d", tcp_port_rdp);
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+	n = getaddrinfo(server, tcp_port_rdp_s, &hints, &res);
+
+	if (n < 0)
+	{
+		error("getaddrinfo: %s\n", gai_strerror(n));
+		return False;
+	}
+
+	ressave = res;
+	sock = -1;
+	while (res)
+	{
+		sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+		if (!(sock < 0))
+		{
+			if (connect(sock, res->ai_addr, res->ai_addrlen) == 0)
+				break;
+			close(sock);
+			sock = -1;
+		}
+		res = res->ai_next;
+	}
+	freeaddrinfo(ressave);
+
+	if (sock == -1)
+	{
+		error("%s: unable to connect\n", server);
+		return False;
+	}
+
+#else /* no IPv6 support */
+
+	struct hostent *nslookup;
+	struct sockaddr_in servaddr;
 
 	if ((nslookup = gethostbyname(server)) != NULL)
 	{
-		memcpy(&servaddr.sin_addr, nslookup->h_addr,
-		       sizeof(servaddr.sin_addr));
+		memcpy(&servaddr.sin_addr, nslookup->h_addr, sizeof(servaddr.sin_addr));
 	}
-	else if (!(servaddr.sin_addr.s_addr = inet_addr(server)))
+	else if ((servaddr.sin_addr.s_addr = inet_addr(server)) == INADDR_NONE)
 	{
 		error("%s: unable to resolve host\n", server);
 		return False;
@@ -242,14 +328,22 @@ tcp_connect(char *server)
 	}
 
 	servaddr.sin_family = AF_INET;
-	servaddr.sin_port = htons(TCP_PORT_RDP);
+	servaddr.sin_port = htons(tcp_port_rdp);
+	
+	/* NX */
+	/*sigaction(SIGALRM, NULL, &sigact);
+	sigact.sa_handler = AlarmHandler;
+	sigact.sa_flags &= ~SA_RESTART;
+	sigaction(SIGALRM, &sigact, NULL); 
 
-	if (connect
-	    (sock, (struct sockaddr *) &servaddr,
-	     sizeof(struct sockaddr)) < 0)
+	alarm(30);*/
+	/* NX */
+
+	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
 	{
 		error("connect: %s\n", strerror(errno));
 		close(sock);
+		/*sigaction(SIGALRM, NULL, &sigact);*/
 		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
 		snprintf(errorCaption,511,"%s",windowName);
 		NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
@@ -257,37 +351,22 @@ tcp_connect(char *server)
 		return False;
 	}
 
-	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (void *) &true,
-		   sizeof(true));
+#endif /* IPv6 */
 
-	/*
-	 * Set TCP read buffer (to a smaller value,
-         * we suppose) to increase interactivity.
-	 */
-
-	if (rdp_bufsize > 0 &&
-		 setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
-				&rdp_bufsize, sizeof(rdp_bufsize)) < 0)
-	{
-		fprintf(stderr, "tcp_connect: Cannot resize receive buffer to %d. Error is '%s'.\n",
-					rdp_bufsize, strerror(errno));
-		close(sock);
-
-		return False;
-	}
+	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (void *) &true_value, sizeof(true_value));
 
 	in.size = 4096;
-	in.data = xmalloc(in.size);
+	in.data = (uint8 *) xmalloc(in.size);
 
 	out.size = 4096;
-	out.data = xmalloc(out.size);
+	out.data = (uint8 *) xmalloc(out.size);
 
 	return True;
 }
 
 /* Disconnect on the TCP layer */
 void
-tcp_disconnect()
+tcp_disconnect(void)
 {
 	close(sock);
 
@@ -299,7 +378,24 @@ tcp_disconnect()
 	#endif
 }
 
+char *
+tcp_get_address()
+{
+	static char ipaddr[32];
+	struct sockaddr_in sockaddr;
+	size_t len = sizeof(sockaddr);
+	if (getsockname(sock, (struct sockaddr *) &sockaddr, &len) == 0)
+	{
+		unsigned char *ip = (unsigned char *) &sockaddr.sin_addr;
+		sprintf(ipaddr, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+	}
+	else
+		strcpy(ipaddr, "127.0.0.1");
+	
+	return ipaddr;
+}
 
+/* NX */
 void
 tcp_resize_buf(int fd, int sense, int size)
 {
@@ -308,3 +404,9 @@ tcp_resize_buf(int fd, int sense, int size)
      setsockopt(fd, SOL_SOCKET, sense?SO_RCVBUF:SO_SNDBUF, &size, sizeof(int));
    }
 }
+
+void
+AlarmHandler(int signal)
+{
+}
+/* NX */

@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Parsing primitives
-   Copyright (C) Matthew Chapman 1999-2000
+   Copyright (C) Matthew Chapman 1999-2002
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -31,8 +31,10 @@ typedef struct stream
 	unsigned char *mcs_hdr;
 	unsigned char *sec_hdr;
 	unsigned char *rdp_hdr;
+	unsigned char *channel_hdr;
 
-} *STREAM;
+}
+ *STREAM;
 
 #define s_push_layer(s,h,n)	{ (s)->h = (s)->p; (s)->p += n; }
 #define s_pop_layer(s,h)	(s)->p = (s)->h;

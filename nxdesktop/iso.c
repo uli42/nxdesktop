@@ -1,7 +1,7 @@
-/*
+/* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - ISO layer
-   Copyright (C) Matthew Chapman 1999-2001
+   Copyright (C) Matthew Chapman 1999-2002
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -42,31 +42,78 @@ iso_send_msg(uint8 code)
 	tcp_send(s);
 }
 
+static void
+iso_send_connection_request(char *username)
+{
+	STREAM s;
+	int length = 30 + strlen(username);
+
+	s = tcp_init(length);
+
+	out_uint8(s, 3);	/* version */
+	out_uint8(s, 0);	/* reserved */
+	out_uint16_be(s, length);	/* length */
+
+	out_uint8(s, length - 5);	/* hdrlen */
+	out_uint8(s, ISO_PDU_CR);
+	out_uint16(s, 0);	/* dst_ref */
+	out_uint16(s, 0);	/* src_ref */
+	out_uint8(s, 0);	/* class */
+
+	out_uint8p(s, "Cookie: mstshash=", strlen("Cookie: mstshash="));
+	out_uint8p(s, username, strlen(username));
+
+	out_uint8(s, 0x0d);	/* Unknown */
+	out_uint8(s, 0x0a);	/* Unknown */
+
+	s_mark_end(s);
+	tcp_send(s);
+}
+
 /* Receive a message on the ISO layer, return code */
 static STREAM
-iso_recv_msg(uint8 *code)
+iso_recv_msg(uint8 * code)
 {
 	STREAM s;
 	uint16 length;
 	uint8 version;
 
-	s = tcp_recv(4);
+      next_packet:
+	s = tcp_recv(NULL, 4);
 	if (s == NULL)
 		return NULL;
 
 	in_uint8(s, version);
-	if (version != 3)
+	switch (version & 3)
 	{
-		error("TPKT v%d\n", version);
-		return NULL;
+		case 0:
+			in_uint8(s, length);
+			if (length & 0x80)
+			{
+				length &= ~0x80;
+				next_be(s, length);
+			}
+			break;
+
+		case 3:
+			in_uint8s(s, 1);	/* pad */
+			in_uint16_be(s, length);
+			break;
+
+		default:
+			error("TPKT v%d\n", version);
+			return NULL;
 	}
 
-	in_uint8s(s, 1);	/* pad */
-	in_uint16_be(s, length);
-
-	s = tcp_recv(length - 4);
+	s = tcp_recv(s, length - 4);
 	if (s == NULL)
 		return NULL;
+
+	if ((version & 3) == 0)
+	{
+		rdp5_process(s, version & 0x80);
+		goto next_packet;
+	}
 
 	in_uint8s(s, 1);	/* hdrlen */
 	in_uint8(s, *code);
@@ -115,7 +162,7 @@ iso_send(STREAM s)
 
 /* Receive ISO transport data packet */
 STREAM
-iso_recv()
+iso_recv(void)
 {
 	STREAM s;
 	uint8 code;
@@ -135,14 +182,14 @@ iso_recv()
 
 /* Establish a connection up to the ISO layer */
 BOOL
-iso_connect(char *server)
+iso_connect(char *server, char *username)
 {
 	uint8 code;
 
 	if (!tcp_connect(server))
 		return False;
 
-	iso_send_msg(ISO_PDU_CR);
+	iso_send_connection_request(username);
 
 	if (iso_recv_msg(&code) == NULL)
 		return False;
@@ -159,7 +206,7 @@ iso_connect(char *server)
 
 /* Disconnect from the ISO layer */
 void
-iso_disconnect()
+iso_disconnect(void)
 {
 	iso_send_msg(ISO_PDU_DR);
 	tcp_disconnect();

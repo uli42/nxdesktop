@@ -1,7 +1,7 @@
-/*
+/* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - Multipoint Communications Service
-   Copyright (C) Matthew Chapman 1999-2001
+   Copyright (C) Matthew Chapman 1999-2002
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,9 @@
 
 #include "rdesktop.h"
 
-uint16 mcs_userid;
+uint16 g_mcs_userid;
+extern VCHANNEL g_channels[];
+extern unsigned int g_num_channels;
 
 /* Parse an ASN.1 BER header */
 static BOOL
@@ -89,8 +91,7 @@ ber_out_integer(STREAM s, int value)
 
 /* Output a DOMAIN_PARAMS structure (ASN.1 BER) */
 static void
-mcs_out_domain_params(STREAM s, int max_channels, int max_users,
-		      int max_tokens, int max_pdusize)
+mcs_out_domain_params(STREAM s, int max_channels, int max_users, int max_tokens, int max_pdusize)
 {
 	ber_out_header(s, MCS_TAG_DOMAIN_PARAMS, 32);
 	ber_out_integer(s, max_channels);
@@ -120,19 +121,21 @@ static void
 mcs_send_connect_initial(STREAM mcs_data)
 {
 	int datalen = mcs_data->end - mcs_data->data;
-	int length = 7 + 3 * 34 + 4 + datalen;
+	int length = 9 + 3 * 34 + 4 + datalen;
 	STREAM s;
 
 	s = iso_init(length + 5);
 
 	ber_out_header(s, MCS_CONNECT_INITIAL, length);
-	ber_out_header(s, BER_TAG_OCTET_STRING, 0);	/* calling domain */
-	ber_out_header(s, BER_TAG_OCTET_STRING, 0);	/* called domain */
+	ber_out_header(s, BER_TAG_OCTET_STRING, 1);	/* calling domain */
+	out_uint8(s, 1);
+	ber_out_header(s, BER_TAG_OCTET_STRING, 1);	/* called domain */
+	out_uint8(s, 1);
 
 	ber_out_header(s, BER_TAG_BOOLEAN, 1);
 	out_uint8(s, 0xff);	/* upward flag */
 
-	mcs_out_domain_params(s, 2, 2, 0, 0xffff);	/* target params */
+	mcs_out_domain_params(s, 34, 2, 0, 0xffff);	/* target params */
 	mcs_out_domain_params(s, 1, 1, 1, 0x420);	/* min params */
 	mcs_out_domain_params(s, 0xffff, 0xfc17, 0xffff, 0xffff);	/* max params */
 
@@ -148,7 +151,7 @@ static BOOL
 mcs_recv_connect_response(STREAM mcs_data)
 {
 	uint8 result;
-	unsigned int length;
+	int length;
 	STREAM s;
 
 	s = iso_recv();
@@ -170,22 +173,26 @@ mcs_recv_connect_response(STREAM mcs_data)
 	mcs_parse_domain_params(s);
 
 	ber_parse_header(s, BER_TAG_OCTET_STRING, &length);
-	if (length > mcs_data->size)
-	{
-		error("MCS data length %d\n", length);
-		length = mcs_data->size;
-	}
 
-	in_uint8a(s, mcs_data->data, length);
-	mcs_data->p = mcs_data->data;
-	mcs_data->end = mcs_data->data + length;
+	sec_process_mcs_data(s);
+	/*
+	   if (length > mcs_data->size)
+	   {
+	   error("MCS data length %d, expected %d\n", length,
+	   mcs_data->size);
+	   length = mcs_data->size;
+	   }
 
+	   in_uint8a(s, mcs_data->data, length);
+	   mcs_data->p = mcs_data->data;
+	   mcs_data->end = mcs_data->data + length;
+	 */
 	return s_check_end(s);
 }
 
 /* Send an EDrq message (ASN.1 PER) */
 static void
-mcs_send_edrq()
+mcs_send_edrq(void)
 {
 	STREAM s;
 
@@ -201,7 +208,7 @@ mcs_send_edrq()
 
 /* Send an AUrq message (ASN.1 PER) */
 static void
-mcs_send_aurq()
+mcs_send_aurq(void)
 {
 	STREAM s;
 
@@ -215,7 +222,7 @@ mcs_send_aurq()
 
 /* Expect a AUcf message (ASN.1 PER) */
 static BOOL
-mcs_recv_aucf(uint16 *mcs_userid)
+mcs_recv_aucf(uint16 * mcs_userid)
 {
 	uint8 opcode, result;
 	STREAM s;
@@ -250,10 +257,12 @@ mcs_send_cjrq(uint16 chanid)
 {
 	STREAM s;
 
+	DEBUG_RDP5(("Sending CJRQ for channel #%d\n", chanid));
+
 	s = iso_init(5);
 
 	out_uint8(s, (MCS_CJRQ << 2));
-	out_uint16_be(s, mcs_userid);
+	out_uint16_be(s, g_mcs_userid);
 	out_uint16_be(s, chanid);
 
 	s_mark_end(s);
@@ -262,7 +271,7 @@ mcs_send_cjrq(uint16 chanid)
 
 /* Expect a CJcf message (ASN.1 PER) */
 static BOOL
-mcs_recv_cjcf()
+mcs_recv_cjcf(void)
 {
 	uint8 opcode, result;
 	STREAM s;
@@ -304,9 +313,9 @@ mcs_init(int length)
 	return s;
 }
 
-/* Send an MCS transport data packet */
+/* Send an MCS transport data packet to a specific channel */
 void
-mcs_send(STREAM s)
+mcs_send_to_channel(STREAM s, uint16 channel)
 {
 	uint16 length;
 
@@ -315,17 +324,24 @@ mcs_send(STREAM s)
 	length |= 0x8000;
 
 	out_uint8(s, (MCS_SDRQ << 2));
-	out_uint16_be(s, mcs_userid);
-	out_uint16_be(s, MCS_GLOBAL_CHANNEL);
+	out_uint16_be(s, g_mcs_userid);
+	out_uint16_be(s, channel);
 	out_uint8(s, 0x70);	/* flags */
 	out_uint16_be(s, length);
 
 	iso_send(s);
 }
 
+/* Send an MCS transport data packet to the global channel */
+void
+mcs_send(STREAM s)
+{
+	mcs_send_to_channel(s, MCS_GLOBAL_CHANNEL);
+}
+
 /* Receive an MCS transport data packet */
 STREAM
-mcs_recv()
+mcs_recv(uint16 * channel)
 {
 	uint8 opcode, appid, length;
 	STREAM s;
@@ -345,7 +361,9 @@ mcs_recv()
 		return NULL;
 	}
 
-	in_uint8s(s, 5);	/* userid, chanid, flags */
+	in_uint8s(s, 2);	/* userid */
+	in_uint16_be(s, *channel);
+	in_uint8s(s, 1);	/* flags */
 	in_uint8(s, length);
 	if (length & 0x80)
 		in_uint8s(s, 1);	/* second byte of length */
@@ -355,9 +373,11 @@ mcs_recv()
 
 /* Establish a connection up to the MCS layer */
 BOOL
-mcs_connect(char *server, STREAM mcs_data)
+mcs_connect(char *server, STREAM mcs_data, char *username)
 {
-	if (!iso_connect(server))
+	unsigned int i;
+
+	if (!iso_connect(server, username))
 		return False;
 
 	mcs_send_connect_initial(mcs_data);
@@ -367,10 +387,11 @@ mcs_connect(char *server, STREAM mcs_data)
 	mcs_send_edrq();
 
 	mcs_send_aurq();
-	if (!mcs_recv_aucf(&mcs_userid))
+	if (!mcs_recv_aucf(&g_mcs_userid))
 		goto error;
 
-	mcs_send_cjrq(mcs_userid + 1001);
+	mcs_send_cjrq(g_mcs_userid + MCS_USERCHANNEL_BASE);
+
 	if (!mcs_recv_cjcf())
 		goto error;
 
@@ -378,6 +399,12 @@ mcs_connect(char *server, STREAM mcs_data)
 	if (!mcs_recv_cjcf())
 		goto error;
 
+	for (i = 0; i < g_num_channels; i++)
+	{
+		mcs_send_cjrq(g_channels[i].mcs_id);
+		if (!mcs_recv_cjcf())
+			goto error;
+	}
 	return True;
 
       error:
@@ -387,7 +414,7 @@ mcs_connect(char *server, STREAM mcs_data)
 
 /* Disconnect from the MCS layer */
 void
-mcs_disconnect()
+mcs_disconnect(void)
 {
 	iso_disconnect();
 }
