@@ -207,7 +207,6 @@ BOOL nxdesktopCanPackRDPText = False;
 #endif
 
 /* Image cache flag */
-
 extern BOOL rdp_img_cache;
 
 /* Is the nx rdp bitmap cache active? */
@@ -1156,6 +1155,10 @@ ui_init(void)
 		{
 	    	    rdp_img_cache = True;
 		    rdp_img_cache_nxcompressed = True;
+		}
+		{
+	    	    rdp_img_cache = False;
+		    rdp_img_cache_nxcompressed = False;
 		};
 		
 		/*

@@ -282,6 +282,7 @@ sec_decrypt(uint8 * data, int length)
 	}
 
 	RC4(&rc4_decrypt_key, length, data, data);
+
 	use_count++;
 }
 

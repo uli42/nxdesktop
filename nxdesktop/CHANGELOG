@@ -1,5 +1,18 @@
 ChangeLog:
 
+nxdesktop-1.4.0-27
+
+- Solved bug that was causing messed bitmaps to be cached.
+
+nxdesktop-1.4.0-26
+
+- Solved bug on decompressing 1 bpp bitmaps bigger than 128 
+  pixels.
+  
+- Fixed typo on connection error message.
+
+- Fixed wrong typecast on secure.c.
+
 nxdesktop-1.4.0-25
 
 - Fixed memory leak on ui_create_gliph.

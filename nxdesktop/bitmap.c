@@ -157,23 +157,30 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 		{
 			case 0:	/* Fill */
 				if ((lastopcode == opcode) && !((x == width) && (prevline == NULL)))
-					insertmix = True;
+				    insertmix = True;
+				
 				break;
+			
 			case 8:	/* Bicolour */
 				colour1 = CVAL(input);
+			
 			case 3:	/* Colour */
 				colour2 = CVAL(input);
 				break;
+			
 			case 6:	/* SetMix/Mix */
+			
 			case 7:	/* SetMix/FillOrMix */
 				mix = CVAL(input);
 				opcode -= 5;
 				break;
+			
 			case 9:	/* FillOrMix_1 */
 				mask = 0x03;
 				opcode = 0x02;
 				fom_mask = 3;
 				break;
+			
 			case 0x0a:	/* FillOrMix_2 */
 				mask = 0x05;
 				opcode = 0x02;
