@@ -152,8 +152,6 @@ static BOOL g_focused;
 static BOOL g_mouse_in_wnd;
 static BOOL g_arch_match = False; /* set to True if RGB XServer and little endian */
 
-static XModifierKeymap *g_mod_map;
-
 /*
  * Avoid to use special NX operations
  * when not using NX transport. Ugly
@@ -203,15 +201,15 @@ unsigned int nxdesktopImageSplitMethod  = 0;
 unsigned int nxdesktopImageMaskMethod   = 0;
 
 
-#ifdef NXWIN_USES_PACKED_RDP_TEXT
+/*#ifdef NXWIN_USES_PACKED_RDP_TEXT*/
 BOOL nxdesktopCanPackRDPText = False;
-#endif
+/*#endif*/
 
 /* Image cache flag */
 extern BOOL rdp_img_cache;
 
 /* Is the nx rdp bitmap cache active? */
-BOOL rdp_img_cache_nxcompressed = False;
+extern BOOL rdp_img_cache_nxcompressed;
 
 /* endianness */
 static BOOL g_host_be;
@@ -1092,6 +1090,7 @@ ui_init(void)
 	XVisualInfo vi;
 	XPixmapFormatValues *pfm;
 	uint16 test;
+	int minkey, maxkey;
 	int i, screen_num, nvisuals;
 	XVisualInfo *vmatches = NULL;
 	XVisualInfo template;
@@ -1187,7 +1186,6 @@ ui_init(void)
 
 	if (nxdesktopUseNXTrans)
 	{
-	    
                 NXGetControlParameters(g_display, &nxdesktopLinkType, &nxdesktopProtocolMajor,
 						&nxdesktopProtocolMinor, &nxdesktopProtocolPatch,
 						&nxdesktopStopKarmaSz, &nxdesktopSplitSize,
@@ -1212,12 +1210,13 @@ ui_init(void)
 	    	    rdp_img_cache = True;
 		    rdp_img_cache_nxcompressed = True;
 		}
+		else
 		{
 	    	    rdp_img_cache = False;
 		    rdp_img_cache_nxcompressed = False;
-		};
+		}
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		nxdesktopDebug("ui_init","State of the RDP image caches %s and compressed %s.\n",rdp_img_cache,rdp_img_cache_compressed);
+		nxdesktopDebug("ui_init","State of the RDP image caches %s and compressed %s.\n",rdp_img_cache,rdp_img_cache_nxcompressed);
 		#endif
 		
 		/*
@@ -1315,6 +1314,11 @@ ui_init(void)
 				fprintf(stderr, "ui_init: WARNING! No available RDP pack method on g_display '%s'.\n",
 						XDisplayName(nxDisplay));
 			}*/
+		}
+		else
+		{
+		    rdp_img_cache = False;
+		    rdp_img_cache_nxcompressed = False;
 		}
 
 		/*
@@ -1420,6 +1424,7 @@ ui_init(void)
 	/* make sure width is a multiple of 4 */
 	g_width = (g_width + 3) & ~3;
 
+	XDisplayKeycodes(g_display, &minkey, &maxkey);
 	g_mod_map = XGetModifierMapping(g_display);
 
 	xkeymap_init();
@@ -1844,14 +1849,12 @@ ui_create_window(void)
 
 	#endif
 
-	
+	/*
         {
-            int minkey, maxkey;
-            XDisplayKeycodes(g_display, &minkey, &maxkey);
             g_mod_map = XGetModifierMapping(g_display);
             xkeymap_init();
         }
-	/* NX */
+	 NX */
 	return True;
 }
 
@@ -2016,16 +2019,18 @@ xwin_process_events(void)
 		*/
 		/* NX */
 			
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug("xwin_process_events","Xevent type %d.\n",xevent.type);
+		#endif
+		
 		switch (xevent.type)
 		{
 			/* NX */
-			#ifdef NXDESKTOP_XWIN_DEBUG
-			nxdesktopDebug("xwin_process_events","Xevent type %d.\n",xevent.type);
-			#endif
+			
 			case MapNotify:
-					if (g_fullscreen) 
-						sigusr_func(SIGUSR2);
-					break;
+			    if (g_fullscreen) 
+				sigusr_func(SIGUSR2);
+			break;
 			/* NX */
 			
 			/*
@@ -2529,6 +2534,7 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	
 	if (rdp_img_cache_nxcompressed)
 	{
+	    
 	    tdata = data;
 	    if (compressed)
 	    {
@@ -2553,6 +2559,7 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	}
 	else
 	{
+	    
 	    tdata = (g_owncolmap ? data : translate_image(width, height, data));
 	    image = XCreateImage(g_display, g_visual, g_depth, ZPixmap, 0,
 				(char *) tdata, width, height, bitmap_pad, 0);
@@ -2598,7 +2605,6 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	}
 		
 	#ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
-
 	if (nxdesktopUseNXRdpImages)
 	{
 		int data_length;
@@ -3727,14 +3733,13 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 	{
 		switch (text[i])
 		{
-		    
 			case 0xff:
 				if (i + 2 < length)
 					cache_put_text(text[i + 1], text, text[i + 2]);
 				else
 				{
-					error("this shouldn't be happening\n");
-					exit(1);
+				    error("this shouldn't be happening\n");
+				    exit(1);
 				}
 				/* this will move pointer from start to first character after FF command */
 				length -= i + 3;
@@ -3761,13 +3766,21 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 					    if (!(flags & TEXT2_IMPLICIT_X))
 					    {
 						xyoffset = ((uint8 *) (entry->data))[++j];
-						if (xyoffset & 0x80)
-						    xyoffset = ((xyoffset & 0x7f) << 8) | ((uint8 *) (entry->data))[++j];
-
+						if ((xyoffset & 0x80))
+    						{
+      							if (flags & TEXT2_VERTICAL)
+        							y += ((uint8 *) (entry->data))[j+1] | (((uint8 *) (entry->data))[j+2] << 8);
+      							else
+        							x += ((uint8 *) (entry->data))[j+1] | (((uint8 *) (entry->data))[j+2] << 8);
+      							j += 2;
+    						}
+						else
+						{
 						if (flags & TEXT2_VERTICAL)
 							y += xyoffset;
 						else
 							x += xyoffset;
+						}
 					    }
 					    if (glyph != NULL)
 					    {
@@ -3805,40 +3818,44 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 			default:
 				if (nxdesktopUseNXTrans && nxdesktopCanPackRDPText)
 				{
-					glyph = cache_get_font(font, text[i]);
-					if (!(flags & TEXT2_IMPLICIT_X))
+				    glyph = cache_get_font(font, text[i]);
+				    if (!(flags & TEXT2_IMPLICIT_X))
+				    {	
+					xyoffset = text[++i];
+					if ((xyoffset & 0x80))
+    					{
+      					    if (flags & TEXT2_VERTICAL)
+        					y += text[i+1] | (text[i+2] << 8);
+      					    else
+        					x += text[i+1] | (text[i+2] << 8);
+      					    i += 2;
+    					}
+					else
 					{
-						xyoffset = text[++i];
-						if (xyoffset & 0x80)
-						    xyoffset = ((xyoffset & 0x7f) << 8) | text[++i];
-
-						if (flags & TEXT2_VERTICAL)
-							y += xyoffset;
-						else
-							x += xyoffset;
+					if (flags & TEXT2_VERTICAL)
+						y += xyoffset;
+					else
+						x += xyoffset;
 					}
-
-					if (glyph != NULL)
-					{
-						#ifdef NXDESKTOP_XWIN_DEBUG
-						fprintf(stderr, "ui_draw_text: Building element [%d] with pixmap [0x%lx].\n",i, (Pixmap)glyph->pixmap);
-						#endif
-
-						rdp_text[elements].x      = x + (short)glyph->offset;
-						rdp_text[elements].y      = y + (short)glyph->baseline;
-						rdp_text[elements].width  = glyph->width;
-						rdp_text[elements].height = glyph->height;
-						rdp_text[elements].pixmap = (Pixmap)glyph->pixmap;
-
-						elements++;
-
-						if (flags & TEXT2_IMPLICIT_X)
-							x += glyph->width;
-					}
+				    }
+				    if (glyph != NULL)
+				    {
+					#ifdef NXDESKTOP_XWIN_DEBUG
+					fprintf(stderr, "ui_draw_text: Building element [%d] with pixmap [0x%lx].\n",i, (Pixmap)glyph->pixmap);
+					#endif
+					rdp_text[elements].x      = x + (short)glyph->offset;
+					rdp_text[elements].y      = y + (short)glyph->baseline;
+					rdp_text[elements].width  = glyph->width;
+					rdp_text[elements].height = glyph->height;
+					rdp_text[elements].pixmap = (Pixmap)glyph->pixmap;
+    					elements++;
+					if (flags & TEXT2_IMPLICIT_X)
+					    x += glyph->width;
+				    }
 				}
 				else
 				{
-					DO_GLYPH(text, i);
+				    DO_GLYPH(text, i);
 				}
 				i++;
 				break;
@@ -3853,7 +3870,7 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 		if (image)
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
-			fprintf(stderr, "ui_draw_text: Using packed image with drawable [0x%lx] and gc [0x%lx].\n",g_wnd, g_gc);
+			fprintf(stderr, "ui_draw_text: Using packed image with drawable [0x%lx] and gc [0x%lx].\n",g_wnd, (long unsigned int)g_gc);
 			#endif
 
 			NXPutPackedImage(g_display, 0, (g_ownbackstore) ? g_backstore : g_wnd, g_gc, image, PACK_RDP_TEXT, 1, 0, 0, 0, 0, elements, 1);

@@ -1,5 +1,92 @@
 ChangeLog:
 
+nxdesktop-1.4.0-57
+
+- Solved compilation warning when XWIN_DEBUG is active.
+
+- Solved bug which was stoping nxdesktop properly behavior if
+  "Use plain bitmaps" is enabled.
+  
+nxdesktop-1.4.0-56
+
+- Debug code for the latest additions disabled.
+
+nxdesktop-1.4.0-55
+
+- Cosmetic change on the debug presentation routine.
+
+- Better handling of the kbtype parameter read from the option file.
+
+- Added debug code for the options parser.
+
+- Changed the way the keymap file name is transfered to the correspondent
+  variable and it's initialization. This was done to prevent a possible 
+  crash due an empty kbtype parameter.
+
+nxdesktop-1.4.0-54
+
+- Updated keyboard translation table to be compatible with latest version
+  used on nxclient.
+  
+- Updated NXTranslateKeymap to reflect those changes.
+
+nxdesktop-1.4.0-53
+
+- Changed warning message for unsupported keyboard option.
+
+- Variable "command" is now freeded in case or error.
+
+- In the previous version, for testing porpouses, the kbtype parameter
+  was expected to still have the windows code attached. This was removed.
+  
+- As required, all keymap definitions supported on rdesktop are mapped
+  to it's xkb counter-part.
+ 
+NOTE: This version will not work with the current nxserver/nxclient.
+
+nxdesktop-1.4.0-52
+
+- Removed an duplicated call to xkeymap_init(). It didn't do any harm,
+  just called twice.
+
+- The keyboard parameters are now parsed from the "options" file. Also
+  other relevant parameters like geometry are parsed from there.
+  It scans the xkb parameter for an windows keymap equivalent. If one is
+  not found, it falls back to the standard en_US, writing a warning 
+  message in the server logs.
+  It also still supports command line parameters for those it does not
+  finds into the options file. In case of duplicity tough, the option 
+  file has the priority.
+  
+NOTE: This version will work only with the latest nxserver 1.4.0-98 which
+      was the last one made avaliable to me.
+      For now the translation table is hardcoded based on Kryza's reference 
+      file. Reading from /usr/NX/share/keyboards will probably better as 
+      soon as it reaches it's final form.
+
+nxdesktop-1.4.0-51
+
+- The sound support is now disabled if NX transport is used.
+
+nxdesktop-1.4.0-50
+
+- Solved an error regarding a #ifdef that was making nxdesktop disable 
+  the compressed cache and compressed bitmap orderings.
+
+nxdesktop-1.4.0-49
+
+- Solved text rendering problem. This closes the TRs
+  "Certain text files are not displayed correctly in RDP sessions" and
+  "nxdesktop shows errors when clipboard operations are performed"
+  
+NOTE: The problem on the second TR was actually caused by a bug on the
+      text rendering process not a clipboard problem as first tought.
+
+nxdesktop-1.4.0-48
+
+- Disabled parameters parsing debug logs left enabled
+  by mistake.
+
 nxdesktop-1.4.0-47
 
 - Corrected debug parameter of RDP5.

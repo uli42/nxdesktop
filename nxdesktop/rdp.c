@@ -732,7 +732,9 @@ rdp_send_confirm_active(void)
 	rdp_out_general_caps(s);
 	rdp_out_bitmap_caps(s);
 	rdp_out_order_caps(s);
-	g_use_rdp5 ? rdp_out_bmpcache2_caps(s) : rdp_out_bmpcache_caps(s);
+	if (False)
+	    g_use_rdp5 ? rdp_out_bmpcache2_caps(s) : rdp_out_bmpcache_caps(s);
+	rdp_out_bmpcache_caps(s);
 	rdp_out_colcache_caps(s);
 	rdp_out_activate_caps(s);
 	rdp_out_control_caps(s);

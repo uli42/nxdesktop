@@ -62,7 +62,7 @@
 char g_title[256] = "";
 char g_username[64];
 char hostname[16];
-char keymapname[16];
+char keymapname[16] = "";
 int keylayout = 0x409;		/* Defaults to US keyboard layout */
 
 int g_width = 800;		/* width is special: If 0, the
@@ -88,6 +88,7 @@ BOOL g_hide_decorations = False;
 /* NX */
 BOOL g_use_rdp5 = True;
 BOOL rdp_img_cache = True;
+BOOL rdp_img_cache_nxcompressed = False;
 BOOL username_option = False;
 BOOL prompt_password = False;
 /* NX */
@@ -116,9 +117,20 @@ rdp2vnc_connect(char *server, uint32 flags, char *domain, char *password,
 #endif
 
 /* Here starts the NX mods */
+#define NUM_KEYMAPS 33
+
+struct struct_keymaps 
+{
+    char *xkb_name;
+    char *def;
+    char *file;
+} keyboard_defs[NUM_KEYMAPS];
+
+extern BOOL nxdesktopUseNXTrans;
 extern void RunOrKillNXkbd();
 int agentArgument(int i, char *argv[]);
 void NXTranslateKeymap();
+void InitKeyboardsList();
 void ShowHeaderInfo();
 static char *nxdesktopReadPasswdFromFile(char *fname);
 #undef NXDESKTOP_DISABLE_DESKTOP_SAVE
@@ -132,6 +144,8 @@ int yo;
 char windowName[255];
 char passwordFile[255];
 int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
+
+
 /* end NX mods */
 
 /* Display usage information */
@@ -405,7 +419,7 @@ main(int argc, char *argv[])
 	
 	/* show initial info */
 	ShowHeaderInfo();
-	
+	InitKeyboardsList();
 	flags = RDP_LOGON_NORMAL;
 	prompt_password = False;
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
@@ -420,12 +434,12 @@ main(int argc, char *argv[])
 #define VNCOPT
 #endif
 	/* Parse the extra parameters from the NXAgent */
-	//#ifdef NXDESKTOP_PARAM_DEBUG
+	#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 1;i<argc; i++)
 	{
 	    nxdesktopDebug("Paramenters first phase","'%i' '%s'\n",i,argv[i]);
 	}
-	//#endif
+	#endif
 	nx_argv[0] = argv[0];
 	i = 1;
 	while (i<argc)
@@ -450,10 +464,10 @@ main(int argc, char *argv[])
 	nx_argv[nx_argc] = NULL;
 	#endif
 	
-	//#ifdef NXDESKTOP_PARAM_DEBUG
+	#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 0; i<=nx_argc; i++)
 	    nxdesktopDebug("Paramenters second phase","'%i' '%s'\n",i,nx_argv[i]);
-	//#endif
+	#endif
 	
 	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?")) != -1)
 	{
@@ -773,8 +787,6 @@ main(int argc, char *argv[])
 
 	STRNCPY(server, nx_argv[optind], sizeof(server));
 	parse_server_and_port(server);	
-
-	
 	
 	if (!username_option)
 	{
@@ -849,7 +861,7 @@ main(int argc, char *argv[])
 		return 1;
 
 #ifdef WITH_RDPSND
-	if (g_rdpsnd)
+	if (g_rdpsnd && (!nxdesktopUseNXTrans))
 		rdpsnd_init();
 #endif
 	rdpdr_init();
@@ -1072,7 +1084,7 @@ nxdesktopDebug(char *function_name, char *format, ...)
 {
 	va_list ap;
 
-	fprintf(stderr, "%s Debug: ",function_name);
+	fprintf(stderr, "Debug: %s ",function_name);
 
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
@@ -1421,6 +1433,7 @@ rd_lock_file(int fd, int start, int len)
 	return True;
 }
 
+
 /* the NX mods implementation starts here */
 
 /* agentArgument parses the extra agent paramenters */
@@ -1432,6 +1445,7 @@ int i;
 char *argv[];
 
 {
+    
     if (!strcmp(argv[i], "-sync"))
     {
 	return 1;
@@ -1657,6 +1671,139 @@ char *argv[];
 	#endif
 	return 2;
     }
+    
+    if (!strcmp(argv[i], "-option"))
+    {
+	char options_file[1024];
+	FILE *fp;
+	int x = 0;
+	int j = 0;
+	BOOL F = False;
+	char ch;
+	char *options;
+	char *aux, *command, *value;
+	
+	strncpy(options_file,(char *)argv[i+1],strlen((char *)argv[i+1])+1);
+	
+	if ((fp = fopen(options_file,"r")) == NULL)
+	{
+	    error("agentArgument: Options file could not be opened.\n");
+	    exit(1);
+	}
+
+	options = malloc(1024);
+	memset(options,0,1023);
+	
+	ch = getc(fp);
+	while (ch != EOF)
+	{
+	    options[x] = ch;
+	    x++;
+	    ch = getc(fp);
+	}	
+	fclose(fp);
+	
+	if (x == 0)
+	{
+	    error("agentArgument: Options file is empty.\n");
+    	    exit(1);
+	}
+	
+	x = 0;
+	/* Parse options */
+	do
+	{	
+	    if (x==0)
+	    {
+		aux=strtok(options,",");
+		x = 1;
+	    }
+	    else
+	    {
+		aux=strtok('\0',",");
+	    }
+	    if (aux)
+	    {
+		value=strchr(aux,'=');
+		value++;
+		command=malloc(strlen(aux)-strlen(value)-1);
+		strncpy(command,aux,strlen(aux)-strlen(value)-1);
+		command[strlen(aux)-strlen(value)-1]='\0';
+		
+		if (!strcmp(command, "kbtype"))
+		{
+		    value=strchr(value,'/');
+		    value++;
+		    
+		    /* THIS IS DANGEROUS AND JUST A PATCH UNTIL FINAL NXSERVER DOES USES FINAL KBTYPE FORMAT */
+		    /* value[strlen(value)-7]='\0'; */
+		    
+		    for (j=1; j<=NUM_KEYMAPS; j++)
+		    {
+			if (!strcmp(value, keyboard_defs[j].xkb_name))
+			    {
+				strcpy(keymapname, keyboard_defs[j].file);
+				F = True;
+				break;
+			    }
+		    }
+		    if (!F) 
+			warning("Can't load keyboard map for %s. Using en_US [English (United States)]\n",value);
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("kbtype ","%s\n",value);
+		    nxdesktopDebug("keymapname ","%s\n",keymapname);
+		    #endif
+		}
+	
+		if (!strcmp(command, "geometry"))
+		{
+		    if (!strcmp(value,"fullscreen"))
+			{
+			    g_fullscreen = True;
+    			}
+    			else 
+			if (!strcmp(value,"-ipaq"))
+    			{
+    			    g_fullscreen = True;
+    			    ipaq = True;
+			}
+    			else 
+			{
+			    j = 0;
+			    XParseGeometry(value, &xo, &yo, &g_width, &g_height);
+			    while(value[j])
+			    {
+				if(value[j] == '+')
+				{
+				    value[j] = 'x';
+            			}
+            			j++;
+        		    }
+    			}
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("geometry ","%s\n",value);
+		    #endif
+		}
+		
+		if (!strcmp(command, "type"))
+		{
+		    if (strcmp(value, "windows"))
+			{
+			    error("agentArgument: session type is not windows.\n");
+			    if (command) 
+				free(command);
+			    exit(1);
+			}
+		}
+		
+		free(command);
+	    }
+	} while(aux);
+	
+	free(options);
+	
+	return 2;
+    }    
 
     return 0;
 }
@@ -1694,6 +1841,143 @@ char *nxdesktopReadPasswdFromFile(char *fname)
     return (char *)passwd;
 }
 
+    
+void InitKeyboardsList(void)
+    
+{
+    keyboard_defs[1].xkb_name="ar";
+    keyboard_defs[1].def="Arabic";
+    keyboard_defs[1].file="ar";    
+
+    keyboard_defs[2].xkb_name="dk";
+    keyboard_defs[2].def="Danish";
+    keyboard_defs[2].file="da";
+    
+    keyboard_defs[3].xkb_name="de";
+    keyboard_defs[3].def="German";
+    keyboard_defs[3].file="de";
+
+    keyboard_defs[4].xkb_name="de_CH";
+    keyboard_defs[4].def="German (Switzerland)";
+    keyboard_defs[4].file="de-ch";
+
+    keyboard_defs[5].xkb_name="gb";
+    keyboard_defs[5].def="English (Great Britain)";
+    keyboard_defs[5].file="en-gb";
+
+    keyboard_defs[6].xkb_name="us";
+    keyboard_defs[6].def="U.S. English";
+    keyboard_defs[6].file="en-us";
+    
+    keyboard_defs[7].xkb_name="en_US";
+    keyboard_defs[7].def="U.S. English w/ ISO9995-3";
+    keyboard_defs[7].file="en-us";  		
+    
+    keyboard_defs[8].xkb_name="es";
+    keyboard_defs[8].def="Spanish";
+    keyboard_defs[8].file="es";
+    
+    keyboard_defs[9].xkb_name="ee";
+    keyboard_defs[9].def="Estonian";
+    keyboard_defs[9].file="et";
+    
+    keyboard_defs[10].xkb_name="fi";
+    keyboard_defs[10].def="Finish";
+    keyboard_defs[10].file="fi";
+    
+    keyboard_defs[11].xkb_name="fo";
+    keyboard_defs[11].def="Faeroese";
+    keyboard_defs[11].file="fo";
+    
+    keyboard_defs[12].xkb_name="fr";
+    keyboard_defs[12].def="French";
+    keyboard_defs[12].file="fr";
+    
+    keyboard_defs[13].xkb_name="be";
+    keyboard_defs[13].def="French (Belgian)";
+    keyboard_defs[13].file="fr-be";
+  
+    keyboard_defs[14].xkb_name="ca_enhanced";
+    keyboard_defs[14].def="French (Canadian)";
+    keyboard_defs[14].file="fr-ca";
+    
+    keyboard_defs[15].xkb_name="fr_CH";
+    keyboard_defs[15].def="French (Switzerland)";
+    keyboard_defs[15].file="fr-ch";  
+
+    keyboard_defs[16].xkb_name="hu";
+    keyboard_defs[16].def="Hungarian";
+    keyboard_defs[16].file="hu";
+    
+    keyboard_defs[17].xkb_name="is";
+    keyboard_defs[17].def="Icelandic";
+    keyboard_defs[17].file="is";
+    
+    keyboard_defs[18].xkb_name="it";
+    keyboard_defs[18].def="Italian";
+    keyboard_defs[18].file="it";
+    
+    keyboard_defs[19].xkb_name="jp";
+    keyboard_defs[19].def="Japanese";
+    keyboard_defs[19].file="ja";
+    
+    keyboard_defs[20].xkb_name="lt";
+    keyboard_defs[20].def="Lithuanian";
+    keyboard_defs[20].file="lt";
+    
+    keyboard_defs[21].xkb_name="lv";
+    keyboard_defs[21].def="Latvian";
+    keyboard_defs[21].file="lv";
+    
+    keyboard_defs[22].xkb_name="mk";
+    keyboard_defs[22].def="Macedonian";
+    keyboard_defs[22].file="mk";
+    
+    keyboard_defs[23].xkb_name="nl";
+    keyboard_defs[23].def="Dutch (Netherlands)";
+    keyboard_defs[23].file="nl";
+    
+    keyboard_defs[24].xkb_name="nl-be";
+    keyboard_defs[24].def="Dutch (Belgian)";
+    keyboard_defs[24].file="nl-be";
+    
+    keyboard_defs[25].xkb_name="no";
+    keyboard_defs[25].def="Norwegian";
+    keyboard_defs[25].file="no";
+    
+    keyboard_defs[26].xkb_name="pl";
+    keyboard_defs[26].def="Polish";
+    keyboard_defs[26].file="pl";
+    
+    keyboard_defs[27].xkb_name="pt";
+    keyboard_defs[27].def="Portuguese";
+    keyboard_defs[27].file="pt";
+    
+    keyboard_defs[28].xkb_name="br";
+    keyboard_defs[28].def="Brazilian Portuguese";
+    keyboard_defs[28].file="pt-br";
+    
+    keyboard_defs[29].xkb_name="ru";
+    keyboard_defs[29].def="Russian";
+    keyboard_defs[29].file="ru";
+    
+    keyboard_defs[30].xkb_name="si";
+    keyboard_defs[30].def="Slovenian";
+    keyboard_defs[30].file="sl";
+    
+    keyboard_defs[31].xkb_name="sk";
+    keyboard_defs[31].def="Slovak";
+    keyboard_defs[31].file="sv";
+    
+    keyboard_defs[32].xkb_name="th";
+    keyboard_defs[32].def="Thai (Kedmanee)";
+    keyboard_defs[32].file="th";
+    
+    keyboard_defs[33].xkb_name="tr";
+    keyboard_defs[33].def="Turkish";
+    keyboard_defs[33].file="tr";
+}    
+
 /* Translates the keymap number received to the internal rdesktop keymap name */
 
 void NXTranslateKeymap()
@@ -1704,9 +1988,10 @@ void NXTranslateKeymap()
 	case 0x0406: strcpy(keymapname, "da"); break;
 	case 0x0407: strcpy(keymapname, "de"); break;
 	case 0x0807: strcpy(keymapname, "de-ch"); break;
-	case 0x040a: strcpy(keymapname, "es"); break;
 	case 0x0809: strcpy(keymapname, "en-gb"); break;
 	case 0x0409: strcpy(keymapname, "en-us"); break;
+	case 0x040a: strcpy(keymapname, "es"); break;
+	case 0x0425: strcpy(keymapname, "et"); break;
 	case 0x040b: strcpy(keymapname, "fi"); break;
 	case 0x0438: strcpy(keymapname, "fo"); break;
 	case 0x040c: strcpy(keymapname, "fr"); break;
@@ -1715,12 +2000,15 @@ void NXTranslateKeymap()
 	case 0x100c: strcpy(keymapname, "fr-ch"); break;
 	case 0x041a: strcpy(keymapname, "hr"); break;
 	case 0x040e: strcpy(keymapname, "hu"); break;
+	case 0x040f: strcpy(keymapname, "is"); break;
 	case 0x0410: 
 	case 0x0810: strcpy(keymapname, "it"); break;
 	case 0x0411: strcpy(keymapname, "ja"); break;
 	case 0x0427: strcpy(keymapname, "lt"); break;
 	case 0x0426: strcpy(keymapname, "lv"); break;
 	case 0x042f: strcpy(keymapname, "mk"); break;
+	case 0x0413: strcpy(keymapname, "nl"); break;
+	case 0x0813: strcpy(keymapname, "nl-be"); break;
 	case 0x0414: strcpy(keymapname, "no"); break;
 	case 0x0415: strcpy(keymapname, "pl"); break;
 	case 0x0816: strcpy(keymapname, "pt"); break;
