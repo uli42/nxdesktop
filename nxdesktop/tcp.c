@@ -165,7 +165,7 @@ tcp_recv(int length)
 		if (rcvd == -1)
 		{
 		    //error("recv: %s\n", strerror(errno));
-		    snprintf(errorMsg,511,"Connection to RDP server failed.\nError is %d, '%s'.",errno,strerror(errno));
+		    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
 		    snprintf(errorCaption,511,"Error");
 		    NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
 		    wait(NULL);

@@ -49,7 +49,7 @@ extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
 
 #undef NXDESKTOP_DISABLE_DESKTOP_SAVE
 
-#define NXDESKTOP_VERSION       "1.3.1"
+#define NXDESKTOP_VERSION       "1.3.2"
 #define NXDESKTOP_RDP_BUFSIZE   4096
 
 char username[16];

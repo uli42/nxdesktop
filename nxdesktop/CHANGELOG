@@ -1,9 +1,24 @@
 ChangeLog:
 
+nxdesktop-1.3.2-1
+
+- Corrected typos in CHANGELOG inherited from 1.3.1.
+
+- Corrected compilation error caused by building 1.3.1 with a
+  superseded version of nxcompext.
+
+- Changed text of the error message of the dialog box added in
+  version 1.3.1-7.
+
+- Removed xwin.c backup file left behind by mistake. 
+
+- Opened the 1.3.2 development branch.
+
 nxdesktop-1.3.1-8
 
 - Fixed compilation error introduced by accident in 1.3.1-7.
-- Updating "NXDESKTOP - Version" string to 1.3.1. 
+
+- Updating version string to 1.3.1. 
 
 nxdesktop-1.3.1-7
 
@@ -32,10 +47,10 @@ nxdesktop-1.3.1-3
 nxdesktop-1.3.1-2
 
 - Compilation bug on solaris fixed.
-                                                                                                                             
-- New procedure for error reporting.  When connection to remote RDP server  fail
-  we invoke nxclient to show a dialog box with problem description.
-  This box remain till user press "ok".
+
+- New procedure for error reporting. When connection to remote RDP
+  server fails we invoke nxclient to show a dialog box with problem
+  description. This box remains till user presses OK.
 
 nxdesktop-1.3.1-1
 
@@ -43,13 +58,13 @@ nxdesktop-1.3.1-1
 
 nxdesktop-1.3.0-11
 
-- The default directory for keymaps was changed to "/usr/NX/share/keymaps-windows" to
-  avoid incompatibilities with old xmodmap generated maps.
+- Default directory for keymaps changed to /usr/NX/share/keymaps-windows
+  to avoid incompatibilities with old xmodmap generated maps.
 
 nxdesktop-1.3.0-10
 
-- Modified the hex keyboard layout to names function to use only the existing
-  file names (provided with rdesktop 1.3 keymaps).
+- Modified the hex keyboard layout to names function to use only the
+  existing file names (provided with rdesktop 1.3 keymaps).
 
 nxdesktop-1.3.0-9
 
@@ -62,19 +77,20 @@ nxdesktop-1.3.0-8
 
 nxdesktop-1.3.0-7
 
-- Added rdesktop 1.3 like keyboard support with backward compatibility with
-  nxclient hex keylayout codes.
+- Added rdesktop 1.3 like keyboard support with backward compatibility
+  with nxclient hex keylayout codes.
 
-- The windows server name is gotten from the last parameter (argc -1) to avoid
-  problems with different return count "optind" of "getopt" function on Solaris OSs.
+- The windows server name is gotten from the last parameter (argc -1)
+  to avoid problems with different return count optind of getopt
+  function on Solaris OSs.
 
-- Now, as in the original version of rdesktop, the desktop tries to open
-  the X window before attempting to start the RDP session.
+- Now, as in the original version of rdesktop, the desktop tries to
+  open the X window before attempting to start the RDP session.
 
 nxdesktop-1.3.0-6
 
-- On parsing non-rdesktop parameters, variable "pre_count" is incremented
-  different on Solaris OSs.
+- On parsing non-rdesktop parameters, variable "pre_count" is
+  incremented different on Solaris OSs.
 
 nxdesktop-1.3.0-5
 

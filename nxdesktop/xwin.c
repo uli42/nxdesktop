@@ -1864,9 +1864,8 @@ ui_create_colourmap(COLOURMAP *colours)
 			 * Byte swap here to make translate_image faster.
 			 */
 
-                        map[i] = translate_colour(colour);
-
-}
+			map[i] = translate_colour(colour);
+		}
 
 		#ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
 
