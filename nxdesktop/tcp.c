@@ -134,7 +134,11 @@ STREAM
 tcp_recv(int length)
 {
 	int rcvd = 0;
-
+	/* NX */
+	char errorMsg[512];
+	char errorCaption[512];
+	extern char *nxDisplay;
+	/* NX */
 #ifdef NXDESKTOP_TCP_DEBUG
 	int kiloRead = tcpRead / 1024;
 #endif
@@ -160,8 +164,13 @@ tcp_recv(int length)
 
 		if (rcvd == -1)
 		{
-			error("recv: %s\n", strerror(errno));
-			return NULL;
+		    //error("recv: %s\n", strerror(errno));
+		    snprintf(errorMsg,511,"Connection to RDP server failed.\nError is %d, '%s'.",errno,strerror(errno));
+		    snprintf(errorCaption,511,"Error");
+		    NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
+		    wait(NULL);
+		    //return False
+		    return NULL;
 		}
 
 		#ifdef NXDESKTOP_TCP_DUMP
