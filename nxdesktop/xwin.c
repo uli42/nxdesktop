@@ -1,4 +1,4 @@
-/* -*- c-basic-offset: 8 -*-
+/* -*- c8-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    User interface services - X Window System
    Copyright (C) Matthew Chapman 1999-2002
@@ -80,7 +80,7 @@ static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
 #ifdef NXDESKTOP_ONSTART
 
-Atom nxdesktop_WM_START;
+//Atom nxdesktop_WM_START;
 
 #endif
 
@@ -99,7 +99,7 @@ extern int yo;
 extern BOOL ipaq;
 extern BOOL magickey;
 static int x_socket;
-extern char *windowName;
+extern char windowName[255];
 
 Display *g_display;
 Time g_last_gesturetime;
@@ -119,6 +119,23 @@ static XModifierKeymap *g_mod_map;
 static Cursor g_current_cursor;
 static HCURSOR g_null_cursor = NULL;
 /* static Atom g_protocol_atom, g_kill_atom; */
+Atom nxdesktopAtoms[NXDESKTOP_NUM_ATOMS];
+static BOOL nxdesktopWithWM = True;
+char *nxdesktopAtomNames[NXDESKTOP_NUM_ATOMS+1] =
+{
+    "NX_IDENTITY",          /* 0  */
+    "WM_PROTOCOLS",         /* 1  */
+    "WM_DELETE_WINDOW",     /* 2  */
+    "WM_NX_READY",          /* 3  */
+    "MCOPGLOBALS",          /* 4  */
+    "NX_CUT_BUFFER_SERVER", /* 5  */
+    "TARGETS",              /* 6  */
+    "TEXT",                 /* 7  */
+    "NX_AGENT_SIGNATURE",   /* 8  */
+    "NXDARWIN",             /* 9  */
+			      NULL
+};
+
 static BOOL g_focused;
 static BOOL g_mouse_in_wnd;
 static BOOL g_arch_match = False; /* set to True if RGB XServer and little endian */
@@ -177,14 +194,6 @@ unsigned int nxdesktopImageMaskMethod   = 0;
 #ifdef NXWIN_USES_PACKED_RDP_TEXT
 BOOL nxdesktopCanPackRDPText = False;
 #endif
-
-/* WM predefined atom
-*/
-Atom nxdesktop_WM = None;
-
-/* NX clipboard and ID Atom */
-
-Atom nxdesktop_NX = None;
 
 /* Image cache flag */
 
@@ -247,7 +256,7 @@ extern Bool ipaqWorking;
 
 uint32  last_Xtime = 0; /* last X server time received in an xevent */
 
-extern char *nxDisplay;
+extern char nxDisplay[255];
 
 #ifdef WITH_RDPSND
 extern int g_dsp_fd;
@@ -948,14 +957,15 @@ get_key_state(unsigned int state, uint32 keysym)
 }
 
 BOOL ui_open_display()
+
 {
-   g_display = XOpenDisplay(nxDisplay);
-   if (g_display == NULL)
-   {
-     error("Failed to open display\n");
-     return False;
-   }
-   return True;
+    g_display = XOpenDisplay((char *)nxDisplay);
+    if (g_display == NULL)
+    {
+        error("Failed to open display\n");
+        return False;
+    }
+    return True;
 }
 
 void ui_close_display()
@@ -1041,16 +1051,6 @@ ui_init(void)
 	test = 1;
 	g_host_be = !(BOOL) (*(uint8 *) (&test));
 	g_xserver_be = (ImageByteOrder(g_display) == MSBFirst);
-
-	if (g_host_be)
-	    fprintf(stderr,"host be\n");
-	else
-	    fprintf(stderr,"host le\n");
-	    
-	if (g_xserver_be)
-	    fprintf(stderr,"xserver be\n");
-	else
-	    fprintf(stderr,"xserver le\n");
 
 	if ((g_server_bpp == 8) && ((!TrueColorVisual) || (g_depth <= 8)))
 	{
@@ -1170,7 +1170,7 @@ ui_init(void)
 				entries != NXNumberOfPackMethods)
 			{
 				fprintf(stderr, "ui_init: ERROR! NXGetUnpackParameters() failed on g_display '%s'.\n",
-						XDisplayName(nxDisplay));
+						XDisplayName((char *)nxDisplay));
 
 				exit(1);
 			}
@@ -1200,7 +1200,7 @@ ui_init(void)
 			    methods[PACK_RDP_COMPRESSED_256_COLORS] == False)
 			{  
 			    fprintf(stderr, "ui_init: WARNING! No available RDP pack method on g_display '%s'.\n",
-						XDisplayName(nxDisplay));
+						XDisplayName((char *)nxDisplay));
 			}
 			/*if (nxdesktopPackMethod == PACK_RDP_COMPRESSED_256_COLORS &&
 				methods[PACK_RDP_COMPRESSED_256_COLORS] == True)
@@ -1236,7 +1236,7 @@ ui_init(void)
 			if (NXSetUnpackGeometry(g_display, 0, g_screen, g_visual) == 0)
 			{
 				fprintf(stderr, "ui_init: ERROR! NXSetUnpackGeometry() failed on g_display '%s'.\n",
-						XDisplayName(nxDisplay));
+						XDisplayName((char *)nxDisplay));
 
 				exit(1);
 			}
@@ -1358,6 +1358,46 @@ ui_deinit(void)
 	XCloseDisplay(g_display);
 	g_display = NULL;
 }
+
+void nxdesktopSetAtoms()
+{
+	
+    Atom identity;
+    int type[4];
+            
+    type[0] = NXDESKTOP_SESSION;
+    type[1] = NXDESKTOP_MAJOR_VERSION;
+    type[2] = NXDESKTOP_MINOR_VERSION;
+    type[3] = NXDESKTOP_RELEASE;
+
+    XInternAtoms(g_display, nxdesktopAtomNames, NXDESKTOP_NUM_ATOMS, False, nxdesktopAtoms);
+    
+    if (nxdesktopAtoms[1] > nxdesktopAtoms[0])
+    {	
+	nxdesktopWithWM = False;
+    }
+    
+    if (nxdesktopAtoms[8] > nxdesktopAtoms[0])
+    {
+	nxdesktopAtoms[8] = None;
+    }
+
+    #if NXDESKTOP_ATOMS_DEBUG
+    for (i = 0; i < NXDESKTOP_NUM_ATOMS; i++)
+    {
+	fprintf(stderr,"nxagentQueryAtoms: Created intern atom [%s] with id [%ld].\n",
+		nxdesktopAtomNames[i], nxdesktopAtoms[i]);
+    }
+    #endif
+    
+    identity = nxdesktopAtoms[0];
+    XChangeProperty(g_display, g_wnd, identity, XA_ATOM, sizeof(int) * 8, PropModeReplace, (unsigned char *) &type,  4);
+    
+    XSetSelectionOwner(g_display, nxdesktopAtoms[5], g_wnd, CurrentTime);
+    
+    XSetWMProtocols(g_display, g_wnd, &nxdesktopAtoms[2], 1);
+}
+
 
 BOOL
 ui_create_window(void)
@@ -1495,27 +1535,6 @@ ui_create_window(void)
 	}
 	
 	/* NX */
-	/*XXX new atom for nxwin */
-        {
-            Atom IdentityAtom;
-            int Type[4];
-            Type[0] = NXDESKTOP_SESSION;
-            Type[1] = NXDESKTOP_MAJOR_VERSION;
-            Type[2] = NXDESKTOP_MINOR_VERSION;
-            Type[3] = NXDESKTOP_RELEASE;
-
-            IdentityAtom = XInternAtom(g_display, "NX_IDENTITY", False);
-
-            XChangeProperty(g_display,
-                            g_wnd,
-                            IdentityAtom,
-                            XA_ATOM,
-                            sizeof(int)*8,
-                            PropModeReplace,
-                            (unsigned char*)&Type,
-                            4
-                           );
-        }
 	
 	if (g_fullscreen)
 	{
@@ -1570,7 +1589,6 @@ ui_create_window(void)
 		}
 		XSetWMHints (g_display, g_wnd, &wmhints);
 		XSetWMNormalHints(g_display, g_wnd, sizehints);
-		XFree(sizehints);
 	}
 
         if ( g_embed_wnd )
@@ -1626,6 +1644,10 @@ ui_create_window(void)
                 if(!ipaq)
 		    XMapWindow( g_display, wnd2 );
 	}
+
+        if (sizehints)
+	  XFree(sizehints);
+
 	/* NX */
 	if (g_sendmotion)
 		input_mask |= PointerMotionMask;
@@ -1666,21 +1688,10 @@ ui_create_window(void)
 
 	/* handle the WM_DELETE_WINDOW protocol */
 	/*g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
-	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);
-	XSetWMProtocols(g_display, g_wnd, &g_kill_atom, 1);*/
+	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);*/
+	
 
-#ifdef NXDESKTOP_ONEXIT
-	if ((nxdesktop_WM = XInternAtom (g_display, "WM_PROTOCOLS", True)) != None)
-	{
-		Atom deleteWMatom = XInternAtom (g_display, "WM_DELETE_WINDOW", False);
-#ifdef NXDESKTOP_ONEXIT_DEBUG
-		fprintf(stderr,"WM atom is [%d]\n",deleteWMatom);
-#endif
-		XSetWMProtocols(g_display, g_wnd, &deleteWMatom, 1);
-		if (g_fullscreen)
-			XSetWMProtocols(g_display, wnd2, &deleteWMatom, 1);
-	}
-#endif
+	nxdesktopSetAtoms();
 	/* create invisible 1x1 cursor to be used as null cursor */
 	if (g_null_cursor == NULL)
 		g_null_cursor = ui_create_cursor(0, 0, 1, 1, null_pointer_mask, null_pointer_data);
@@ -1706,7 +1717,8 @@ ui_create_window(void)
           XSync(g_display, True);
         }
 	#endif
-        if(ipaq){
+        if (ipaq)
+	{
             XWindowChanges ch;
             unsigned int ch_mask;
             ch.stack_mode = Below;
@@ -1717,7 +1729,6 @@ ui_create_window(void)
         if (g_fullscreen)
         {
            XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
-           
         }
         #ifdef NXDESKTOP_XWIN_USES_PIXMAP_CACHE
 
@@ -1824,14 +1835,16 @@ xwin_process_events(void)
 		flags = 0;
 		
 		/* NX */
-		if (xevent.xclient.message_type == nxdesktop_WM && nxdesktop_WM != None)
+		if (xevent.xclient.message_type == nxdesktopAtoms[1])
           	{
-			Atom wmAtom, deleteWMatom;
+			Atom wmAtom, deleteAtom;
+			
 			wmAtom = (Atom) xevent.xclient.data.l[0];
-			deleteWMatom = XInternAtom (g_display, "WM_DELETE_WINDOW", True);
-			if (wmAtom == deleteWMatom)
+			deleteAtom = (Atom) nxdesktopAtoms[2];
+			
+			if (wmAtom == deleteAtom)
 			{
-		     		/* simulate ESC pressed */
+				/* simulate ESC pressed */
 		     		rdp_send_input(ev_time, RDP_INPUT_SCANCODE, 0, 0x01, 0);
 		     		/* simulate ESC released */
 		     		rdp_send_input(ev_time, RDP_INPUT_SCANCODE, KBD_FLAG_DOWN | KBD_FLAG_UP, 0x01, 0);
@@ -1938,7 +1951,7 @@ xwin_process_events(void)
 					DEBUG (("Ctrl-Alt-ESC pressed\n"));
 					if (magickey && g_fullscreen)
 					{
-					   if (nxdesktop_WM != None)
+					   if (nxdesktopWithWM)
 					   {
 					      sigusr_func(SIGUSR1);
 					   }
@@ -2011,7 +2024,7 @@ xwin_process_events(void)
 				{
 					if (g_fullscreen)
 					{
-					   if (nxdesktop_WM != None)
+					   if (nxdesktopWithWM)
 					   {
 					      sigusr_func(SIGUSR1);
 					   }
@@ -3781,29 +3794,11 @@ void nomachineLogo(Window win, GC gc, int scale)
 #ifdef NXDESKTOP_ONSTART
 void setOwnerNX_WM(Window win)
 {
-  XSetSelectionOwner(g_display, nxdesktop_WM_START, win, CurrentTime);
+  XSetSelectionOwner(g_display, nxdesktopAtoms[3], win, CurrentTime);
   showNXlogo = False;
 }
 #endif
 
-void nxdesktopSetAtoms()
-{
-   /*
-    * Set NX clipboard Atom. Used to find
-    * out if there is any agent running.
-    */
-
-    nxdesktop_NX = XInternAtom (g_display, "NX_CUT_BUFFER_SERVER", False);
-    XSetSelectionOwner(g_display, nxdesktop_NX, g_wnd, CurrentTime);
-
-    /*
-     * Create Window manager ready atom, not so usefull here, but in the future ...
-     *
-     */
-#ifdef NXDESKTOP_ONSTART
-    nxdesktop_WM_START = XInternAtom (g_display, "WM_NX_READY", False);
-#endif
-}
 
 
 Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)

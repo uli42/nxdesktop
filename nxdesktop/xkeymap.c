@@ -231,7 +231,7 @@ xkeymap_init(void)
 	char *mapname_ptr;
 
 	/* Make keymapname lowercase */
-	mapname_ptr = keymapname;
+	mapname_ptr = (char *)keymapname;
 	while (*mapname_ptr)
 	{
 		*mapname_ptr = tolower((int) *mapname_ptr);

@@ -1073,14 +1073,13 @@ rdp_main_loop(void)
 /* Test a connection up to the RDP layer */
 BOOL
 test_rdp_connect(char *server)
-{
+{	
 	if (!tcp_connect(server))
 	{
 	    return False;
 	}
 	else
 	{
-	    tcp_disconnect();
 	    return True;
 	}
 }

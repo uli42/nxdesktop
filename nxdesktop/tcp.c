@@ -66,14 +66,19 @@ extern int rdp_bufsize;
 static int rdpDump = -1;
 
 #endif
-// NX
-
+/* NX */
+static BOOL sock_done = False;
 static int sock;
 static struct stream in;
 static struct stream out;
 extern int tcp_port_rdp;
+/* NX */
+char errorMsg[512];
+char errorCaption[512];
+extern char nxDisplay[255];
+extern Display *g_display;
+extern char windowName[255];
 
-// NX
 extern int  nxdesktopStopKarmaSz;
 static long bytesFromLastKarma = 0;
 
@@ -155,13 +160,8 @@ tcp_recv(STREAM s, uint32 length)
 {
 	unsigned int new_length = 0, end_offset, p_offset;
 	int rcvd = 0;
-	/* NX */
-	char errorMsg[512];
-	char errorCaption[512];
-	extern char *nxDisplay;
-	extern Display *g_display;
 	XEvent event;
-	/* NX */
+	
 #ifdef NXDESKTOP_TCP_DEBUG
 	int kiloRead = tcpRead / 1024;
 #endif
@@ -206,9 +206,10 @@ tcp_recv(STREAM s, uint32 length)
 		if (rcvd < 0)
 		{
 			error("recv: %s\n", strerror(errno));
+			close(sock);
 			snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
 		    	snprintf(errorCaption,511,"Error");
-		    	NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
+		    	NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
 		    	wait(NULL);
 			return NULL;
 		}
@@ -270,13 +271,7 @@ BOOL
 tcp_connect(char *server)
 {
 	int true_value = 1;
-	/* NX */
-	extern char *windowName;
-	char errorMsg[512];
-	char errorCaption[512];
 	struct sigaction sigact;
-	extern char *nxDisplay;
-	/* NX */
 
 #ifdef IPv6
 
@@ -284,6 +279,8 @@ tcp_connect(char *server)
 	struct addrinfo hints, *res, *ressave;
 	char tcp_port_rdp_s[10];
 
+	if (sock_done)
+	    return True;
 	snprintf(tcp_port_rdp_s, 10, "%d", tcp_port_rdp);
 
 	memset(&hints, 0, sizeof(struct addrinfo));
@@ -325,6 +322,8 @@ tcp_connect(char *server)
 	struct hostent *nslookup;
 	struct sockaddr_in servaddr;
 
+	if (sock_done)
+	    return True;
 	if ((nslookup = gethostbyname(server)) != NULL)
 	{
 		memcpy(&servaddr.sin_addr, nslookup->h_addr, sizeof(servaddr.sin_addr));
@@ -332,12 +331,20 @@ tcp_connect(char *server)
 	else if ((servaddr.sin_addr.s_addr = inet_addr(server)) == INADDR_NONE)
 	{
 		error("%s: unable to resolve host\n", server);
+		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nUnable to resolve host.",server);
+		snprintf(errorCaption,511,"%s",(char *)windowName);
+		NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+		wait(NULL);
 		return False;
 	}
 
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		error("socket: %s\n", strerror(errno));
+		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
+		snprintf(errorCaption,511,"%s",(char *)windowName);
+		NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+		wait(NULL);
 		return False;
 	}
 
@@ -364,8 +371,8 @@ tcp_connect(char *server)
 		close(sock);
 		sigaction(SIGALRM, NULL, &sigact);
 		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
-		snprintf(errorCaption,511,"%s",windowName);
-		NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
+		snprintf(errorCaption,511,"%s",(char *)windowName);
+		NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
 		wait(NULL);
 		return False;
 	}
@@ -398,16 +405,15 @@ tcp_connect(char *server)
 
 	out.size = 4096;
 	out.data = (uint8 *) xmalloc(out.size);
-
+	
+	sock_done = True;
 	return True;
 }
 
-/* Disconnect on the TCP layer */
 void
 tcp_disconnect(void)
 {
 	close(sock);
-
 	#ifdef NXDESKTOP_TCP_DUMP
 	if (rdpDump != -1)
 	{

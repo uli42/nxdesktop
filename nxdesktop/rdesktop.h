@@ -107,6 +107,8 @@
 #define NXDESKTOP_SPLASH
 #define NXWIN_USES_PACKED_RDP_TEXT
 
+#define NXDESKTOP_NUM_ATOMS 10
+
 /*
  * This is size of our cache reported to remote server.
  * See rdp.c, cache.c and xwin.c. Original buffer cache

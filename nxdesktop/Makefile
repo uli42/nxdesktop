@@ -4,6 +4,24 @@
 # Copyright (C) Matthew Chapman 1999-2004
 #
 
+#**************************************************************************
+#*                                                                        *
+#* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           *
+#*                                                                        *
+#* NXDESKTOP, NX protocol compression and NX extensions to this software  *
+#* are copyright of NoMachine. Redistribution and use of the present      *
+#* software is allowed according to terms specified in the file LICENSE   *
+#* which comes in the source distribution.                                *
+#*                                                                        *
+#* Check http://www.nomachine.com/licensing.html for applicability.       *
+#*                                                                        *
+#* NX and NoMachine are trademarks of Medialogic S.p.A.                   *
+#*                                                                        *
+#* All rights reserved.                                                   *
+#*                                                                        *
+#**************************************************************************
+
+
 # Configuration defaults
 
 prefix      = /usr/NX
@@ -77,34 +95,34 @@ clean:
 distclean: clean
 
 dist:
-	mkdir -p /tmp/rdesktop-make-dist-dir
-	ln -sf `pwd` /tmp/rdesktop-make-dist-dir/rdesktop-$(VERSION)
-	(cd /tmp/rdesktop-make-dist-dir; \
-	tar zcvf /tmp/rdesktop-$(VERSION).tar.gz \
-	rdesktop-$(VERSION)/COPYING \
-	rdesktop-$(VERSION)/README \
-	rdesktop-$(VERSION)/configure \
-	rdesktop-$(VERSION)/Makefile \
-	rdesktop-$(VERSION)/rdesktop.spec \
-	rdesktop-$(VERSION)/*.c \
-	rdesktop-$(VERSION)/*.h \
-	rdesktop-$(VERSION)/crypto/README \
-	rdesktop-$(VERSION)/crypto/*.c \
-	rdesktop-$(VERSION)/crypto/*.h \
-	rdesktop-$(VERSION)/keymaps/?? \
-	rdesktop-$(VERSION)/keymaps/??-?? \
-	rdesktop-$(VERSION)/keymaps/common \
-	rdesktop-$(VERSION)/keymaps/modifiers \
-	rdesktop-$(VERSION)/keymaps/convert-map \
-	rdesktop-$(VERSION)/doc/HACKING \
-	rdesktop-$(VERSION)/doc/AUTHORS \
-	rdesktop-$(VERSION)/doc/TODO \
-	rdesktop-$(VERSION)/doc/ChangeLog \
-	rdesktop-$(VERSION)/doc/keymapping.txt \
-	rdesktop-$(VERSION)/doc/keymap-names.txt \
-	rdesktop-$(VERSION)/doc/ipv6.txt \
-	rdesktop-$(VERSION)/doc/rdesktop.1 )
-	rm -rf /tmp/rdesktop-make-dist-dir
+	mkdir -p /tmp/nxdesktop-make-dist-dir
+	ln -sf `pwd` /tmp/nxdesktop-make-dist-dir/nxdesktop-$(VERSION)
+	(cd /tmp/nxdesktop-make-dist-dir; \
+	tar zcvf /tmp/nxdesktop-$(VERSION).tar.gz \
+	nxdesktop-$(VERSION)/COPYING \
+	nxdesktop-$(VERSION)/README \
+	nxdesktop-$(VERSION)/configure \
+	nxdesktop-$(VERSION)/Makefile \
+	nxdesktop-$(VERSION)/rdesktop.spec \
+	nxdesktop-$(VERSION)/*.c \
+	nxdesktop-$(VERSION)/*.h \
+	nxdesktop-$(VERSION)/crypto/README \
+	nxdesktop-$(VERSION)/crypto/*.c \
+	nxdesktop-$(VERSION)/crypto/*.h \
+	nxdesktop-$(VERSION)/keymaps/?? \
+	nxdesktop-$(VERSION)/keymaps/??-?? \
+	nxdesktop-$(VERSION)/keymaps/common \
+	nxdesktop-$(VERSION)/keymaps/modifiers \
+	nxdesktop-$(VERSION)/keymaps/convert-map \
+	nxdesktop-$(VERSION)/doc/HACKING \
+	nxdesktop-$(VERSION)/doc/AUTHORS \
+	nxdesktop-$(VERSION)/doc/TODO \
+	nxdesktop-$(VERSION)/doc/ChangeLog \
+	nxdesktop-$(VERSION)/doc/keymapping.txt \
+	nxdesktop-$(VERSION)/doc/keymap-names.txt \
+	nxdesktop-$(VERSION)/doc/ipv6.txt \
+	nxdesktop-$(VERSION)/doc/nxdesktop.1 )
+	rm -rf /tmp/nxdesktop-make-dist-dir
 
 .SUFFIXES:
 .SUFFIXES: .c .o

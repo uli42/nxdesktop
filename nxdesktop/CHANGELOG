@@ -1,5 +1,56 @@
 ChangeLog:
 
+nxdesktop-1.3.2-21
+
+- Solved bug in the magic pixel caused by the changes on the 
+  Atoms setting procedure.
+
+- Solved memory leak on solaris by Dario.
+
+nxdesktop-1.3.2-20
+
+- Added missing Atom that prevented the nxclient window to
+  close under determinated circunstances.
+  
+- Removed debug code that could print an extra error message
+  if the RDP connection dropped after stabilished.
+  
+- Changed the way the new conection is tested to solve
+  problems with quick reconections on Windows XP.
+
+nxdesktop-1.3.2-19
+
+- Added message dialog to handle name lookup failure.
+
+nxdesktop-1.3.2-18
+
+- Solved bug that was preventing dilaog errors from popping up.
+  
+NOTE: This bug was inadvertently introduced by a change in a variable
+      type due the changes on the parameters parsing.
+  
+nxdesktop-1.3.2-17
+
+- Cosmetic changes on configure scrpit and Makefile
+
+- Changed the way the default keymap is assigned.
+
+nxdesktop-1.3.2-16
+
+- Atom operations changed to deal with NXWin changes.
+
+- WM_PROTOCOLS message handler now works on linux and windows.
+
+nxdesktop-1.3.2-15
+
+- Parameters parser was re-written to deal with Solaris problems.
+
+- Disabled debug code forgoten from last release.
+
+- Atom operations moved to a single routine.
+
+NOTE: The WM_PROTOCOLS message handler is not working as expected yet.
+
 nxdesktop-1.3.2-14
 
 - Solved problem with wrong colors on solaris.

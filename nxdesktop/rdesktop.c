@@ -94,7 +94,6 @@ BOOL g_numlock_sync = False;
 extern BOOL g_owncolmap;
 extern BOOL g_ownbackstore;
 extern uint32 g_embed_wnd;
-extern void nxdesktopSetAtoms(void);
 extern void RunOrKillNXkbd();
 uint32 g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
 
@@ -114,20 +113,20 @@ rdp2vnc_connect(char *server, uint32 flags, char *domain, char *password,
 #endif
 
 /* Here starts the NX mods */
-static int agentArgument(int argc , char *argv[], int i);
+int agentArgument(int i, char *argv[]);
 void NXTranslateKeymap();
 void ShowHeaderInfo();
 static char *nxdesktopReadPasswdFromFile(char *fname);
 #undef NXDESKTOP_DISABLE_DESKTOP_SAVE
 #define NXDESKTOP_RDP_BUFSIZE   4096
-char *nxDisplay  = NULL;
+char nxDisplay[255];
 BOOL ipaq = False;
 BOOL magickey = True;
 extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
 int xo;
 int yo;
-char *windowName = NULL;
-char *passwordFile = NULL;
+char windowName[255];
+char passwordFile[255];
 int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
 /* end NX mods */
 
@@ -273,20 +272,10 @@ parse_server_and_port(char *server)
 
 }
 
-/* Read the extra parameters from the NXAgent */
-
-int pre_parse_agent(int argc, char *argv[])
-{
-  int i, count;
-  count = 0;
-  for (i = 1; i < argc; i++)
-  	count += agentArgument (argc, argv, i);
-  return count;
-}
-
 /* Client program */
 int
 main(int argc, char *argv[])
+
 {
 	char server[64];
 	char fullhostname[64];
@@ -298,8 +287,10 @@ main(int argc, char *argv[])
 	struct passwd *pw;
 	uint32 flags;
 	char *p;
-	int c;
-	int pre_count;
+	int c, i;
+	int nx_argc = 0; 
+	char *nx_argv[argc];	
+	
 	/* show initial info */
 	ShowHeaderInfo();
 	
@@ -307,7 +298,6 @@ main(int argc, char *argv[])
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
 	strcpy(keymapname, "en-us");
 	g_embed_wnd = 0;
-
 	g_num_devices = 0;
 
 #ifdef RDP2VNC
@@ -315,14 +305,47 @@ main(int argc, char *argv[])
 #else
 #define VNCOPT
 #endif
-	pre_count = pre_parse_agent(argc, argv);
-	while ((c = getopt(argc, argv, VNCOPT "(:u:d:s:c:p:n:k:g:(fibXeEmBlMCDKS:T:NXa:r:04x:v5h?")) != -1)
+	/* Parse the extra parameters from the NXAgent */
+	#if 0
+	for (i = 1;i<argc; i++)
+	{
+	    fprintf(stderr,"par1 '%i' '%s'\n",i,argv[i]);
+	}
+	#endif
+	nx_argv[0] = argv[0];
+	i = 1;
+	while (i<argc)
+	{
+	    c = agentArgument(i, argv);
+	    if (c == 0)
+	    {
+		nx_argc++;
+		nx_argv[nx_argc] = argv[i];
+		i++;
+	    }
+	    else
+	    {
+		i+=c;
+	    }
+	}
+	nx_argc++;	
+	
+	#ifdef __sun
+	nx_argv[nx_argc] = "\0";
+	#else
+	nx_argv[nx_argc] = NULL;
+	#endif
+	
+	#if 0
+	for (i = 0; i<=nx_argc; i++)
+	    fprintf(stderr,"par2 '%i' '%s'\n",i,nx_argv[i]);
+	#endif
+	
+	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbBeEmCDKS:T:NX:a:x:r:045h?")) != -1)
 	{
 		switch (c)
 		{
-		
-			case '(':
-			        break;
+		    
 #ifdef RDP2VNC
 			case 'V':
 				rfb_port = strtol(optarg, NULL, 10);
@@ -606,21 +629,15 @@ main(int argc, char *argv[])
 				return 1;
 		}
 	}
-#ifdef __sun
-        if (pre_count > 1 )
-          pre_count--;
-#endif
-
-	optind += pre_count;
-		
-	if (argc - optind < 1)
+	
+	if (nx_argc - optind < 1)
 	{
 		usage(argv[0]);
 		return 1;
 	}
 
-	STRNCPY(server, argv[optind], sizeof(server));
-	parse_server_and_port(server);
+	STRNCPY(server, nx_argv[optind], sizeof(server));
+	parse_server_and_port(server);	
 
 	NXTranslateKeymap();
 	
@@ -651,14 +668,16 @@ main(int argc, char *argv[])
 		STRNCPY(hostname, fullhostname, sizeof(hostname));
 	}
 	/* read the passwordfile or fallback to the prompt or standard comandline option */
-	if (passwordFile == NULL)
+	if (passwordFile[0] == 0)
         {
 		if (prompt_password && read_password(password, sizeof(password)))
 			flags |= RDP_LOGON_AUTO;
 	}
 	else
 	{
-           char *filePass = nxdesktopReadPasswdFromFile(passwordFile);
+	    
+           char *filePass = nxdesktopReadPasswdFromFile((char *)passwordFile);
+	   
            if (filePass != NULL)
            {
               strcpy(password, filePass);
@@ -686,20 +705,20 @@ main(int argc, char *argv[])
 #else
 	if (!test_rdp_connect(server))
 	    return 1;
-    
+	
 	if (!ui_open_display())
 	    {
 		fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
 		return 1;
 	    }
-	
 	if (!ui_init())
 		return 1;
-	
 	#ifdef WITH_RDPSND
 	if (g_rdpsnd)
 		rdpsnd_init();
 	#endif
+	
+	/* Redirection will be kept disabled until needed */
 	/* rdpdr_init(); */
 	
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
@@ -709,7 +728,6 @@ main(int argc, char *argv[])
 	}
 	else
 	{
-	    nxdesktopSetAtoms();
 	    if ((g_width == 0) || (g_height == 0))
 	    {
 		g_width = 800;
@@ -1140,357 +1158,231 @@ save_licence(unsigned char *data, int length)
 
 /* agentArgument parses the extra agent paramenters */
 
-int agentArgument (argc, argv, i)
-    int	argc;
-    char *argv[] ;
-    int	i;
+int 
+agentArgument (i, argv)
+
+int i;
+char *argv[];
+
 {
-  if (!strcmp(argv[i], "-sync"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-  if (!strcmp(argv[i], "-imgcache"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-sync"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-imgcache"))
     {
 	rdp_img_cache = True;
 	return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-full"))
-  {
-    argv[i][1]='(';
-    return 1;
-  }
-  if (!strcmp(argv[i], "-class"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+
+    if (!strcmp(argv[i], "-full"))
     {
 	return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-cc"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
-    {
-       return 1;
-    }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-depth"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+
+    if (!strcmp(argv[i], "-class"))
     {
 	return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-sss"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-  if (!strcmp(argv[i], "-display"))
-  {
-      argv[i][1]='(';
-      if (++i < argc)
-      {
-        nxDisplay = argv[i];
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
-      }
-      return 0;
-  }
-  if (!strcmp(argv[i], "-geometry"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
-    {
-      if (!strcmp(argv[i],"fullscreen"))
-      {
-          g_fullscreen = True;
-      }
-      else if (!strcmp(argv[i],"ipaq"))
-      {
-          g_fullscreen = True;
-          ipaq = True;
-      }
-      else {
-          int j = 0;
-          XParseGeometry(argv[i], &xo, &yo, &g_width, &g_height);
-          while(argv[i][j]){
-              if(argv[i][j] == '+'){
-                  argv[i][j] = 'x';
-              }
-              j++;
-          }
-      }
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
-    }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-name"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
-    {
-      windowName = argv[i];
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
-    }
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-bw"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-cc"))
     {
 	return 1;
     }
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-scrns"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-depth"))
     {
 	return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-install"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-  if (!strcmp(argv[i], "-parent"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+
+    if (!strcmp(argv[i], "-sss"))
     {
 	return 1;
     }
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-imgstop"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-display"))
+    {
+	strncpy(nxDisplay,(char *)argv[i+1],strlen((char *)argv[i+1]));
+	return 2;
+    }
+
+    if (!strcmp(argv[i], "-geometry"))
+    {
+	if (!strcmp(argv[i+1],"fullscreen"))
+	{
+	    g_fullscreen = True;
+    	}
+        else 
+	if (!strcmp(argv[i+1],"-ipaq"))
+    	{
+    	    g_fullscreen = True;
+    	    ipaq = True;
+	}
+        else 
+	{
+	    int j = 0;
+	    XParseGeometry(argv[i+1], &xo, &yo, &g_width, &g_height);
+	    while(argv[i+1][j])
+	    {
+		if(argv[i+1][j] == '+')
+		{
+		    argv[i+1][j] = 'x';
+                }
+                j++;
+            }
+        }
+	return 2;
+    }
+    
+    if (!strcmp(argv[i], "-name"))
+    {
+	strncpy(windowName,(char *)argv[i+1],strlen((char *)argv[i+1]));
+	return 2;
+    }
+    
+    if (!strcmp(argv[i], "-bw"))
     {
 	return 1;
     }
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-getifocus"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-karma"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    
+    if (!strcmp(argv[i], "-scrns"))
     {
 	return 1;
     }
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-bstimeout"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    
+    if (!strcmp(argv[i], "-install"))
     {
 	return 1;
     }
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-imgframe"))
-  {
-#ifdef __sun
-    putenv("NX_IMAGEFRAME");
-#else
-    setenv("NX_IMAGEFRAME", "", 1);
-#endif
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-imgsplit"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    
+    if (!strcmp(argv[i], "-parent"))
     {
-#ifdef __sun
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-imgstop"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-getifocus"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-karma"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-bstimeout"))
+    {
+	return 1;
+    }
+    
+    if (!strcmp(argv[i], "-imgframe"))
+    {
+	#ifdef __sun
+	putenv("NX_IMAGEFRAME");
+	#else
+	setenv("NX_IMAGEFRAME", "", 1);
+	#endif
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-imgsplit"))
+    {
+	#ifdef __sun
         char envBuffer[512];
         sprintf(envBuffer,"NX_IMAGESPLIT=%s",argv[i]);
         putenv(envBuffer);
-#else
+	#else
         setenv("NX_IMAGESPLIT", argv[i], 1);
-#endif
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
+	#endif
+	return 1;
     }
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-imgcolors"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    
+    if (!strcmp(argv[i], "-imgcolors"))
     {
-#ifdef __sun
-       char envBuffer[512];
-       sprintf(envBuffer,"NX_IMAGEMASK=%s",argv[i]);
-       putenv(envBuffer);
-#else
-       setenv("NX_IMAGEMASK", argv[i], 1);
-#endif
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
+	#ifdef __sun
+	char envBuffer[512];
+	sprintf(envBuffer,"NX_IMAGEMASK=%s",argv[i]);
+	putenv(envBuffer);
+	#else
+	setenv("NX_IMAGEMASK", argv[i], 1);
+	#endif
+	return 1;
     }
-    return 0;
-  }
+    
+    if (!strcmp(argv[i], "-autoexpose"))
+    {
+	return 1;
+    }
 
-  if (!strcmp(argv[i], "-autoexpose"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
+    if (!strcmp(argv[i], "-backingstore"))
+    {
+	return 1;
+    }
 
-
-  if (!strcmp(argv[i], "-backingstore"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-maxbsarea"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-maxbsarea"))
     {
        return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-minbsarea"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    
+    if (!strcmp(argv[i], "-minbsarea"))
+    {
+	return 1;
+    }
+    
+    if (!strcmp(argv[i], "-safe"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-noreset"))
+    {
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-fp"))
     {
        return 1;
     }
-    return 0;
-  }
-  if (!strcmp(argv[i], "-safe"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-noreset"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-fp"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-auth"))
     {
-       return 1;
+	return 1;
     }
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-auth"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "-bs"))
     {
-       return 1;
+	return 1;
     }
-    return 0;
-  }
 
-  if (!strcmp(argv[i], "-bs"))
-  {
-    argv[i][1]='(';
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "+bs"))
-  {
-    argv[i][0]='-';
-    argv[i][1]='(';
-    return 0;
-  }
-
-  if (!strcmp(argv[i], "-keyboard"))
-  {
-    argv[i][1]='(';
-    if (++i < argc)
+    if (!strcmp(argv[i], "+bs"))
     {
-        keylayout = strtol(argv[i], NULL, 16);
+	return 1;
+    }
+
+    if (!strcmp(argv[i], "-keyboard"))
+    {
+	keylayout = strtol(argv[i+1], NULL, 16);
         if (keylayout == 0)
         {
            error("Invalid keyboard layout\n");
         }
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
+	return 2;
     }
-  }
-  if (!strcmp(argv[i], "-passwd"))
-  {
-    argv[i][1]='(';
-    
-    if (++i < argc)
+
+    if (!strcmp(argv[i], "-passwd"))
     {
 	prompt_password = False;
-       passwordFile = &(argv[i])[0];
-#ifdef __sun
-      return 2;
-#else
-      return 1;
-#endif
+	strncpy(passwordFile,(char *)argv[i+1],strlen((char *)argv[i+1]));
+	return 2;
     }
-    return 0;
-  }
 
-  return 0;
+    return 0;
 }
 
 char *nxdesktopReadPasswdFromFile(char *fname)
@@ -1530,43 +1422,41 @@ char *nxdesktopReadPasswdFromFile(char *fname)
 
 void NXTranslateKeymap()
 {
-  switch(keylayout)
-  {
-    case 0x0401: strcpy(keymapname, "ar"); break;
-    case 0x0406: strcpy(keymapname, "da"); break;
-    case 0x0407: strcpy(keymapname, "de"); break;
-    case 0x0807: strcpy(keymapname, "de-ch"); break;
-    case 0x040a: strcpy(keymapname, "es"); break;
-    case 0x0809: strcpy(keymapname, "en-gb"); break;
-    case 0x0409: strcpy(keymapname, "en-us"); break;
-    case 0x040b: strcpy(keymapname, "fi"); break;
-    case 0x0438: strcpy(keymapname, "fo"); break;
-    case 0x040c: strcpy(keymapname, "fr"); break;
-    case 0x080c: strcpy(keymapname, "fr-be"); break;
-    case 0x0c0c: strcpy(keymapname, "fr-ca"); break;
-    case 0x100c: strcpy(keymapname, "fr-ch"); break;
-    case 0x041a: strcpy(keymapname, "hr"); break;
-    case 0x040e: strcpy(keymapname, "hu"); break;
-    case 0x0410:
-    case 0x0810: strcpy(keymapname, "it"); break;
-    case 0x0411: strcpy(keymapname, "ja"); break;
-    case 0x0427: strcpy(keymapname, "lt"); break;
-    case 0x0426: strcpy(keymapname, "lv"); break;
-    case 0x042f: strcpy(keymapname, "mk"); break;
-    case 0x0414: strcpy(keymapname, "no"); break;
-    case 0x0415: strcpy(keymapname, "pl"); break;
-    case 0x0816: strcpy(keymapname, "pt"); break;
-    case 0x0416: strcpy(keymapname, "pt-br"); break;
-    case 0x0419: strcpy(keymapname, "ru"); break;
-    case 0x0424: strcpy(keymapname, "sl"); break;
-    case 0x041d: strcpy(keymapname, "sv"); break;
-    case 0x041e: strcpy(keymapname, "th"); break;
-    case 0x041f: strcpy(keymapname, "tr"); break;
-    default:
-      fprintf(stderr, "Warning: unknown keyboard layout [%X].\n", keylayout);
-      strcpy(keymapname, "en-us");
- }
- DEBUG_KBD(("keymapname is [%s].\n", keymapname));
+    switch(keylayout)
+    {
+	case 0x0401: strcpy(keymapname, "ar"); break;
+	case 0x0406: strcpy(keymapname, "da"); break;
+	case 0x0407: strcpy(keymapname, "de"); break;
+	case 0x0807: strcpy(keymapname, "de-ch"); break;
+	case 0x040a: strcpy(keymapname, "es"); break;
+	case 0x0809: strcpy(keymapname, "en-gb"); break;
+	case 0x0409: strcpy(keymapname, "en-us"); break;
+	case 0x040b: strcpy(keymapname, "fi"); break;
+	case 0x0438: strcpy(keymapname, "fo"); break;
+	case 0x040c: strcpy(keymapname, "fr"); break;
+	case 0x080c: strcpy(keymapname, "fr-be"); break;
+	case 0x0c0c: strcpy(keymapname, "fr-ca"); break;
+	case 0x100c: strcpy(keymapname, "fr-ch"); break;
+	case 0x041a: strcpy(keymapname, "hr"); break;
+	case 0x040e: strcpy(keymapname, "hu"); break;
+	case 0x0410: 
+	case 0x0810: strcpy(keymapname, "it"); break;
+	case 0x0411: strcpy(keymapname, "ja"); break;
+	case 0x0427: strcpy(keymapname, "lt"); break;
+	case 0x0426: strcpy(keymapname, "lv"); break;
+	case 0x042f: strcpy(keymapname, "mk"); break;
+	case 0x0414: strcpy(keymapname, "no"); break;
+	case 0x0415: strcpy(keymapname, "pl"); break;
+	case 0x0816: strcpy(keymapname, "pt"); break;
+	case 0x0416: strcpy(keymapname, "pt-br"); break;
+	case 0x0419: strcpy(keymapname, "ru"); break;
+	case 0x0424: strcpy(keymapname, "sl"); break;
+	case 0x041d: strcpy(keymapname, "sv"); break;
+	case 0x041e: strcpy(keymapname, "th"); break;
+	case 0x041f: strcpy(keymapname, "tr"); break;
+	default: fprintf(stderr, "Warning: unknown keyboard layout [%X].\n", keylayout);
+    }
+    DEBUG_KBD(("keymapname is [%s].\n", keymapname));
 }
 
 /* show_startup_info - Just show some header information */
