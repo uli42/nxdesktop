@@ -537,8 +537,11 @@ rdp_out_order_caps(STREAM s)
 	order_caps[11] = (g_desktop_save == False ? 0 : 1);	/* desksave */
 	order_caps[13] = 1;	/* memblt */
 	order_caps[14] = 1;	/* triblt */
-	order_caps[20] = 1;	/* polygon */
-	order_caps[21] = 1;	/* polygon2 */
+	
+	/* Those are too unstable yet
+	order_caps[20] = 1;	 polygon 
+	order_caps[21] = 1;	 polygon2 */
+	
 	order_caps[22] = 1;	/* polyline */
 	order_caps[25] = 1;	/* ellipse */
 	order_caps[26] = 1;	/* ellipse2 */

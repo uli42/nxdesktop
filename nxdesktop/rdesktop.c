@@ -466,7 +466,7 @@ main(int argc, char *argv[])
 	
 	#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 0; i<=nx_argc; i++)
-	    nxdesktopDebug("Paramenters second phase","'%i' '%s'\n",i,nx_argv[i]);
+	    nxdesktopDebug("Parameters second phase","'%i' '%s'\n",i,nx_argv[i]);
 	#endif
 	
 	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?")) != -1)

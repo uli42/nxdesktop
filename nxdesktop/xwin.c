@@ -80,7 +80,7 @@ static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
 #ifdef NXDESKTOP_ONSTART
 
-//Atom nxdesktop_WM_START;
+/* Atom nxdesktop_WM_START; */
 
 #endif
 
@@ -90,6 +90,7 @@ extern BOOL g_sendmotion;
 extern BOOL g_fullscreen;
 extern BOOL g_grab_keyboard;
 extern BOOL g_hide_decorations;
+extern BOOL g_use_rdp5;
 extern char g_title[];
 extern int g_server_bpp;
 extern int g_win_button_size;
@@ -1216,9 +1217,9 @@ ui_init(void)
 		    rdp_img_cache_nxcompressed = False;
 		}
 		#ifdef NXDESKTOP_XWIN_DEBUG
-		nxdesktopDebug("ui_init","State of the RDP image caches %s and compressed %s.\n",rdp_img_cache,rdp_img_cache_nxcompressed);
+		nxdesktopDebug("ui_init","RDP image cache: %d.\n",rdp_img_cache);
+		nxdesktopDebug("ui_init","RDP image compressed cache: %d.\n",rdp_img_cache_nxcompressed);
 		#endif
-		
 		/*
 		 * Activate shared memory PutImages
 		 * in X server proxy. Shared memory
@@ -1286,7 +1287,6 @@ ui_init(void)
 			
 				nxdesktopUseNXRdpImages = True;
         	        }
-			
 			if (methods[PACK_RDP_PLAIN_256_COLORS] == False &&
 			    methods[PACK_RDP_COMPRESSED_256_COLORS] == False)
 			{  
@@ -2368,16 +2368,20 @@ xwin_process_events(void)
 
 				/* clipboard stuff */
 			case SelectionNotify:
-				xclip_handle_SelectionNotify(&xevent.xselection);
+				if (g_use_rdp5)
+				    xclip_handle_SelectionNotify(&xevent.xselection);
 				break;
 			case SelectionRequest:
-				xclip_handle_SelectionRequest(&xevent.xselectionrequest);
+				if (g_use_rdp5)
+				    xclip_handle_SelectionRequest(&xevent.xselectionrequest);
 				break;
 			case SelectionClear:
-				xclip_handle_SelectionClear();
+				if (g_use_rdp5)
+				    xclip_handle_SelectionClear();
 				break;
 			case PropertyNotify:
-				xclip_handle_PropertyNotify(&xevent.xproperty);
+				if (g_use_rdp5)
+				    xclip_handle_PropertyNotify(&xevent.xproperty);
 				break;
 		}
 	}
@@ -3013,9 +3017,7 @@ ui_create_colourmap(COLOURMAP * colours)
 		 * Now, a closest match is found and them used.
 		 * 
 		 */
-		#ifdef NXDESKTOP_XWIN_DEBUG
-		nxdesktopDebug("ui_create_colourmap","g_owncolmap used for %d numcolors.\n",ncolours);
-		#endif
+		
 		uint32 *map = (uint32 *) xmalloc(sizeof(*g_colmap) * ncolours);
 		XColor xentry[ncolours];
 		Bool alloc_done[ncolours]; 
@@ -3023,6 +3025,9 @@ ui_create_colourmap(COLOURMAP * colours)
 		uint32 colour;
 		int colLookup = 256;
 		
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug("ui_create_colourmap","g_owncolmap used for %d numcolors.\n",ncolours);
+		#endif
 		for (i = 0; i < ncolours; i++)
 		{
 			entry = &colours->colours[i];

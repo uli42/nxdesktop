@@ -1,5 +1,36 @@
 ChangeLog:
 
+nxdesktop-1.4.0-61
+
+- Solved problem that makes the RDP session crashes when connected
+  to a RDP 4 server like the original TS for Windows NT.
+  TRSL042225.
+  
+- Modified the debug routines to avoid possible compilation problems
+  gcc 2.95.
+
+nxdesktop-1.4.0-60
+
+- Changed debug entry on xwin.c to improve compatibility with gcc 2.95.3
+  used on Suse 7.3
+
+nxdesktop-1.4.0-59
+
+- Solved bug on the debug code which was making nxdesktop segfault if
+  the new XWIN operation debug is activated.
+  
+- Little code cleanning on xwin.c and orders.c
+
+- Changed sequence of debug #ifdef's
+
+nxdesktop-1.4.0-58
+
+- Solved bug which was causing MS Visio 2002 to close the session as
+  reported by Andreas Krause. 
+  
+NOTE: This will also probably solve the problem with his ERP. I'm waiting
+      his answer on this matter.
+
 nxdesktop-1.4.0-57
 
 - Solved compilation warning when XWIN_DEBUG is active.

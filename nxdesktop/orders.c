@@ -748,6 +748,7 @@ process_polyline(STREAM s, POLYLINE_ORDER * os, uint32 present, BOOL delta)
                 ui_poly_line(ROP2_NXOR, (short *)&x_points, pCount / 2, &pen);
           }
 	/* NX */
+	
 	/* for (line = 0; (line < os->lines) && (data < os->datasize); line++)
 	{
 		xfrom = x;
