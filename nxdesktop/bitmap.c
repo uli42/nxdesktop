@@ -22,7 +22,7 @@
 /*                                                                        */
 /* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
-/* NXDESKTOP, NX protocol compression and NX extensions to this software    */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
 /* software is allowed according to terms specified in the file LICENSE   */
 /* which comes in the source distribution.                                */
@@ -88,7 +88,7 @@
 
 /* 1 byte bitmap decompress */
 static BOOL
-bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size)
+bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int size)
 {
 	uint8 *end = input + size;
 	uint8 *prevline = NULL, *line = NULL;
@@ -134,7 +134,6 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 				offset = 32;
 				break;
 		}
-		
 		/* Handle strange cases for counts */
 		if (offset != 0)
 		{
@@ -151,36 +150,28 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 				count <<= 3;
 			}
 		}
-		
 		/* Read preliminary data */
 		switch (opcode)
 		{
 			case 0:	/* Fill */
 				if ((lastopcode == opcode) && !((x == width) && (prevline == NULL)))
-				    insertmix = True;
-				
+					insertmix = True;
 				break;
-			
 			case 8:	/* Bicolour */
 				colour1 = CVAL(input);
-			
 			case 3:	/* Colour */
 				colour2 = CVAL(input);
 				break;
-			
 			case 6:	/* SetMix/Mix */
-			
 			case 7:	/* SetMix/FillOrMix */
 				mix = CVAL(input);
 				opcode -= 5;
 				break;
-			
 			case 9:	/* FillOrMix_1 */
 				mask = 0x03;
 				opcode = 0x02;
 				fom_mask = 3;
 				break;
-			
 			case 0x0a:	/* FillOrMix_2 */
 				mask = 0x05;
 				opcode = 0x02;
@@ -189,9 +180,6 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 		}
 		lastopcode = opcode;
 		mixmask = 0;
-		
-		
-		
 		/* Output body */
 		while (count > 0)
 		{
@@ -298,7 +286,7 @@ bitmap_decompress1(uint8 * output, int width, int height, uint8 * input, int siz
 
 /* 2 byte bitmap decompress */
 static BOOL
-bitmap_decompress2(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size)
+bitmap_decompress2(uint8 * output, int width, int height, uint8 * input, int size)
 {
 	uint8 *end = input + size;
 	uint16 *prevline = NULL, *line = NULL;
@@ -497,7 +485,7 @@ bitmap_decompress2(uint8 * output, int width, int height, uint8 * input, int siz
 
 /* 3 byte bitmap decompress */
 static BOOL
-bitmap_decompress3(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size)
+bitmap_decompress3(uint8 * output, int width, int height, uint8 * input, int size)
 {
 	uint8 *end = input + size;
 	uint8 *prevline = NULL, *line = NULL;
@@ -809,7 +797,7 @@ getli(uint8 *input, int offset, int Bpp)
 }
 
 static BOOL
-bitmap_decompressx(uint8 *output, int width, int height, uint8 *input, int size, int decomp_size, int Bpp)
+bitmap_decompressx(uint8 *output, int width, int height, uint8 *input, int size, int Bpp)
 {
 	uint8 *end = input + size;
 	uint8 *prevline = NULL, *line = NULL;
@@ -909,11 +897,7 @@ bitmap_decompressx(uint8 *output, int width, int height, uint8 *input, int size,
 
 		lastopcode = opcode;
 		mixmask = 0;
-		
-		#if 0
-		fprintf(stderr,"u=%d c=%d\n",opcode,count);
-		#endif
-		
+
 		/* Output body */
 		while (count > 0)
 		{
@@ -1029,28 +1013,25 @@ bitmap_decompressx(uint8 *output, int width, int height, uint8 *input, int size,
 
 /* main decompress function */
 BOOL
-bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size, int Bpp)
+bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int Bpp)
 {
 #ifdef BITMAP_SPEED_OVER_SIZE
 	BOOL rv = False;
 	switch (Bpp)
 	{
 		case 1:
-			rv = bitmap_decompress1(output, width, height, input, size, decomp_size);
+			rv = bitmap_decompress1(output, width, height, input, size);
 			break;
 		case 2:
-			rv = bitmap_decompress2(output, width, height, input, size, decomp_size);
+			rv = bitmap_decompress2(output, width, height, input, size);
 			break;
 		case 3:
-			rv = bitmap_decompress3(output, width, height, input, size, decomp_size);
+			rv = bitmap_decompress3(output, width, height, input, size);
 			break;
 	}
 #else
 	BOOL rv;
-	#if 0
-	fprintf(stderr,"w=%d h=%d s=%d d=%d b=%d\n",width, height, size, decomp_size, Bpp);
-	#endif
-	rv = bitmap_decompressx(output, width, height, input, size, decomp_size, Bpp);
+  rv = bitmap_decompressx(output, width, height, input, size, Bpp);
 #endif
 	return rv;
 }

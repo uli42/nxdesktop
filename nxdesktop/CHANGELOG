@@ -1,5 +1,64 @@
 ChangeLog:
 
+nxdesktop-1.4.0-36
+
+- Removed debug code forgot behind by mistake.
+
+nxdesktop-1.4.0-35
+
+- Solved the logo "blinking" when called from windows client.
+
+nxdesktop-1.4.0-34
+
+- Added code to avoid a possibly wrongly "Less than 8 bpp not currently 
+  supported" error. The modification initializes the test variable with the
+  current depth and issues a different error message if the pixmap array
+  couldn't be allocated.
+
+nxdesktop-1.4.0-33
+
+- Message printed for the mock "-kbtype" message removed.
+
+nxdesktop-1.4.0-32
+
+- Added mock -kbtype parameter. Anything passed using it will be
+  ignored and just a message will be printed.
+
+nxdesktop-1.4.0-31
+
+- Reversed the modifications made by 1.4.0-29-TOM2
+
+nxdesktop-1.4.0-30
+
+- Merged with 1.4.0-29-TOM1 and TOM2
+
+nxdesktop-1.4.0-29
+
+- Added the following keymaps:
+  et
+  is
+  nl
+  nl-be
+  sv
+
+- Updated the keymaps:
+  de-ch
+  fr-be
+  ja
+  sv
+
+nxdesktop-1.4.0-28
+
+- Aplied updates on mppc.c.
+
+- Changed typecast on bitmap.c.
+
+- Corrected logic error preventing connection error message to be shown.
+
+- Corrected typecast in channels.c.
+
+- Added missing copyright notice.
+
 nxdesktop-1.4.0-27
 
 - Solved bug that was causing messed bitmaps to be cached.

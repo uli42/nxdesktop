@@ -190,7 +190,8 @@ usage(char *program)
 	fprintf(stderr, "   -4: use RDP version 4\n");
 	fprintf(stderr, "   -5: use RDP version 5 (default)\n");
 	fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
-	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n\n", rdp_bufsize);
+	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n", rdp_bufsize);
+	fprintf(stderr, "   -kbtype: inform the local keyboard type\n");
 }
 
 void
@@ -1518,6 +1519,12 @@ char *argv[];
     {
 	prompt_password = False;
 	strncpy(passwordFile,(char *)argv[i+1],strlen((char *)argv[i+1]));
+	return 2;
+    }
+    
+    if (!strcmp(argv[i], "-kbtype"))
+    {
+	fprintf(stderr,"INFO: -kbtype parameter issued\n");
 	return 2;
     }
 

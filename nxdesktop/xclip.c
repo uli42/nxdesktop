@@ -19,6 +19,23 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include "rdesktop.h"
@@ -371,6 +388,8 @@ xclip_init(void)
 	if (!cliprdr_init())
 		return;
 
+	
+
 	primary_atom = XInternAtom(g_display, "PRIMARY", False);
 	clipboard_atom = XInternAtom(g_display, "CLIPBOARD", False);
 	targets_atom = XInternAtom(g_display, "TARGETS", False);
@@ -390,4 +409,7 @@ xclip_init(void)
 	rdesktop_clipboard_formats_atom =
 		XInternAtom(g_display, "_RDESKTOP_CLIPBOARD_FORMATS", False);
 	XSelectInput(g_display, DefaultRootWindow(g_display), PropertyChangeMask);
+	
+	xclip_handle_SelectionClear();
+	
 }

@@ -1061,6 +1061,8 @@ ui_init(void)
 	g_x_socket = ConnectionNumber(g_display);
 	g_screen = ScreenOfDisplay(g_display, screen_num);
 	g_depth = DefaultDepthOfScreen(g_screen);
+	
+	
 
 	/* Search for best TrueColor depth */
 	template.class = TrueColor;
@@ -1113,7 +1115,7 @@ ui_init(void)
 			if (!g_xserver_be && !g_host_be)
 				g_arch_match = True;
 	}
-
+	
 	if (nxDisplay[0] != 0)
 	{
 		nxdesktopUseNXTrans = (strncasecmp(nxDisplay, "nx", 2) == 0);
@@ -1277,6 +1279,10 @@ ui_init(void)
 		}
 	}
 	
+	/* NX */
+	g_bpp = g_depth;
+	/* NX */
+	
 	pfm = XListPixmapFormats(g_display, &i);
 	if (pfm != NULL)
 	{
@@ -1287,10 +1293,19 @@ ui_init(void)
 			if ((pfm[i].depth == g_depth) && (pfm[i].bits_per_pixel > g_bpp))
 			{
 				g_bpp = pfm[i].bits_per_pixel;
+				
 			}
 		}
 		XFree(pfm);
 	}
+	/* NX */ 
+	else
+	{
+	    error("Failed to alloc list of pixmap formats.\n");
+	    XCloseDisplay(g_display);
+	    return False;
+	}
+	/* NX */
 
 	if (g_bpp < 8)
 	{
@@ -1549,12 +1564,11 @@ ui_create_window(void)
 			      0, g_depth, InputOutput, g_visual,
 			      CWBackPixel | CWBackingStore | CWOverrideRedirect |
 			      CWColormap | CWBorderPixel, &attribs);*/
+	
 	g_wnd = XCreateWindow(g_display, RootWindowOfScreen(g_screen), xo, yo, wndwidth, wndheight,
 			      0, CopyFromParent, InputOutput, CopyFromParent,
-			      CWBackPixel | CWBackingStore | (g_fullscreen ? CWOverrideRedirect:
+			      CWBackingStore | (g_fullscreen ? CWOverrideRedirect:
 			      SubstructureRedirectMask) | StructureNotifyMask, &attribs);
-	
-	
 	
 	if (g_gc == NULL)
 		g_gc = XCreateGC(g_display, g_wnd, 0, NULL);
@@ -1638,7 +1652,7 @@ ui_create_window(void)
 	 if (g_fullscreen)
 	 	input_mask |= (EnterWindowMask | LeaveWindowMask);	
 	/* NX */
-	XMapWindow(g_display, g_wnd);		
+	XMapWindow(g_display, g_wnd);
 	/* NX */
 	if (g_fullscreen)
         {
@@ -1748,7 +1762,7 @@ ui_create_window(void)
             i--;
             sleep(3);
           }
-
+	    
           XSync(g_display, True);
         }
 	#endif
@@ -2286,15 +2300,19 @@ xwin_process_events(void)
 
 				/* clipboard stuff */
 			case SelectionNotify:
+				/*fprintf(stderr,"Selection Notify\n");*/
 				xclip_handle_SelectionNotify(&xevent.xselection);
 				break;
 			case SelectionRequest:
+				/*fprintf(stderr,"Selection Request\n");*/
 				xclip_handle_SelectionRequest(&xevent.xselectionrequest);
 				break;
 			case SelectionClear:
+				/*fprintf(stderr,"Selection Clear\n");*/
 				xclip_handle_SelectionClear();
 				break;
 			case PropertyNotify:
+				/*fprintf(stderr,"Property Notify\n");*/
 				xclip_handle_PropertyNotify(&xevent.xproperty);
 				break;
 		}
@@ -2898,8 +2916,8 @@ ui_create_colourmap(COLOURMAP * colours)
 	#ifdef NKDESKTOP_ONSTART
         if (showNXlogo)
         {
-           setOwnerNX_WM(g_wnd);
-           XSync(g_display, True);
+           //setOwnerNX_WM(g_wnd);
+           //XSync(g_display, True);
         }
 	#endif
 	#ifdef NXDESKTOP_XWIN_DEBUG
@@ -3981,7 +3999,7 @@ Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)
   strncpy(default_path, "", 255);
 
   strcat(icon_filename, NX_DEFAULT_ICON);
-  strcat(default_path,"/usr/NX/share/");
+  strcat(default_path,"/usr/NX/share/images/");
   strcat(default_path,icon_filename);
 
   if ((icon_fp = fopen(default_path, "r")) == NULL)

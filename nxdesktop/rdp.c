@@ -949,7 +949,7 @@ process_bitmap_updates(STREAM s)
 		#else /*NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES*/
 
 		bmpdata = xmalloc(width * height);
-		if (bitmap_decompress(bmpdata, width, height, data, size, width * height, Bpp))
+		if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
 		{
 			#ifdef NXDESKTOP_RDP_DEBUG
 			fprintf(stderr, "process_bitmap_updates: Calling ui_paint_bitmap with decompressed bitmap %d,%d,%d,%d,%d,%d,%d->%d.\n",

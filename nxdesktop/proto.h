@@ -2,7 +2,7 @@
 /*                                                                        */
 /* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
-/* NXDESKTOP, NX protocol compression and NX extensions to this software    */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
 /* software is allowed according to terms specified in the file LICENSE   */
 /* which comes in the source distribution.                                */
@@ -16,7 +16,7 @@
 /**************************************************************************/
 
 /* bitmap.c */
-BOOL bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int decomp_size, int Bpp);
+BOOL bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int Bpp);
 /* cache.c */
 HBITMAP cache_get_bitmap(uint8 cache_id, uint16 cache_idx);
 void cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap);
