@@ -1,0 +1,51 @@
+ChangeLog
+---------
+
+nxdesktop-1.3.0-11
+
+- The default directory for keymaps was changed to "/usr/NX/share/keymaps-windows" to
+  avoid incompatibilities with old xmodmap generated maps.
+
+nxdesktop-1.3.0-10
+
+- Modified the hex keyboard layout to names function to use only the existing
+  file names (provided with rdesktop 1.3 keymaps).
+
+nxdesktop-1.3.0-9
+
+- Added support for 16 bpp X server display for big-endian platforms.
+- Added printout on RDP connection startup.
+
+nxdesktop-1.3.0-8
+
+- Corrected bug that avoided to use <ALT-GR> modifier key.
+
+nxdesktop-1.3.0-7
+
+- Added rdesktop 1.3 like keyboard support with backward compatibility with
+  nxclient hex keylayout codes.
+
+- The windows server name is gotten from the last parameter (argc -1) to avoid
+  problems with different return count "optind" of "getopt" function on Solaris OSs.
+
+- Now, as in the original version of rdesktop, the desktop tries to open
+  the X window before attempting to start the RDP session.
+
+nxdesktop-1.3.0-6
+
+- On parsing non-rdesktop parameters, variable "pre_count" is incremented
+  different on Solaris OSs.
+
+nxdesktop-1.3.0-5
+
+- Reflected changes introduced in NXGetControlParameters().
+
+nxdesktop-1.3.0-4
+
+- Use resource 0 in NXPutPackedImage() and other NX requests
+  to comply with new prototypes.
+
+nxdesktop-1.3.0-3
+
+- Added initialization of MIT-SHM through a call to the new
+  NXGetShmemParameters() function.
