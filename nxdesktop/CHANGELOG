@@ -1,5 +1,39 @@
 ChangeLog:
 
+nxdesktop-1.3.2-14
+
+- Solved problem with wrong colors on solaris.
+
+- Added handler to WM_PROTOCOLS message.
+
+nxdesktop-1.3.2-13
+
+- Added routine to set the right Atom on the real X server.
+
+nxdesktop-1.3.2-12
+
+- Compilation warning on cache.c removed.
+
+- Solved bug that was preventing nxdesktop to use username
+  and password passed by nxclient. 
+
+nxdesktop-1.3.2-11
+
+- Solved problem related to error messages not been
+  displayed.
+  
+- The image cache now is disabled if the link type is
+  WAN or LAN.
+
+nxdesktop-1.3.2-10
+
+- Changes in configure and xwin.c to allow compilation
+  on Solaris made by Kryza.
+  
+- Implemented Karma handling to improve responsiveness.
+
+- Internal backstore now is not enabled by default.
+
 nxdesktop-1.3.2-9
 
 - Reversed modifications imported from 1.3.1 branch
@@ -25,7 +59,7 @@ NOTE: Despite the change above seens to stop the hanging
 nxdesktop-1.3.2-7
 
 - Added extra parameter -imgcache to enable the
-  experimental image cache .
+  experimental image cache.
   
 - Image cache is disabled by default now.
 

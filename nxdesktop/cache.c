@@ -131,7 +131,7 @@ static DATABLOB g_textcache[256];
 
 /* Retrieve a text item from the cache */
 DATABLOB *
-cache_get_text(uint8 cache_id)
+cache_get_text(uint16 cache_id)
 {
 	DATABLOB *text;
 	if (cache_id < NUM_ELEMENTS(g_textcache))
@@ -147,7 +147,7 @@ cache_get_text(uint8 cache_id)
 
 /* Store a text item in the cache */
 void
-cache_put_text(uint8 cache_id, void *data, int length)
+cache_put_text(uint16 cache_id, void *data, int length)
 {
 	DATABLOB *text;
 

@@ -54,7 +54,7 @@ extern BOOL nxdesktopUseNXTrans;
 extern BOOL nxdesktopUseNXRdpImages;
 extern BOOL nxdesktopUseNXCompressedRdpImages;
 extern unsigned int buf_key_vector;
-extern BOOL img_cache;
+extern BOOL rdp_img_cache;
 /* NX */
 
 uint8 *g_next_packet;
@@ -460,7 +460,7 @@ rdp_out_order_caps(STREAM s)
 	order_caps[1] = 1;	/* pat blt */
 	order_caps[2] = 1;	/* screen blt */
 	/* NX */
-	order_caps[3] = (img_cache == True ? 1 : 0);	/* required for memblt? */
+	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt? */
 	/* char *p;
 	*(p = NULL) = 0;
 	fprintf(stderr,"img_cache: %d\n",img_cache == True ? 1 : 0); */
@@ -1068,6 +1068,21 @@ rdp_main_loop(void)
 	/* We want to detect if we got a clean shutdown, but we
 	   can't. Se above.  
 	   return False;  */
+}
+
+/* Test a connection up to the RDP layer */
+BOOL
+test_rdp_connect(char *server)
+{
+	if (!tcp_connect(server))
+	{
+	    return False;
+	}
+	else
+	{
+	    tcp_disconnect();
+	    return True;
+	}
 }
 
 /* Establish a connection up to the RDP layer */

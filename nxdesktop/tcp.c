@@ -44,6 +44,7 @@
 #include <arpa/inet.h>		/* inet_addr */
 #include <errno.h>		/* errno */
 #include <signal.h>		/* sigaction - NX */
+#include <NXlib.h>
 #include "rdesktop.h"
 
 #ifndef INADDR_NONE
@@ -139,16 +140,27 @@ tcp_send(STREAM s)
 	#endif
 }
 
+/* NX */
+static Bool SyncPredicate(Display *display, XEvent *event, XPointer ptr)
+{
+  return (event -> xclient.data.l[0] == NXSyncNotify &&
+              event -> type == ClientMessage && event -> xclient.window == 0 &&
+                      event -> xclient.message_type == 0 && event -> xclient.format == 32);
+}
+/* NX */
+
 /* Receive a message on the TCP layer */
 STREAM
 tcp_recv(STREAM s, uint32 length)
 {
-	unsigned int new_length, end_offset, p_offset;
+	unsigned int new_length = 0, end_offset, p_offset;
 	int rcvd = 0;
 	/* NX */
 	char errorMsg[512];
 	char errorCaption[512];
 	extern char *nxDisplay;
+	extern Display *g_display;
+	XEvent event;
 	/* NX */
 #ifdef NXDESKTOP_TCP_DEBUG
 	int kiloRead = tcpRead / 1024;
@@ -164,9 +176,7 @@ tcp_recv(STREAM s, uint32 length)
 		}
 		in.end = in.p = in.data;
 		s = &in;
-		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-    		bytesFromLastKarma += length;
-		#endif
+		
 	}
 	else
 	{
@@ -181,25 +191,21 @@ tcp_recv(STREAM s, uint32 length)
 			s->p = s->data + p_offset;
 			s->end = s->data + end_offset;
 		}
-		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-    		bytesFromLastKarma += new_length;
-		#endif
 	}
 
-// Original bytes... aqui
-
-
-	while (length > 0)
+	
+	
+    	while (length > 0)
 	{
-		if (!ui_select(sock, False))
+		if (!ui_select(sock))
 			/* User quit */
 			return NULL;
 
 		rcvd = recv(sock, s->end, length, 0);
-		/* NX */
+		
 		if (rcvd < 0)
 		{
-			/*error("recv: %s\n", strerror(errno));*/
+			error("recv: %s\n", strerror(errno));
 			snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
 		    	snprintf(errorCaption,511,"Error");
 		    	NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
@@ -211,15 +217,33 @@ tcp_recv(STREAM s, uint32 length)
 			error("Connection closed\n");
 			return NULL;
 		}
+		
+		/* NX */
 		#ifdef NXDESKTOP_TCP_DUMP
 		if (rdpDump != -1 && rcvd > 0)
 		{
 			write(rdpDump, in.end, rcvd);
 		}
 		#endif
-
-/*                fprintf(stderr,"tcp_recv receive [%d] bytes\n", rcvd);
-*/
+		
+		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
+		bytesFromLastKarma += rcvd;
+		if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
+        	{
+			#ifdef NXDESKTOP_NXKARMA_DEBUG
+                	fprintf(stderr,"Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
+			#endif
+			NXSync(g_display, NXSyncWaitForLink, 0);
+			while (!XCheckIfEvent(g_display, &event, SyncPredicate, NULL))
+    			{
+			}
+			#ifdef NXDESKTOP_NXKARMA_DEBUG
+                	fprintf(stderr,"Karma received\n");
+			#endif
+                	bytesFromLastKarma = 0;
+		}
+		#endif
+				
 		#ifdef NXDESKTOP_TCP_DEBUG
 		tcpRead += rcvd;
 		#endif
@@ -236,16 +260,6 @@ tcp_recv(STREAM s, uint32 length)
 	}
 	#endif
 
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-        if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
-        {
-#ifdef NXDESKTOP_NXKARMA_DEBUG
-                fprintf(stderr,"Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
-#endif
-                ui_select(sock, True);
-                bytesFromLastKarma = 0;
-	}
-#endif
 	/* NX */
 	
 	return s;
@@ -257,11 +271,11 @@ tcp_connect(char *server)
 {
 	int true_value = 1;
 	/* NX */
-	extern char *nxDisplay;
 	extern char *windowName;
 	char errorMsg[512];
 	char errorCaption[512];
-	struct sigaction /*sigact*/;
+	struct sigaction sigact;
+	extern char *nxDisplay;
 	/* NX */
 
 #ifdef IPv6
@@ -331,19 +345,24 @@ tcp_connect(char *server)
 	servaddr.sin_port = htons(tcp_port_rdp);
 	
 	/* NX */
-	/*sigaction(SIGALRM, NULL, &sigact);
+	sigaction(SIGALRM, NULL, &sigact);
 	sigact.sa_handler = AlarmHandler;
 	sigact.sa_flags &= ~SA_RESTART;
 	sigaction(SIGALRM, &sigact, NULL); 
 
-	alarm(30);*/
+	alarm(30);
 	/* NX */
 
 	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
 	{
+		alarm(0);
+		if (errno == 4)
+		{
+			errno = 110;
+		}
 		error("connect: %s\n", strerror(errno));
 		close(sock);
-		/*sigaction(SIGALRM, NULL, &sigact);*/
+		sigaction(SIGALRM, NULL, &sigact);
 		snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
 		snprintf(errorCaption,511,"%s",windowName);
 		NXDialog(errorCaption, errorMsg, "ok", 0, nxDisplay );
@@ -354,7 +373,26 @@ tcp_connect(char *server)
 #endif /* IPv6 */
 
 	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (void *) &true_value, sizeof(true_value));
+	
+	/* NX */
+	/*
+	 * Set TCP read buffer (to a smaller value,
+         * we suppose) to increase interactivity.
+	 */
 
+	if (rdp_bufsize > 0 &&
+		 setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+				&rdp_bufsize, sizeof(rdp_bufsize)) < 0)
+	{
+		fprintf(stderr, "tcp_connect: Cannot resize receive buffer to %d. Error is '%s'.\n",
+					rdp_bufsize, strerror(errno));
+		close(sock);
+
+		return False;
+	}
+	
+	/* NX */
+	
 	in.size = 4096;
 	in.data = (uint8 *) xmalloc(in.size);
 

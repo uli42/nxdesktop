@@ -85,7 +85,9 @@ BOOL g_grab_keyboard = True;
 BOOL g_hide_decorations = False;
 /* NX */
 BOOL g_use_rdp5 = True;
-BOOL img_cache = True;
+BOOL rdp_img_cache = True;
+BOOL username_option = False;
+BOOL prompt_password = True;
 /* NX */
 BOOL g_console_session = False;
 BOOL g_numlock_sync = False;
@@ -292,18 +294,16 @@ main(int argc, char *argv[])
 	char password[64];
 	char shell[128];
 	char directory[32];
-	BOOL prompt_password, rdp_retval = False;
+	BOOL rdp_retval = False;
 	struct passwd *pw;
 	uint32 flags;
 	char *p;
 	int c;
 	int pre_count;
-	int username_option = 0;
 	/* show initial info */
 	ShowHeaderInfo();
 	
 	flags = RDP_LOGON_NORMAL;
-	prompt_password = False;
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
 	strcpy(keymapname, "en-us");
 	g_embed_wnd = 0;
@@ -320,6 +320,7 @@ main(int argc, char *argv[])
 	{
 		switch (c)
 		{
+		
 			case '(':
 			        break;
 #ifdef RDP2VNC
@@ -338,7 +339,7 @@ main(int argc, char *argv[])
 
 			case 'u':
 				STRNCPY(g_username, optarg, sizeof(g_username));
-				username_option = 1;
+				username_option = True;
 				break;
 
 			case 'd':
@@ -683,21 +684,23 @@ main(int argc, char *argv[])
 	rdp2vnc_connect(server, flags, domain, password, shell, directory);
 	return 0;
 #else
+	if (!test_rdp_connect(server))
+	    return 1;
+    
 	if (!ui_open_display())
-		{
+	    {
 		fprintf(stderr, "Error: nxdesktop cannot open X display.\n");
 		return 1;
-		}
+	    }
 	
 	if (!ui_init())
 		return 1;
-
-#ifdef WITH_RDPSND
+	
+	#ifdef WITH_RDPSND
 	if (g_rdpsnd)
 		rdpsnd_init();
-#endif
-	rdpdr_init();
-	
+	#endif
+	/* rdpdr_init(); */
 	
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
@@ -706,18 +709,14 @@ main(int argc, char *argv[])
 	}
 	else
 	{
-	    
-	    
-	   if ((g_width == 0) || (g_height == 0))
-	   {
+	    nxdesktopSetAtoms();
+	    if ((g_width == 0) || (g_height == 0))
+	    {
 		g_width = 800;
 		g_height = 600;
-	   }
+	    }
 	    if (g_fullscreen)
-            {
 		ui_get_display_size(&g_width, &g_height);
-	    }	
-		
 	}
 	/* By setting encryption to False here, we have an encrypted login 
 	   packet but unencrypted transfer of other packets */
@@ -1156,7 +1155,7 @@ int agentArgument (argc, argv, i)
     argv[i][1]='(';
     if (++i < argc)
     {
-	img_cache=True;
+	rdp_img_cache = True;
 	return 1;
     }
     return 0;
@@ -1477,8 +1476,10 @@ int agentArgument (argc, argv, i)
   if (!strcmp(argv[i], "-passwd"))
   {
     argv[i][1]='(';
+    
     if (++i < argc)
     {
+	prompt_password = False;
        passwordFile = &(argv[i])[0];
 #ifdef __sun
       return 2;

@@ -302,7 +302,8 @@ rpath=`echo $rpath |sed 's/^://'`
 
 case `uname -s` in
   SunOS)
-    ldflags="$ldflags -lsocket -lnsl -R$rpath"
+    echo "INCLUDES	=  -I../nxcomp -I../nxcompext -I/usr/local/include -I/usr/sfw/include">> Makeconf
+    ldflags="$ldflags -L/usr/sfw/lib -lsocket -lnsl -R$rpath"
     ;;
   OSF1)
     ldflags="$ldflags -Wl,-rpath,$rpath"

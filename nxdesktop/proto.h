@@ -24,8 +24,8 @@ void cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap);
 FONTGLYPH *cache_get_font(uint8 font, uint16 character);
 void cache_put_font(uint8 font, uint16 character, uint16 offset, uint16 baseline, uint16 width,
 		    uint16 height, HGLYPH pixmap);
-DATABLOB *cache_get_text(uint8 cache_id);
-void cache_put_text(uint8 cache_id, void *data, int length);
+DATABLOB *cache_get_text(uint16 cache_id);
+void cache_put_text(uint16 cache_id, void *data, int length);
 uint8 *cache_get_desktop(uint32 offset, int cx, int cy, int bytes_per_pixel);
 void cache_put_desktop(uint32 offset, int cx, int cy, int scanline, int bytes_per_pixel,
 		       uint8 * data);
@@ -106,6 +106,7 @@ void process_palette(STREAM s);
 BOOL rdp_main_loop(void);
 BOOL rdp_connect(char *server, uint32 flags, char *domain, char *password, char *command,
 		 char *directory);
+BOOL test_rdp_connect(char *server);
 void rdp_disconnect(void);
 /* rdpdr.c */
 void convert_to_unix_filename(char *filename);
@@ -188,13 +189,14 @@ void ui_destroy_window(void);
 BOOL ui_open_display(void);
 void ui_get_display_size(int *width, int *height); 
 void xwin_toggle_fullscreen(void);
-int ui_select(int rdp_socket, BOOL needKarma);
+int ui_select(int rdp_socket);
 void ui_move_pointer(int x, int y);
 HBITMAP ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed);
 void ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * data);
 /* NX */
 void ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 *compressed_data, int compressed_size);
 void AlarmHandler(int signal);
+void run_events(void);
 /* End NX */
 void ui_destroy_bitmap(HBITMAP bmp);
 HGLYPH ui_create_glyph(int width, int height, uint8 * data);

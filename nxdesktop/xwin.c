@@ -56,8 +56,6 @@
 
 #undef NXDESKTOP_USES_SYNC_IN_LOOP
 
-#undef NXDESKTOP_NXKARMA_DEBUG
-
 #ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
 
 unsigned int *last_colormap;
@@ -120,7 +118,7 @@ static XIC g_IC;
 static XModifierKeymap *g_mod_map;
 static Cursor g_current_cursor;
 static HCURSOR g_null_cursor = NULL;
-static Atom g_protocol_atom, g_kill_atom;
+/* static Atom g_protocol_atom, g_kill_atom; */
 static BOOL g_focused;
 static BOOL g_mouse_in_wnd;
 static BOOL g_arch_match = False; /* set to True if RGB XServer and little endian */
@@ -188,6 +186,10 @@ Atom nxdesktop_WM = None;
 
 Atom nxdesktop_NX = None;
 
+/* Image cache flag */
+
+extern BOOL rdp_img_cache;
+
 /* endianness */
 static BOOL g_host_be;
 static BOOL g_xserver_be;
@@ -195,7 +197,7 @@ static int g_red_shift_r, g_blue_shift_r, g_green_shift_r;
 static int g_red_shift_l, g_blue_shift_l, g_green_shift_l;
 
 /* software backing store */
-BOOL g_ownbackstore = True;	/* We can't rely on external BackingStore */
+BOOL g_ownbackstore = False;	/* We can't rely on external BackingStore */
 static Pixmap g_backstore = 0;
 
 /* Moving in single app mode */
@@ -296,7 +298,6 @@ BOOL g_owncolmap = False;
 static Colormap g_xcolmap;
 static uint32 *g_colmap = NULL;
 static unsigned int r, b, g, or, ob, og, off;
-
 
 #define TRANSLATE(col)		( g_server_bpp != 8 ? translate_colour(col) : g_owncolmap ? col : g_colmap[col] )
 #define SET_FOREGROUND(col)	XSetForeground(g_display, g_gc, TRANSLATE(col));
@@ -1009,7 +1010,7 @@ ui_init(void)
 		error("Failed to open g_display: %s\n", XDisplayName(NULL));
 		return False;
 	}*/
-	
+   
 	x_socket = ConnectionNumber(g_display); /* NX */
 	{
           extern void tcp_resize_buf(int, int, int);
@@ -1040,6 +1041,16 @@ ui_init(void)
 	test = 1;
 	g_host_be = !(BOOL) (*(uint8 *) (&test));
 	g_xserver_be = (ImageByteOrder(g_display) == MSBFirst);
+
+	if (g_host_be)
+	    fprintf(stderr,"host be\n");
+	else
+	    fprintf(stderr,"host le\n");
+	    
+	if (g_xserver_be)
+	    fprintf(stderr,"xserver be\n");
+	else
+	    fprintf(stderr,"xserver le\n");
 
 	if ((g_server_bpp == 8) && ((!TrueColorVisual) || (g_depth <= 8)))
 	{
@@ -1104,7 +1115,18 @@ ui_init(void)
 		NXGetImageParameters(g_display,	&nxdesktopImageSplit, &nxdesktopImageMask,
 						&nxdesktopImageFrame, &nxdesktopImageSplitMethod,
 						&nxdesktopImageMaskMethod);
-
+		
+		if (nxdesktopLinkType == LINK_TYPE_MODEM ||
+		    nxdesktopLinkType == LINK_TYPE_ISDN ||
+		    nxdesktopLinkType == LINK_TYPE_ADSL)
+		{
+	    	    rdp_img_cache = True;
+		}
+		else
+		{
+		    rdp_img_cache = False;
+		} 
+				 
 		/*
 		 * Activate shared memory PutImages
 		 * in X server proxy. Shared memory
@@ -1643,10 +1665,10 @@ ui_create_window(void)
 	g_mouse_in_wnd = False;
 
 	/* handle the WM_DELETE_WINDOW protocol */
-/*	g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
+	/*g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
 	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);
-	XSetWMProtocols(g_display, g_wnd, &g_kill_atom, 1);
-*/
+	XSetWMProtocols(g_display, g_wnd, &g_kill_atom, 1);*/
+
 #ifdef NXDESKTOP_ONEXIT
 	if ((nxdesktop_WM = XInternAtom (g_display, "WM_PROTOCOLS", True)) != None)
 	{
@@ -1782,13 +1804,9 @@ xwin_process_events(void)
 	XEvent xevent;
 	KeySym keysym;
 	uint16 button, flags;
-/* 	uint32 ev_time;*/
 	key_translation tr;
 	char str[256];
 	Status status;
-	/* NX */
-	
-	/* NX */
 
 	/* NX used only to send RDP inputs for which we can't obtain the real X server time */
 	uint32 ev_time = (last_Xtime == 0) ? (uint32)time(NULL): last_Xtime;
@@ -1829,11 +1847,12 @@ xwin_process_events(void)
 		         	sigusr_func(SIGUSR2);
 			}
 	  	}
+		/*
 		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
 		if (xevent.xclient.window == 0 &&
               		xevent.xclient.message_type == 0 &&
               		xevent.xclient.format == 32 &&
-              		(int) xevent.xclient.data.l[0] == NXSyncNotify/*NXKarmaNotify*/)
+              		(int) xevent.xclient.data.l[0] == NXSyncNotify)
           	{
              		nxdesktopSleep = False;
 			#ifdef NXDESKTOP_NXKARMA_DEBUG
@@ -1841,6 +1860,7 @@ xwin_process_events(void)
 			#endif
           	}
 		#endif
+		*/
 		/* NX */
 			
 		switch (xevent.type)
@@ -1852,14 +1872,16 @@ xwin_process_events(void)
 					break;
 			/* NX */
 			
+			/*
 			case ClientMessage:
-				/* the window manager told us to quit */
+				 the window manager told us to quit 
 				if ((xevent.xclient.message_type == g_protocol_atom)
 				    && ((Atom) xevent.xclient.data.l[0] == g_kill_atom))
-					/* Quit */
+					 Quit 
 					return 0;
 				break;
-
+			*/
+			
 			case KeyPress:
 				g_last_gesturetime = xevent.xkey.time;
 				if (g_IC != NULL)
@@ -2200,9 +2222,18 @@ xwin_process_events(void)
 	return 1;
 }
 
+/* NX */
+
+void run_events()
+
+{
+    if (!xwin_process_events())
+	return;
+}
+
 /* Returns 0 after user quit, 1 otherwise */
 int
-ui_select(int rdp_socket, BOOL needKarma)
+ui_select(int rdp_socket)
 {
 	int n = (rdp_socket > g_x_socket) ? rdp_socket : g_x_socket;
 	fd_set rfds, wfds;
@@ -2220,30 +2251,6 @@ ui_select(int rdp_socket, BOOL needKarma)
         XFlush(g_display);
 	#endif
 	#endif
-
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-        if (nxdesktopUseNXTrans && needKarma)
-        {
-/*          NXKarma(g_display, 0);*/
-/*          NXSync(g_display, NXSyncFlush, 0);*/
-
-            NXSync(g_display, NXSyncWaitForLink, 0);
-
-           nxdesktopSleep = True;
-#ifdef NXDESKTOP_NXKARMA_DEBUG
-           fprintf(stderr," NXKarma sent, waiting for wakeup...\n");
-#endif
-           while (nxdesktopSleep)
-           {
-              XEvent x_event;
-              if (XPeekEvent(g_display, &x_event))
-                xwin_process_events();
-           }
-        }
-#endif
-        if (needKarma)
-          return 1;
-	/* NX */
 
 	while (True)
 	{
@@ -2828,7 +2835,7 @@ ui_create_colourmap(COLOURMAP * colours)
 		for (i = 0; i < ncolours; i++)
 		{
 			entry = &colours->colours[i];
-			MAKE_XCOLOR(&(xentry[i]), entry);
+			MAKE_XCOLOR(&xentry[i], entry);
 		}
 		if (NXAllocColors(g_display, g_xcolmap, ncolours, xentry, alloc_done) == 0)
 		{
@@ -2888,17 +2895,15 @@ ui_create_colourmap(COLOURMAP * colours)
 		for (i = 0; i < ncolours; i++)
 		{
 			colour = xentry[i].pixel;
-			#ifdef FALSE
 			/* Part of the matching routine above */
 			/* update our cache */
 			if (xentry[i].pixel < 256)
 			{
-				xc_cache[xentry.pixel].red = xentry.red;
-				xc_cache[xentry.pixel].green = xentry.green;
-				xc_cache[xentry.pixel].blue = xentry.blue;
+				xc_cache[xentry[i].pixel].red = xentry[i].red;
+				xc_cache[xentry[i].pixel].green = xentry[i].green;
+				xc_cache[xentry[i].pixel].blue = xentry[i].blue;
 
 			}
-			#endif
 			map[i] = colour;
 		}
 		
@@ -2974,43 +2979,35 @@ ui_set_colourmap(HCOLOURMAP map)
 	/* NX */
 	if (nxdesktopUseNXTrans)
 	{
-		if (g_owncolmap == 0 &&
-			last_colormap_entries != 0 &&
-				last_colormap != NULL)
+	    if (g_owncolmap == 0 && last_colormap_entries != 0 && last_colormap != NULL)
+	    {
+		int i;
+
+        	if (g_host_be != g_xserver_be && (nx_depth == 16 || nx_depth == 15 || nx_depth == 24 || nx_depth == 32))
 		{
-			int i;
+		    unsigned int *swap_colormap = xmalloc(sizeof(unsigned int) * last_colormap_entries);
 
-                        if (g_host_be != g_xserver_be && (nx_depth == 16 || nx_depth == 15))
-                        {
-                          unsigned int *swap_colormap = xmalloc(sizeof(unsigned int) * last_colormap_entries);
-
-			  for (i = 0; i < last_colormap_entries; i++)
-			  {
-                            swap_colormap[i] = last_colormap[i] << 16;
-                          }
-			  NXSetUnpackColormap(g_display, 0, last_colormap_entries, swap_colormap);
-                          xfree(swap_colormap);
-                        }
-                        else
-                        {
-			  NXSetUnpackColormap(g_display, 0, last_colormap_entries, last_colormap);
-                        }
-
-
-			#ifdef NXDESKTOP_XWIN_DUMP
-
-			fprintf(stderr, "ui_set_colourmap: Dumping colormap entries:\n");
-
-			for (i = 0; i < last_colormap_entries; i++)
-			{
-				fprintf(stderr, "ui_set_colourmap: [%d] [%p].\n",
-						i, (void *) last_colormap[i]);
-			}
-
-			#endif
+		    for (i = 0; i < last_colormap_entries; i++)
+		    {
+            		swap_colormap[i] = last_colormap[i];
+			BSWAP32(swap_colormap[i]);
+            	    }
+		    NXSetUnpackColormap(g_display, 0, last_colormap_entries, swap_colormap);
+            	    xfree(swap_colormap);
+        	}
+    		else
+        	{
+		    NXSetUnpackColormap(g_display, 0, last_colormap_entries, last_colormap);
+        	}
+		#ifdef NXDESKTOP_XWIN_DUMP
+		fprintf(stderr, "ui_set_colourmap: Dumping colormap entries:\n");
+		for (i = 0; i < last_colormap_entries; i++)
+		{
+		    fprintf(stderr, "ui_set_colourmap: [%d] [%p].\n",i, (void *) last_colormap[i]);
 		}
+		#endif
+	    }
 	}
-
 	#endif
 }
 
@@ -3262,9 +3259,9 @@ ui_draw_glyph(int mixmode,
   }\
   if (glyph != NULL)\
   {\
+    XGCValues values;\
     x1 = x + glyph->offset;\
     y1 = y + glyph->baseline;\
-    XGCValues values;\
     memset(&values, 0, sizeof(XGCValues));\
     values.stipple = (Pixmap)glyph->pixmap;\
     values.ts_x_origin = x + (short) glyph->offset;\
