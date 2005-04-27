@@ -39,6 +39,9 @@ case $arg in
   --with-x*)
     extraxdir=$optarg
     ;;
+  --with-openssl-static)
+    withopensslstatic=yes
+    ;;
   --with-openssl*)
     extrassldir=$optarg
     ;;
@@ -106,6 +109,7 @@ case $arg in
     echo " --with-ipv6             enable support for IPv6"
     echo " --without-sound         disable support for sound redirection"
     echo " --with-sound=ARG        only detect sound-support for \"oss\" or \"sun\" (and BSD)"
+    echo " --with-openssl-static   compiles OpenSSL staticly"
     echo
     rm -f Makeconf
     exit 1
@@ -197,7 +201,7 @@ targets="$targets nxdesktop"
 #withoutopenssl not currently supported
 #if [ -z "$withoutopenssl" ]; then
     # Find OpenSSL installation if available
-    ssldirs="$extrassldir /usr/openssl /usr/ssl /usr /usr/local/openssl /usr/local/ssl /usr/local"
+    ssldirs="$extrassldir /usr/openssl /usr/ssl /usr /usr/local/openssl /usr/local/ssl /usr/local /usr/lib"
     
     for dir in $ssldirs; do
     	if [ -f $dir/include/openssl/rc4.h ]; then
@@ -205,6 +209,26 @@ targets="$targets nxdesktop"
     	    break
     	fi
     done
+    
+    if [ "$withopensslstatic" ]; then
+	for dir in $ssldirs; do
+    	    if [ -f $dir/libcrypto.a ]; then
+    		sslstaticdir=$dir
+    		break
+    	    fi
+	done
+	if [ -z "$sslstaticdir" ]; then
+	    echo "ERROR: could not find OpenSSL static lib"
+	    # additional helpful information for Linux users
+	    if [ -f /etc/redhat-release ]; then
+		echo You probably need to install the openssl-devel-static package
+	    elif [ -f /etc/debian_version ]; then
+		echo You probably need to install the libssl-dev-static package
+	    fi
+	exit 1
+	fi
+    fi
+    
     
     if [ -z "$ssldir" ]; then
 	echo "ERROR: could not find OpenSSL headers"
@@ -219,8 +243,14 @@ targets="$targets nxdesktop"
     else
     	echo "OpenSSL:"
     	echo "  includes  $ssldir/include"
-    	echo "  libraries $ssldir/lib"
-    	echo
+	if [ "$sslstaticdir" ]; then
+	    echo "  static libraries $sslstaticdir"
+	    ldflags="$ldflags $sslstaticdir/libcrypto.a"
+	else
+	    echo "  libraries $ssldir/lib"
+	    ldflags="$ldflags -lcrypto"
+	fi
+	echo
     
     	echo "CRYPTOBJ    =" >>Makeconf
     
@@ -231,7 +261,6 @@ targets="$targets nxdesktop"
     	fi
     
     	cflags="$cflags -DWITH_OPENSSL"
-    	ldflags="$ldflags -lcrypto"
     fi
 #fi
     
@@ -365,6 +394,7 @@ case `uname -s` in
 esac
 
 
+cflags="$cflags -DHAVE_DECL_DIRFD"
 echo "CFLAGS      = $cflags" >>Makeconf
 echo "LDFLAGS     = $ldflags" >>Makeconf
 echo "TARGETS     = $targets" >>Makeconf

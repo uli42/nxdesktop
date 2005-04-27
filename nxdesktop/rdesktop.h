@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Master include file
-   Copyright (C) Matthew Chapman 1999-2004
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -39,6 +39,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include <sys/time.h>
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#else
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 #define VERSION "1.3.1"
 
@@ -52,7 +59,8 @@
 #undef NXDESKTOP_ORDERS_DEBUG
 #undef NXDESKTOP_PARAM_DEBUG
 
-#undef WITH_DEBUG
+#undef NXDESKTOP_ENABLE_MASK_PROCESSING
+#define NXDESKTOP_FWINDOW_DEBUG
 
 #ifdef WITH_DEBUG
 #define DEBUG(args)	printf args;
@@ -99,6 +107,12 @@
 #error Unknown endianness. Edit rdesktop.h.
 #endif
 #endif /* B_ENDIAN, L_ENDIAN from configure */
+
+/* Temporary NEED_ALIGN for alpha, should be properly detected
+   by configure in the future */
+#if defined(__alpha__)
+#define NEED_ALIGN
+#endif
 
 #include "parse.h"
 #include "constants.h"

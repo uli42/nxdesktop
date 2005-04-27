@@ -1,6 +1,6 @@
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -24,8 +24,8 @@ void cache_save_state(void);
 FONTGLYPH *cache_get_font(uint8 font, uint16 character);
 void cache_put_font(uint8 font, uint16 character, uint16 offset, uint16 baseline, uint16 width,
 		    uint16 height, HGLYPH pixmap);
-DATABLOB *cache_get_text(uint16 cache_id);
-void cache_put_text(uint16 cache_id, void *data, int length);
+DATABLOB *cache_get_text(uint8 cache_id);
+void cache_put_text(uint8 cache_id, void *data, int length);
 uint8 *cache_get_desktop(uint32 offset, int cx, int cy, int bytes_per_pixel);
 void cache_put_desktop(uint32 offset, int cx, int cy, int scanline, int bytes_per_pixel,
 		       uint8 * data);
@@ -45,10 +45,12 @@ void cliprdr_send_data(uint8 * data, uint32 length);
 BOOL cliprdr_init(void);
 /* disk.c */
 int disk_enum_devices(uint32 * id, char *optarg);
-NTSTATUS disk_query_information(HANDLE handle, uint32 info_class, STREAM out);
-NTSTATUS disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out);
-NTSTATUS disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out);
-NTSTATUS disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out);
+NTSTATUS disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out);
+NTSTATUS disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out);
+NTSTATUS disk_query_volume_information(NTHANDLE handle, uint32 info_class, STREAM out);
+NTSTATUS disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM out);
+NTSTATUS disk_create_notify(NTHANDLE handle, uint32 info_class);
+NTSTATUS disk_check_notify(NTHANDLE handle);
 /* mppc.c */
 int mppc_expand(uint8 * data, uint32 clen, uint8 ctype, uint32 * roff, uint32 * rlen);
 /* ewmhints.c */
@@ -130,7 +132,7 @@ BOOL rdp_connect(char *server, uint32 flags, char *domain, char *password, char 
 BOOL test_rdp_connect(char *server);
 void rdp_disconnect(void);
 /* rdpdr.c */
-int get_device_index(HANDLE handle);
+int get_device_index(NTHANDLE handle);
 void convert_to_unix_filename(char *filename);
 BOOL rdpdr_init(void);
 void rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * timeout);
@@ -164,9 +166,9 @@ STREAM sec_recv(uint8 * rdpver);
 BOOL sec_connect(char *server, char *username);
 void sec_disconnect(void);
 /* serial.c */
-BOOL serial_get_timeout(uint32 handle, uint32 length, uint32 * timeout, uint32 * itv_timeout);
 int serial_enum_devices(uint32 * id, char *optarg);
-BOOL serial_get_timeout(HANDLE handle, uint32 length, uint32 * timeout, uint32 * itv_timeout);
+BOOL serial_get_timeout(NTHANDLE handle, uint32 length, uint32 * timeout, uint32 * itv_timeout);
+BOOL serial_get_event(NTHANDLE handle, uint32 * result);
 /* tcp.c */
 STREAM tcp_init(uint32 maxlen);
 void tcp_send(STREAM s);
@@ -198,6 +200,7 @@ void ui_begin_update(void);
 void ui_end_update(void);
 BOOL get_key_state(unsigned int state, uint32 keysym);
 BOOL ui_init(void);
+BOOL ui_init_nx(void);
 void ui_deinit(void);
 BOOL ui_create_window(void);
 void ui_resize_window(void);
@@ -244,6 +247,8 @@ void ui_ellipse(uint8 opcode, uint8 fillmode, int x, int y, int cx, int cy, BRUS
  		int bgcolour, int fgcolour);
 /* NX */
 void flush_rects();
+HBITMAP create_mask(HBITMAP bitmap, int sx, int sy, int w, int h);
+void put_mask(HBITMAP bitmap, int srcx, int srcy, int x, int y, int w, int h);
 /* NX */
 void ui_draw_glyph(int mixmode, int x, int y, int cx, int cy, HGLYPH glyph, int srcx, int srcy,
 		   int bgcolour, int fgcolour);
@@ -252,3 +257,10 @@ void ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y, int clipx,
 		  int fgcolour, uint8 * text, uint8 length);
 void ui_desktop_save(uint32 offset, int x, int y, int cx, int cy);
 void ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy);
+
+BOOL fwindow_register(void);
+void fwindow_init(void);
+
+
+
+

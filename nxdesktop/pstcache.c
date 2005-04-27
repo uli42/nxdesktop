@@ -18,11 +18,28 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include "rdesktop.h"
 
 #define MAX_CELL_SIZE		0x1000	/* pixels */
 
-#define IS_PERSISTENT(id) (g_pstcache_fd[id] > 0)
+#define IS_PERSISTENT(id) (id < 8 && g_pstcache_fd[id] > 0)
 
 extern int g_server_bpp;
 extern uint32 g_stamp;
@@ -44,7 +61,7 @@ pstcache_touch_bitmap(uint8 cache_id, uint16 cache_idx, uint32 stamp)
 {
 	int fd;
 
-	if (!IS_PERSISTENT(cache_id))
+	if (!IS_PERSISTENT(cache_id) || cache_idx >= BMPCACHE2_NUM_PSTCELLS)
 		return;
 
 	fd = g_pstcache_fd[cache_id];
@@ -61,7 +78,10 @@ pstcache_load_bitmap(uint8 cache_id, uint16 cache_idx)
 	CELLHEADER cellhdr;
 	HBITMAP bitmap;
 
-	if (!(g_bitmap_cache_persist_enable && IS_PERSISTENT(cache_id)))
+	if (!g_bitmap_cache_persist_enable)
+		return False;
+
+	if (!IS_PERSISTENT(cache_id) || cache_idx >= BMPCACHE2_NUM_PSTCELLS)
 		return False;
 
 	fd = g_pstcache_fd[cache_id];
@@ -94,7 +114,7 @@ pstcache_put_bitmap(uint8 cache_id, uint16 cache_idx, uint8 * bitmap_id,
 	int fd;
 	CELLHEADER cellhdr;
 
-	if (!IS_PERSISTENT(cache_id))
+	if (!IS_PERSISTENT(cache_id) || cache_idx >= BMPCACHE2_NUM_PSTCELLS)
 		return False;
 
 	memcpy(cellhdr.bitmap_id, bitmap_id, sizeof(BITMAP_ID));

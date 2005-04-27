@@ -1,7 +1,7 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - Multipoint Communications Service
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -174,7 +174,7 @@ mcs_recv_connect_response(STREAM mcs_data)
 
 	s = iso_recv(NULL);
 	if (s == NULL)
-	    return False;
+		return False;
 
 	ber_parse_header(s, MCS_CONNECT_RESPONSE, &length);
 

@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Common data types
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -193,19 +193,19 @@ RDPCOMP;
 
 /* RDPDR */
 typedef uint32 NTSTATUS;
-typedef uint32 HANDLE;
+typedef uint32 NTHANDLE;
 
 typedef struct _DEVICE_FNS
 {
 	NTSTATUS(*create) (uint32 device, uint32 desired_access, uint32 share_mode,
 			   uint32 create_disposition, uint32 flags_and_attributes, char *filename,
-			   HANDLE * handle);
-	NTSTATUS(*close) (HANDLE handle);
-	NTSTATUS(*read) (HANDLE handle, uint8 * data, uint32 length, uint32 offset,
+			   NTHANDLE * handle);
+	NTSTATUS(*close) (NTHANDLE handle);
+	NTSTATUS(*read) (NTHANDLE handle, uint8 * data, uint32 length, uint32 offset,
 			 uint32 * result);
-	NTSTATUS(*write) (HANDLE handle, uint8 * data, uint32 length, uint32 offset,
+	NTSTATUS(*write) (NTHANDLE handle, uint8 * data, uint32 length, uint32 offset,
 			  uint32 * result);
-	NTSTATUS(*device_control) (HANDLE handle, uint32 request, STREAM in, STREAM out);
+	NTSTATUS(*device_control) (NTHANDLE handle, uint32 request, STREAM in, STREAM out);
 }
 DEVICE_FNS;
 
@@ -213,7 +213,7 @@ DEVICE_FNS;
 typedef struct rdpdr_device_info
 {
 	uint32 device_type;
-	HANDLE handle;
+	NTHANDLE handle;
 	char name[8];
 	char *local_path;
 	void *pdevice_data;
@@ -224,6 +224,7 @@ typedef struct rdpdr_serial_device_info
 {
 	int dtr;
 	int rts;
+	uint32 control, xonoff, onlimit, offlimit;
 	uint32 baud_rate,
 		queue_in_size,
 		queue_out_size,
@@ -233,7 +234,9 @@ typedef struct rdpdr_serial_device_info
 		read_total_timeout_constant,
 		write_total_timeout_multiplier, write_total_timeout_constant, posix_wait_mask;
 	uint8 stop_bits, parity, word_length;
+	uint8 chars[6];
 	struct termios *ptermios, *pold_termios;
+	int event_txempty, event_cts, event_dsr, event_rlsd, event_pending;
 }
 SERIAL_DEVICE;
 
@@ -262,13 +265,24 @@ typedef struct rdpdr_printer_info
 }
 PRINTER;
 
+typedef struct notify_data
+{
+	time_t modify_time;
+	time_t status_time;
+	time_t total_time;
+	unsigned int num_entries;
+}
+NOTIFY;
+
 typedef struct fileinfo
 {
-	uint32 device_id, flags_and_attributes;
+	uint32 device_id, flags_and_attributes, accessmask;
 	char path[256];
 	DIR *pdir;
 	struct dirent *pdirent;
 	char pattern[64];
 	BOOL delete_on_close;
+	NOTIFY notify;
+	uint32 info_class;
 }
 FILEINFO;

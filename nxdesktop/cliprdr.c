@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -153,6 +153,8 @@ cliprdr_process(STREAM s)
 			break;
 		case CLIPRDR_DATA_RESPONSE:
 			ui_clip_handle_data(data, length);
+			break;
+		case 7: /* Caused by SP1 on windows 2003. Unused for now. */
 			break;
 		default:
 			unimpl("cliprdr_process","CLIPRDR packet type %d\n", type);

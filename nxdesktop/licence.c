@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    RDP licensing negotiation
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -44,7 +44,7 @@
 #endif
 
 extern char g_username[16];
-extern char hostname[16];
+extern char g_hostname[16];
 
 static uint8 g_licence_key[16];
 static uint8 g_licence_sign_key[16];
@@ -73,7 +73,7 @@ static void
 licence_generate_hwid(uint8 * hwid)
 {
 	buf_out_uint32(hwid, 2);
-	strncpy((char *) (hwid + 4), hostname, LICENCE_HWID_SIZE - 4);
+	strncpy((char *) (hwid + 4), g_hostname, LICENCE_HWID_SIZE - 4);
 }
 
 /* Present an existing licence to the server */
@@ -191,7 +191,7 @@ licence_process_demand(STREAM s)
 		return;
 	}
 
-	licence_send_request(null_data, null_data, g_username, hostname);
+	licence_send_request(null_data, null_data, g_username, g_hostname);
 }
 
 /* Send an authentication response packet */

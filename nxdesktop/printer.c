@@ -1,6 +1,6 @@
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -20,7 +20,7 @@
 extern RDPDR_DEVICE g_rdpdr_device[];
 
 static PRINTER *
-get_printer_data(HANDLE handle)
+get_printer_data(NTHANDLE handle)
 {
 	int index;
 
@@ -100,7 +100,7 @@ printer_enum_devices(uint32 * id, char *optarg)
 
 static NTSTATUS
 printer_create(uint32 device_id, uint32 access, uint32 share_mode, uint32 disposition, uint32 flags,
-	       char *filename, HANDLE * handle)
+	       char *filename, NTHANDLE * handle)
 {
 	char cmd[256];
 	PRINTER *pprinter_data;
@@ -124,7 +124,7 @@ printer_create(uint32 device_id, uint32 access, uint32 share_mode, uint32 dispos
 }
 
 static NTSTATUS
-printer_close(HANDLE handle)
+printer_close(NTHANDLE handle)
 {
 	int i = get_device_index(handle);
 	if (i >= 0)
@@ -138,7 +138,7 @@ printer_close(HANDLE handle)
 }
 
 static NTSTATUS
-printer_write(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
+printer_write(NTHANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
 {
 	PRINTER *pprinter_data;
 

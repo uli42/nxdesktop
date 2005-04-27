@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - TCP layer
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -71,7 +71,7 @@ static BOOL sock_done = False;
 static int sock;
 static struct stream in;
 static struct stream out;
-extern int tcp_port_rdp;
+int g_tcp_port_rdp = TCP_PORT_RDP;
 extern BOOL nxdesktopUseNXTrans;
 /* NX */
 char errorMsg[512];
@@ -82,6 +82,7 @@ extern char windowName[255];
 
 extern int  nxdesktopStopKarmaSz;
 static long bytesFromLastKarma = 0;
+static struct sigaction sigact;
 
 #ifdef NXDESKTOP_TCP_DEBUG
 static unsigned long tcpRead;
@@ -124,7 +125,10 @@ tcp_send(STREAM s)
 
 	while (total < length)
 	{
+		alarm(30);
 		sent = send(sock, s->data + total, length - total, 0);
+		alarm(0);
+		
 		if (sent <= 0)
 		{
 			error("tcp_send: %s\n", strerror(errno));
@@ -167,7 +171,7 @@ tcp_recv(STREAM s, uint32 length)
 #ifdef NXDESKTOP_TCP_DEBUG
 	int kiloRead = tcpRead / 1024;
 #endif
-
+	
 	if (s == NULL)
 	{
 		/* read into "new" stream */
@@ -178,7 +182,6 @@ tcp_recv(STREAM s, uint32 length)
 		}
 		in.end = in.p = in.data;
 		s = &in;
-		
 	}
 	else
 	{
@@ -197,14 +200,16 @@ tcp_recv(STREAM s, uint32 length)
 
 	while (length > 0)
 	{
-		if (!ui_select(sock))
-		    {
-		    /* User quit */
-		    return NULL;
-		    s = NULL;
-		    }
+	    if (!ui_select(sock))
+	    {
+		/* User quit */
+		return NULL;
+		s = NULL;
+	    }
 
+		alarm(30);
 		rcvd = recv(sock, s->end, length, 0);
+		alarm(0);
 		
 		if (rcvd < 0)
 		{
@@ -283,7 +288,7 @@ BOOL
 tcp_connect(char *server)
 {
 	int true_value = 1;
-	struct sigaction sigact;
+	
 
 #ifdef IPv6
 
@@ -299,9 +304,7 @@ tcp_connect(char *server)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	n = getaddrinfo(server, tcp_port_rdp_s, &hints, &res);
-
-	if (n < 0)
+	if ((n = getaddrinfo(server, tcp_port_rdp_s, &hints, &res)))
 	{
 		error("getaddrinfo failed: %s\n", gai_strerror(n));
 		return False;
@@ -367,7 +370,7 @@ tcp_connect(char *server)
 	}
 
 	servaddr.sin_family = AF_INET;
-	servaddr.sin_port = htons(tcp_port_rdp);
+	servaddr.sin_port = htons(g_tcp_port_rdp);
 	
 	/* NX */
 	sigaction(SIGALRM, NULL, &sigact);
@@ -375,7 +378,7 @@ tcp_connect(char *server)
 	sigact.sa_flags &= ~SA_RESTART;
 	sigaction(SIGALRM, &sigact, NULL); 
 
-	alarm(30);
+	//alarm(30);
 	/* NX */
 
 	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
@@ -449,7 +452,7 @@ tcp_get_address()
 {
 	static char ipaddr[32];
 	struct sockaddr_in sockaddr;
-	size_t len = sizeof(sockaddr);
+	socklen_t len = sizeof(sockaddr);
 	if (getsockname(sock, (struct sockaddr *) &sockaddr, &len) == 0)
 	{
 		unsigned char *ip = (unsigned char *) &sockaddr.sin_addr;
@@ -474,5 +477,8 @@ tcp_resize_buf(int fd, int sense, int size)
 void
 AlarmHandler(int signal)
 {
+    error("Connection timed out. Session closing\n");
+    alarm(0);
+    exit(1);
 }
 /* NX */

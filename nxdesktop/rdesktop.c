@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2004 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -47,6 +47,7 @@
 #include <errno.h>
 #include "rdesktop.h"
 #include "version.h"
+#include "proto.h"
 
 #ifdef EGD_SOCKET
 #include <sys/socket.h>		/* socket connect */
@@ -61,9 +62,9 @@
 
 char g_title[256] = "";
 char g_username[64];
-char hostname[16];
-char keymapname[16] = "";
-int keylayout = 0x409;		/* Defaults to US keyboard layout */
+char g_hostname[16];
+char keymapname[16];
+int g_keylayout = 0x409;	/* Defaults to US keyboard layout */
 
 int g_width = 800;		/* width is special: If 0, the
 				   geometry will be fetched from
@@ -71,7 +72,9 @@ int g_width = 800;		/* width is special: If 0, the
 				   absolute value specifies the
 				   percent of the whole screen. */
 int g_height = 600;
-int tcp_port_rdp = TCP_PORT_RDP;
+int g_xpos = 0;
+int g_ypos = 0;
+extern int g_tcp_port_rdp;
 int g_server_bpp = 8;
 int g_win_button_size = 0;	/* If zero, disable single app mode */
 BOOL g_bitmap_compression = True;
@@ -87,10 +90,12 @@ BOOL g_grab_keyboard = True;
 BOOL g_hide_decorations = False;
 /* NX */
 BOOL g_use_rdp5 = True;
-BOOL rdp_img_cache = True;
+BOOL rdp_img_cache = False;
 BOOL rdp_img_cache_nxcompressed = False;
 BOOL username_option = False;
 BOOL prompt_password = False;
+BOOL float_window_mode = False;
+BOOL viewport_mode = False;
 /* NX */
 BOOL g_console_session = False;
 BOOL g_numlock_sync = False;
@@ -139,12 +144,12 @@ char nxDisplay[255];
 BOOL ipaq = False;
 BOOL magickey = True;
 extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
-int xo;
-int yo;
+int xo = 0;
+int yo = 0;
 char windowName[255];
 char passwordFile[255];
 int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
-
+char domain[16];
 
 /* end NX mods */
 
@@ -153,7 +158,7 @@ static void
 usage(char *program)
 {
 	fprintf(stderr, "rdesktop: A Remote Desktop Protocol client.\n");
-	fprintf(stderr, "Version " VERSION ". Copyright (C) 1999-2003 Matt Chapman.\n");
+	fprintf(stderr, "Version " VERSION ". Copyright (C) 1999-2005 Matt Chapman.\n");
 	fprintf(stderr, "See http://www.rdesktop.org/ for more information.\n\n");
 
 	fprintf(stderr, "Usage: %s [options] server[:port]\n", program);
@@ -209,6 +214,7 @@ usage(char *program)
 	fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
 	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n", rdp_bufsize);
 	fprintf(stderr, "   -kbtype: inform the local keyboard type\n");
+	fprintf(stderr, "   -F: Activate floating-window mode\n");
 }
 
 void
@@ -368,7 +374,7 @@ parse_server_and_port(char *server)
 		if (*server == '[' && p != NULL)
 		{
 			if (*(p + 1) == ':' && *(p + 2) != '\0')
-				tcp_port_rdp = strtol(p + 2, NULL, 10);
+				g_tcp_port_rdp = strtol(p + 2, NULL, 10);
 			/* remove the port number and brackets from the address */
 			*p = '\0';
 			strncpy(server, server + 1, strlen(server));
@@ -380,7 +386,7 @@ parse_server_and_port(char *server)
 		p = strchr(server, ':');
 		if (p != NULL)
 		{
-			tcp_port_rdp = strtol(p + 1, NULL, 10);
+			g_tcp_port_rdp = strtol(p + 1, NULL, 10);
 			*p = 0;
 		}
 	}
@@ -388,7 +394,7 @@ parse_server_and_port(char *server)
 	p = strchr(server, ':');
 	if (p != NULL)
 	{
-		tcp_port_rdp = strtol(p + 1, NULL, 10);
+		g_tcp_port_rdp = strtol(p + 1, NULL, 10);
 		*p = 0;
 	}
 #endif /* IPv6 */
@@ -398,7 +404,6 @@ parse_server_and_port(char *server)
 /* Client program */
 int
 main(int argc, char *argv[])
-
 {
 	char server[64];
 	char fullhostname[64];
@@ -437,7 +442,7 @@ main(int argc, char *argv[])
 	#ifdef NXDESKTOP_PARAM_DEBUG
 	for (i = 1;i<argc; i++)
 	{
-	    nxdesktopDebug("Paramenters first phase","'%i' '%s'\n",i,argv[i]);
+	    nxdesktopDebug("Parameters first phase","'%i' '%s'\n",i,argv[i]);
 	}
 	#endif
 	nx_argv[0] = argv[0];
@@ -469,7 +474,7 @@ main(int argc, char *argv[])
 	    nxdesktopDebug("Parameters second phase","'%i' '%s'\n",i,nx_argv[i]);
 	#endif
 	
-	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?")) != -1)
+	while ((c = getopt(nx_argc, nx_argv, VNCOPT "u:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?F")) != -1)
 	{
 		switch (c)
 		{
@@ -522,7 +527,7 @@ main(int argc, char *argv[])
 				break;
 
 			case 'n':
-				STRNCPY(hostname, optarg, sizeof(hostname));
+				STRNCPY(g_hostname, optarg, sizeof(g_hostname));
 				break;
 
 			case 'k':
@@ -545,7 +550,7 @@ main(int argc, char *argv[])
 				}
 
 				if (*p == 'x')
-					g_height = strtol(p + 1, NULL, 10);
+					g_height = strtol(p + 1, &p, 10);
 
 				if (g_height <= 0)
 				{
@@ -554,7 +559,16 @@ main(int argc, char *argv[])
 				}
 
 				if (*p == '%')
+				{
 					g_width = -g_width;
+					p++;
+				}
+
+				if (*p == '+' || *p == '-')
+					g_xpos = strtol(p, &p, 10);
+
+				if (*p == '+' || *p == '-')
+					g_ypos = strtol(p, NULL, 10);
 
 				break;
 
@@ -649,7 +663,6 @@ main(int argc, char *argv[])
 				break;
 
 			case 'x':
-
 				if (strncmp("modem", optarg, 1) == 0)
 				{
 					g_rdp5_performanceflags =
@@ -692,14 +705,14 @@ main(int argc, char *argv[])
 #ifdef WITH_RDPSND
 								g_rdpsnd = True;
 #else
-								warning("Not compiled with sound support");
+								warning("Not compiled with sound support\n");
 #endif
 
 							if (strncmp("off", optarg, 3) == 0)
 #ifdef WITH_RDPSND
 								g_rdpsnd = False;
 #else
-								warning("Not compiled with sound support");
+								warning("Not compiled with sound support\n");
 #endif
 
 							optarg = p;
@@ -710,7 +723,7 @@ main(int argc, char *argv[])
 #ifdef WITH_RDPSND
 						g_rdpsnd = True;
 #else
-						warning("Not compiled with sound support");
+						warning("Not compiled with sound support\n");
 #endif
 					}
 				}
@@ -770,6 +783,11 @@ main(int argc, char *argv[])
 					rdp_bufsize = 1024;
 				}
 				break;
+			case 'F':
+				float_window_mode = True;
+				g_rdp5_performanceflags = 0x6D; /* Disable all eye candy but the full window drag */
+				g_hide_decorations = True;
+				break;
 			/* End NX options */
 			case 'h':
 			case '?':
@@ -800,7 +818,7 @@ main(int argc, char *argv[])
 		STRNCPY(g_username, pw->pw_name, sizeof(g_username));
 	}
 
-	if (hostname[0] == 0)
+	if (g_hostname[0] == 0)
 	{
 		if (gethostname(fullhostname, sizeof(fullhostname)) == -1)
 		{
@@ -812,7 +830,7 @@ main(int argc, char *argv[])
 		if (p != NULL)
 			*p = 0;
 
-		STRNCPY(hostname, fullhostname, sizeof(hostname));
+		STRNCPY(g_hostname, fullhostname, sizeof(g_hostname));
 	}
 	/* read the passwordfile or fallback to the prompt or standard comandline option */
 	if (passwordFile[0] == 0)
@@ -865,7 +883,17 @@ main(int argc, char *argv[])
 		rdpsnd_init();
 #endif
 	rdpdr_init();
-
+	
+	if (float_window_mode)
+	{
+	    if (fwindow_register())
+		#ifdef NXDESKTOP_FWINDOW_DEBUG    
+		nxdesktopDebug("main loop:","CLIPPER channel registered.\n");
+		#endif
+	    else
+		error("main loop: ","CLIPPER channel not registered.\n");
+	    fwindow_init();
+	}
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
 		error("Connection to RDP server '%s' failed.\n",server);
@@ -887,7 +915,7 @@ main(int argc, char *argv[])
 		g_encryption = False;
 	
 	/* NX */
-	info("Connected to RDP server '%s'\n",server);
+	info("Connected to RDP server '%s'.\n",server);
 	
 	info("Color depth %d.\n",g_server_bpp);
 	/* NX */
@@ -896,9 +924,10 @@ main(int argc, char *argv[])
 	memset(password, 0, sizeof(password));
 	
 	if (ui_create_window())
-	{	
+	{
 	    /* NX */
 	    if (ipaq) RunOrKillNXkbd();
+	    
 	    /* NX */
 	    rdp_main_loop(&deactivated, &ext_disc_reason);
 	    if (ipaq) RunOrKillNXkbd();
@@ -907,7 +936,8 @@ main(int argc, char *argv[])
 
 	DEBUG(("Disconnecting...\n"));
 	rdp_disconnect();
-	info("Disconnecting from RDP server '%s'\n",server);
+	cache_save_state();	
+	info("Disconnecting from RDP server '%s'.\n",server);
 	ui_deinit();
 
 	if (ext_disc_reason >= 2)
@@ -1037,7 +1067,11 @@ xmalloc(int size)
 void *
 xrealloc(void *oldmem, int size)
 {
-	void *mem = realloc(oldmem, size);
+	void *mem;
+
+	if (size < 1)
+		size = 1;
+	mem = realloc(oldmem, size);
 	if (mem == NULL)
 	{
 		error("xrealloc %d\n", size);
@@ -1275,8 +1309,8 @@ load_licence(unsigned char **data)
 	if (home == NULL)
 		return -1;
 
-	path = (char *) xmalloc(strlen(home) + strlen(hostname) + sizeof("/.rdesktop/licence."));
-	sprintf(path, "%s/.rdesktop/licence.%s", home, hostname);
+	path = (char *) xmalloc(strlen(home) + strlen(g_hostname) + sizeof("/.rdesktop/licence."));
+	sprintf(path, "%s/.rdesktop/licence.%s", home, g_hostname);
 
 	fd = open(path, O_RDONLY);
 	if (fd == -1)
@@ -1302,7 +1336,7 @@ save_licence(unsigned char *data, int length)
 	if (home == NULL)
 		return;
 
-	path = (char *) xmalloc(strlen(home) + strlen(hostname) + sizeof("/.rdesktop/licence."));
+	path = (char *) xmalloc(strlen(home) + strlen(g_hostname) + sizeof("/.rdesktop/licence."));
 
 	sprintf(path, "%s/.rdesktop", home);
 	if ((mkdir(path, 0700) == -1) && errno != EEXIST)
@@ -1313,7 +1347,7 @@ save_licence(unsigned char *data, int length)
 
 	/* write licence to licence.hostname.new, then atomically rename to licence.hostname */
 
-	sprintf(path, "%s/.rdesktop/licence.%s", home, hostname);
+	sprintf(path, "%s/.rdesktop/licence.%s", home, g_hostname);
 	tmppath = (char *) xmalloc(strlen(path) + sizeof(".new"));
 	strcpy(tmppath, path);
 	strcat(tmppath, ".new");
@@ -1645,11 +1679,17 @@ char *argv[];
     {
 	return 1;
     }
+    
+    if (!strcmp(argv[i], "-domain"))
+    {
+	strncpy(domain,(char *)argv[i+1],strlen((char *)argv[i+1]));
+	return 2;
+    }
 
     if (!strcmp(argv[i], "-keyboard"))
     {
-	keylayout = strtol(argv[i+1], NULL, 16);
-        if (keylayout == 0)
+	g_keylayout = strtol(argv[i+1], NULL, 16);
+        if (g_keylayout == 0)
         {
            error("Invalid keyboard layout\n");
         }
@@ -1735,9 +1775,6 @@ char *argv[];
 		    value=strchr(value,'/');
 		    value++;
 		    
-		    /* THIS IS DANGEROUS AND JUST A PATCH UNTIL FINAL NXSERVER DOES USES FINAL KBTYPE FORMAT */
-		    /* value[strlen(value)-7]='\0'; */
-		    
 		    for (j=1; j<=NUM_KEYMAPS; j++)
 		    {
 			if (!strcmp(value, keyboard_defs[j].xkb_name))
@@ -1787,6 +1824,9 @@ char *argv[];
 		
 		if (!strcmp(command, "type"))
 		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("type ","%s\n",value);
+		    #endif
 		    if (strcmp(value, "windows"))
 			{
 			    error("agentArgument: session type is not windows.\n");
@@ -1796,7 +1836,51 @@ char *argv[];
 			}
 		}
 		
-		free(command);
+		if (!strcmp(command, "rdpcolors"))
+		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("rdpcolors ","%s\n",value);
+		    #endif
+		    if (!strcmp(value,"256"))
+			g_server_bpp = 8;
+		    else 
+		    if (!strcmp(value,"32K"))
+			g_server_bpp = 15;
+		    else
+		    if (!strcmp(value,"64K"))
+			g_server_bpp = 16;
+		    else
+		    if (!strcmp(value,"16M"))
+			g_server_bpp = 24;
+		    else
+		    {
+			warning("agentArgument: session depth %d is invalid. Using 8 bpp (256 colors).\n",value);
+			g_server_bpp = 8;
+		    }
+		}
+		
+		if (!strcmp(command, "domain"))
+		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("domain ","%s\n",value);
+		    #endif
+		    STRNCPY(domain, value, sizeof(domain));
+		}
+		
+		if (!strcmp(command, "rdpcache"))
+		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("rdpcache ","%s\n",value);
+		    #endif
+		    if (!strcmp(value,"0"))
+		    {
+			rdp_img_cache = False;
+			rdp_img_cache_nxcompressed = False;
+		    }
+		}
+		
+		if (command)
+		    free(command);
 	    }
 	} while(aux);
 	
@@ -1982,7 +2066,7 @@ void InitKeyboardsList(void)
 
 void NXTranslateKeymap()
 {
-    switch(keylayout)
+    switch(g_keylayout)
     {
 	case 0x0401: strcpy(keymapname, "ar"); break;
 	case 0x0406: strcpy(keymapname, "da"); break;
@@ -2018,7 +2102,7 @@ void NXTranslateKeymap()
 	case 0x041d: strcpy(keymapname, "sv"); break;
 	case 0x041e: strcpy(keymapname, "th"); break;
 	case 0x041f: strcpy(keymapname, "tr"); break;
-	default: warning("unknown keyboard layout [%X].\n", keylayout);
+	default: warning("unknown keyboard layout [%X].\n", g_keylayout);
     }
     DEBUG_KBD(("keymapname is [%s].\n", keymapname));
 }
@@ -2030,7 +2114,7 @@ void ShowHeaderInfo(void)
 {
     fprintf(stderr,"\nNXDESKTOP - Version %i.%i.%i\n\n",NXDESKTOP_MAJOR_VERSION,NXDESKTOP_MINOR_VERSION,NXDESKTOP_RELEASE);
     fprintf(stderr,"Remote Desktop Protocol client for NX.\n");
-    fprintf(stderr,"Copyright (C) 2001, 2004 NoMachine.\n");
+    fprintf(stderr,"Copyright (C) 2001, 2005 NoMachine.\n");
     fprintf(stderr,"See http://www.nomachine.com/ for more information.\n\n");
     fprintf(stderr,"Based on rdesktop version "VERSION"\n");
     fprintf(stderr,"Copyright (C) 1999-2003 Matt Chapman.\n");

@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -35,17 +35,8 @@
 /*                                                                        */
 /**************************************************************************/
 
+#include "rdesktop.h"
 #include "disk.h"
-
-#if (defined(sun) && (defined(__svr4__) || defined(__SVR4)))
-#define SOLARIS
-#endif
-
-#if (defined(SOLARIS) || defined(__hpux))
-#define DIRFD(a) ((a)->dd_fd)
-#else
-#define DIRFD(a) (dirfd(a))
-#endif
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -58,6 +49,16 @@
 #include <utime.h>
 #include <time.h>		/* ctime */
 
+#if (defined(HAVE_DIRFD) || (HAVE_DECL_DIRFD == 1))
+#define DIRFD(a) (dirfd(a))
+#else
+#define DIRFD(a) ((a)->DIR_FD_MEMBER_NAME)
+#endif
+
+/* TODO: let autoconf figure out everything below... */
+#if (defined(sun) && (defined(__svr4__) || defined(__SVR4)))
+#define SOLARIS
+#endif
 
 #if (defined(SOLARIS) || defined (__hpux) || defined(__BEOS__))
 #include <sys/statvfs.h>	/* solaris statvfs */
@@ -69,12 +70,25 @@
 #define STATFS_T statvfs
 #define F_NAMELEN(buf) ((buf).f_namemax)
 
-#elif (defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__))
+#elif (defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(__APPLE__))
 #include <sys/param.h>
 #include <sys/mount.h>
 #define STATFS_FN(path, buf) (statfs(path,buf))
 #define STATFS_T statfs
 #define F_NAMELEN(buf) (NAME_MAX)
+
+#elif (defined(__SGI_IRIX__))
+#include <sys/types.h>
+#include <sys/statvfs.h>
+#define STATFS_FN(path, buf) (statvfs(path,buf))
+#define STATFS_T statvfs
+#define F_NAMELEN(buf) ((buf).f_namemax)
+
+#elif (defined(__alpha) && !defined(linux))
+#include <sys/mount.h>		/* osf1 statfs */
+#define STATFS_FN(path, buf) (statfs(path,buf,sizeof(buf)))
+#define STATFS_T statfs
+#define F_NAMELEN(buf) (255)
 
 #else
 #include <sys/vfs.h>		/* linux statfs */
@@ -86,11 +100,10 @@
 #define F_NAMELEN(buf) ((buf).f_namelen)
 #endif
 
-#include "rdesktop.h"
-
 extern RDPDR_DEVICE g_rdpdr_device[];
 
 FILEINFO g_fileinfo[MAX_OPEN_FILES];
+BOOL g_notify_stamp = False;
 
 typedef struct
 {
@@ -100,6 +113,7 @@ typedef struct
 	char type[256];
 } FsInfoType;
 
+static NTSTATUS NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p);
 
 static time_t
 get_create_time(struct stat *st)
@@ -142,6 +156,115 @@ convert_1970_to_filetime(uint32 high, uint32 low)
 
 }
 
+/* A wrapper for ftruncate which supports growing files, even if the
+   native ftruncate doesn't. This is needed on Linux FAT filesystems,
+   for example. */
+static int
+ftruncate_growable(int fd, off_t length)
+{
+	int ret;
+	off_t pos;
+	static const char zero;
+
+	/* Try the simple method first */
+	if ((ret = ftruncate(fd, length)) != -1)
+	{
+		return ret;
+	}
+
+	/* 
+	 * Some kind of error. Perhaps we were trying to grow. Retry
+	 * in a safe way.
+	 */
+
+	/* Get current position */
+	if ((pos = lseek(fd, 0, SEEK_CUR)) == -1)
+	{
+		perror("lseek");
+		return -1;
+	}
+
+	/* Seek to new size */
+	if (lseek(fd, length, SEEK_SET) == -1)
+	{
+		perror("lseek");
+		return -1;
+	}
+
+	/* Write a zero */
+	if (write(fd, &zero, 1) == -1)
+	{
+		perror("write");
+		return -1;
+	}
+
+	/* Truncate. This shouldn't fail. */
+	if (ftruncate(fd, length) == -1)
+	{
+		perror("ftruncate");
+		return -1;
+	}
+
+	/* Restore position */
+	if (lseek(fd, pos, SEEK_SET) == -1)
+	{
+		perror("lseek");
+		return -1;
+	}
+
+	return 0;
+}
+
+/* Just like open(2), but if a open with O_EXCL fails, retry with
+   GUARDED semantics. This might be necessary because some filesystems
+   (such as NFS filesystems mounted from a unfsd server) doesn't
+   support O_EXCL. GUARDED semantics are subject to race conditions,
+   but we can live with that.
+*/
+static int
+open_weak_exclusive(const char *pathname, int flags, mode_t mode)
+{
+	int ret;
+	struct stat statbuf;
+
+	ret = open(pathname, flags, mode);
+	if (ret != -1 || !(flags & O_EXCL))
+	{
+		/* Success, or not using O_EXCL */
+		return ret;
+	}
+
+	/* An error occured, and we are using O_EXCL. In case the FS
+	   doesn't support O_EXCL, some kind of error will be
+	   returned. Unfortunately, we don't know which one. Linux
+	   2.6.8 seems to return 524, but I cannot find a documented
+	   #define for this case. So, we'll return only on errors that
+	   we know aren't related to O_EXCL. */
+	switch (errno)
+	{
+		case EACCES:
+		case EEXIST:
+		case EINTR:
+		case EISDIR:
+		case ELOOP:
+		case ENAMETOOLONG:
+		case ENOENT:
+		case ENOTDIR:
+			return ret;
+	}
+
+	/* Retry with GUARDED semantics */
+	if (stat(pathname, &statbuf) != -1)
+	{
+		/* File exists */
+		errno = EEXIST;
+		return -1;
+	}
+	else
+	{
+		return open(pathname, flags & ~O_EXCL, mode);
+	}
+}
 
 /* Enumeration of devices from rdesktop.c        */
 /* returns numer of units found and initialized. */
@@ -159,16 +282,14 @@ disk_enum_devices(uint32 * id, char *optarg)
 	while ((pos = next_arg(optarg, ',')) && *id < RDPDR_MAX_DEVICES)
 	{
 		pos2 = next_arg(optarg, '=');
-		strcpy(g_rdpdr_device[*id].name, optarg);
 
-		toupper_str(g_rdpdr_device[*id].name);
-
-		/* add trailing colon to name. */
-		strcat(g_rdpdr_device[*id].name, ":");
+		strncpy(g_rdpdr_device[*id].name, optarg, sizeof(g_rdpdr_device[*id].name) - 1);
+		if (strlen(optarg) > (sizeof(g_rdpdr_device[*id].name) - 1))
+			fprintf(stderr, "share name %s truncated to %s\n", optarg,
+				g_rdpdr_device[*id].name);
 
 		g_rdpdr_device[*id].local_path = xmalloc(strlen(pos2) + 1);
 		strcpy(g_rdpdr_device[*id].local_path, pos2);
-		printf("DISK %s to %s\n", g_rdpdr_device[*id].name, g_rdpdr_device[*id].local_path);
 		g_rdpdr_device[*id].device_type = DEVICE_TYPE_DISK;
 		count++;
 		(*id)++;
@@ -181,9 +302,9 @@ disk_enum_devices(uint32 * id, char *optarg)
 /* Opens or creates a file or directory */
 static NTSTATUS
 disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create_disposition,
-	    uint32 flags_and_attributes, char *filename, HANDLE * phandle)
+	    uint32 flags_and_attributes, char *filename, NTHANDLE * phandle)
 {
-	HANDLE handle;
+	NTHANDLE handle;
 	DIR *dirp;
 	int flags, mode;
 	char path[256];
@@ -194,8 +315,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	flags = 0;
 	mode = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
 
-
-	if (filename[strlen(filename) - 1] == '/')
+	if (*filename && filename[strlen(filename) - 1] == '/')
 		filename[strlen(filename) - 1] = 0;
 	sprintf(path, "%s%s", g_rdpdr_device[device_id].local_path, filename);
 
@@ -232,7 +352,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 			break;
 	}
 
-	//printf("Open: \"%s\"  flags: %u, accessmask: %u sharemode: %u create disp: %u\n", path, flags_and_attributes, accessmask, sharemode, create_disposition);
+	//printf("Open: \"%s\"  flags: %X, accessmask: %X sharemode: %X create disp: %X\n", path, flags_and_attributes, accessmask, sharemode, create_disposition);
 
 	// Get information about file and set that flag ourselfs
 	if ((stat(path, &filestat) == 0) && (S_ISDIR(filestat.st_mode)))
@@ -288,7 +408,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 			flags |= O_RDONLY;
 		}
 
-		handle = open(path, flags, mode);
+		handle = open_weak_exclusive(path, flags, mode);
 		if (handle == -1)
 		{
 			switch (errno)
@@ -328,36 +448,69 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 
 	if (dirp)
 		g_fileinfo[handle].pdir = dirp;
+	else
+		g_fileinfo[handle].pdir = NULL;
+
 	g_fileinfo[handle].device_id = device_id;
 	g_fileinfo[handle].flags_and_attributes = flags_and_attributes;
+	g_fileinfo[handle].accessmask = accessmask;
 	strncpy(g_fileinfo[handle].path, path, 255);
+	g_fileinfo[handle].delete_on_close = False;
+	g_notify_stamp = True;
 
 	*phandle = handle;
 	return STATUS_SUCCESS;
 }
 
 static NTSTATUS
-disk_close(HANDLE handle)
+disk_close(NTHANDLE handle)
 {
 	struct fileinfo *pfinfo;
 
 	pfinfo = &(g_fileinfo[handle]);
 
-	if (pfinfo->flags_and_attributes & FILE_DIRECTORY_FILE)
+	g_notify_stamp = True;
+
+	rdpdr_abort_io(handle, 0, STATUS_CANCELLED);
+
+	if (pfinfo->pdir)
 	{
-		closedir(pfinfo->pdir);
-		//FIXME: Should check exit code
+		if (closedir(pfinfo->pdir) < 0)
+		{
+			perror("closedir");
+			return STATUS_INVALID_HANDLE;
+		}
+
+		if (pfinfo->delete_on_close)
+			if (rmdir(pfinfo->path) < 0)
+			{
+				perror(pfinfo->path);
+				return STATUS_ACCESS_DENIED;
+			}
+		pfinfo->delete_on_close = False;
 	}
 	else
 	{
-		close(handle);
+		if (close(handle) < 0)
+		{
+			perror("close");
+			return STATUS_INVALID_HANDLE;
+		}
+		if (pfinfo->delete_on_close)
+			if (unlink(pfinfo->path) < 0)
+			{
+				perror(pfinfo->path);
+				return STATUS_ACCESS_DENIED;
+			}
+
+		pfinfo->delete_on_close = False;
 	}
 
 	return STATUS_SUCCESS;
 }
 
 static NTSTATUS
-disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
+disk_read(NTHANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
 {
 	int n;
 
@@ -381,7 +534,10 @@ disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * re
 		switch (errno)
 		{
 			case EISDIR:
-				return STATUS_FILE_IS_A_DIRECTORY;
+				/* Implement 24 Byte directory read ??
+				   with STATUS_NOT_IMPLEMENTED server doesn't read again */
+				/* return STATUS_FILE_IS_A_DIRECTORY; */
+				return STATUS_NOT_IMPLEMENTED;
 			default:
 				error("Read");
 				return STATUS_INVALID_PARAMETER;
@@ -394,7 +550,7 @@ disk_read(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * re
 }
 
 static NTSTATUS
-disk_write(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
+disk_write(NTHANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * result)
 {
 	int n;
 
@@ -421,7 +577,7 @@ disk_write(HANDLE handle, uint8 * data, uint32 length, uint32 offset, uint32 * r
 }
 
 NTSTATUS
-disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
+disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out)
 {
 	uint32 file_attributes, ft_high, ft_low;
 	struct stat filestat;
@@ -502,12 +658,11 @@ disk_query_information(HANDLE handle, uint32 info_class, STREAM out)
 }
 
 NTSTATUS
-disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
+disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out)
 {
-	uint32 /*device_id, */length, file_attributes, ft_high, ft_low;
+	uint32 length, file_attributes, ft_high, ft_low, delete_on_close;
 	char newname[256], fullpath[256];
 	struct fileinfo *pfinfo;
-
 	int mode;
 	struct stat filestat;
 	time_t write_time, change_time, access_time, mod_time;
@@ -515,6 +670,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 	struct STATFS_T stat_fs;
 
 	pfinfo = &(g_fileinfo[handle]);
+	g_notify_stamp = True;
 
 	switch (info_class)
 	{
@@ -574,7 +730,7 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 				printf("FileBasicInformation modification time %s",
 				       ctime(&tvs.modtime));
 #endif
-				if (utime(pfinfo->path, &tvs))
+				if (utime(pfinfo->path, &tvs) && errno != EPERM)
 					return STATUS_ACCESS_DENIED;
 			}
 
@@ -632,25 +788,16 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 			   FileDispositionInformation requests with
 			   DeleteFile set to FALSE should unschedule
 			   the delete. See
-			   http://www.osronline.com/article.cfm?article=245. Currently,
-			   we are deleting the file immediately. I
-			   guess this is a FIXME. */
+			   http://www.osronline.com/article.cfm?article=245. */
 
-			//in_uint32_le(in, delete_on_close);
+			in_uint32_le(in, delete_on_close);
 
-			/* Make sure we close the file before
-			   unlinking it. Not doing so would trigger
-			   silly-delete if using NFS, which might fail
-			   on FAT floppies, for example. */
-			disk_close(handle);
-
-			if ((pfinfo->flags_and_attributes & FILE_DIRECTORY_FILE))	// remove a directory
+			if (delete_on_close ||
+			    (pfinfo->
+			     accessmask & (FILE_DELETE_ON_CLOSE | FILE_COMPLETE_IF_OPLOCKED)))
 			{
-				if (rmdir(pfinfo->path) < 0)
-					return STATUS_ACCESS_DENIED;
+				pfinfo->delete_on_close = True;
 			}
-			else if (unlink(pfinfo->path) < 0)	// unlink a file
-				return STATUS_ACCESS_DENIED;
 
 			break;
 
@@ -667,14 +814,11 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 
 			/* prevents start of writing if not enough space left on device */
 			if (STATFS_FN(g_rdpdr_device[pfinfo->device_id].local_path, &stat_fs) == 0)
-				if (stat_fs.f_bsize * stat_fs.f_bfree < length)
+				if (stat_fs.f_bfree * stat_fs.f_bsize < length)
 					return STATUS_DISK_FULL;
 
-			/* FIXME: Growing file with ftruncate doesn't
-			   work with Linux FAT fs */
-			if (ftruncate(handle, length) != 0)
+			if (ftruncate_growable(handle, length) != 0)
 			{
-				error("FTruncate");
 				return STATUS_DISK_FULL;
 			}
 
@@ -687,20 +831,129 @@ disk_set_information(HANDLE handle, uint32 info_class, STREAM in, STREAM out)
 	return STATUS_SUCCESS;
 }
 
+NTSTATUS
+disk_check_notify(NTHANDLE handle)
+{
+	struct fileinfo *pfinfo;
+	NTSTATUS status = STATUS_PENDING;
+
+	NOTIFY notify;
+
+	pfinfo = &(g_fileinfo[handle]);
+	if (!pfinfo->pdir)
+		return STATUS_INVALID_DEVICE_REQUEST;
+
+
+
+	status = NotifyInfo(handle, pfinfo->info_class, &notify);
+
+	if (status != STATUS_PENDING)
+		return status;
+
+	if (memcmp(&pfinfo->notify, &notify, sizeof(NOTIFY)))
+	{
+		//printf("disk_check_notify found changed event\n");
+		memcpy(&pfinfo->notify, &notify, sizeof(NOTIFY));
+		status = STATUS_NOTIFY_ENUM_DIR;
+	}
+
+	return status;
+
+
+}
+
+NTSTATUS
+disk_create_notify(NTHANDLE handle, uint32 info_class)
+{
+
+	struct fileinfo *pfinfo;
+	NTSTATUS ret = STATUS_PENDING;
+
+	/* printf("start disk_create_notify info_class %X\n", info_class); */
+
+	pfinfo = &(g_fileinfo[handle]);
+	pfinfo->info_class = info_class;
+
+	ret = NotifyInfo(handle, info_class, &pfinfo->notify);
+
+	if (info_class & 0x1000)
+	{			/* ???? */
+		if (ret == STATUS_PENDING)
+			return STATUS_SUCCESS;
+	}
+
+	/* printf("disk_create_notify: num_entries %d\n", pfinfo->notify.num_entries); */
+
+
+	return ret;
+
+}
+
+static NTSTATUS
+NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p)
+{
+	struct fileinfo *pfinfo;
+	struct stat buf;
+	struct dirent *dp;
+	char *fullname;
+	DIR *dpr;
+
+	pfinfo = &(g_fileinfo[handle]);
+	if (fstat(handle, &buf) < 0)
+	{
+		perror("NotifyInfo");
+		return STATUS_ACCESS_DENIED;
+	}
+	p->modify_time = buf.st_mtime;
+	p->status_time = buf.st_ctime;
+	p->num_entries = 0;
+	p->total_time = 0;
+
+
+	dpr = opendir(pfinfo->path);
+	if (!dpr)
+	{
+		perror("NotifyInfo");
+		return STATUS_ACCESS_DENIED;
+	}
+
+
+	while ((dp = readdir(dpr)))
+	{
+		if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
+			continue;
+		p->num_entries++;
+		fullname = xmalloc(strlen(pfinfo->path) + strlen(dp->d_name) + 2);
+		sprintf(fullname, "%s/%s", pfinfo->path, dp->d_name);
+
+		if (!stat(fullname, &buf))
+		{
+			p->total_time += (buf.st_mtime + buf.st_ctime);
+		}
+
+		xfree(fullname);
+	}
+	closedir(dpr);
+
+	return STATUS_PENDING;
+}
+
 static FsInfoType *
 FsVolumeInfo(char *fpath)
 {
 
-#ifdef HAVE_MNTENT_H
 	FILE *fdfs;
-	struct mntent *e;
 	static FsInfoType info;
+#ifdef HAVE_MNTENT_H
+	struct mntent *e;
+#endif
 
 	/* initialize */
 	memset(&info, 0, sizeof(info));
 	strcpy(info.label, "NXDESKTOP");
 	strcpy(info.type, "RDPFS");
 
+#ifdef HAVE_MNTENT_H
 	fdfs = setmntent(MNTENT_PATH, "r");
 	if (!fdfs)
 		return &info;
@@ -743,8 +996,6 @@ FsVolumeInfo(char *fpath)
 	}
 	endmntent(fdfs);
 #else
-	static FsInfoType info;
-
 	/* initialize */
 	memset(&info, 0, sizeof(info));
 	strcpy(info.label, "NXDESKTOP");
@@ -756,7 +1007,7 @@ FsVolumeInfo(char *fpath)
 
 
 NTSTATUS
-disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
+disk_query_volume_information(NTHANDLE handle, uint32 info_class, STREAM out)
 {
 	struct STATFS_T stat_fs;
 	struct fileinfo *pfinfo;
@@ -821,7 +1072,7 @@ disk_query_volume_information(HANDLE handle, uint32 info_class, STREAM out)
 }
 
 NTSTATUS
-disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out)
+disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM out)
 {
 	uint32 file_attributes, ft_low, ft_high;
 	char *dirname, fullpath[256];
@@ -931,10 +1182,8 @@ disk_query_directory(HANDLE handle, uint32 info_class, char *pattern, STREAM out
 
 
 static NTSTATUS
-disk_device_control(HANDLE handle, uint32 request, STREAM in, STREAM out)
+disk_device_control(NTHANDLE handle, uint32 request, STREAM in, STREAM out)
 {
-	/*uint32 result;*/
-
 	if (((request >> 16) != 20) || ((request >> 16) != 9))
 		return STATUS_INVALID_PARAMETER;
 

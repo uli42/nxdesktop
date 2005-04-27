@@ -1,19 +1,19 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - Multipoint Communications Service
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    Copyright (C) Erik Forsberg 2003
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 2 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -58,6 +58,7 @@ rdp5_process(STREAM s)
 	hexdump(s->p, s->end - s->p);
 	#endif
 
+	ui_begin_update();
 	while (s->p < s->end)
 	{
 		in_uint8(s, type);
@@ -76,7 +77,8 @@ rdp5_process(STREAM s)
 
 		if (ctype & RDP_MPPC_COMPRESSED)
 		{
-
+			if (length > RDP_MPPC_DICT_SIZE)
+				error("error decompressed packet size exceeds max\n");
 			if (mppc_expand(s->p, length, ctype, &roff, &rlen) == -1)
 				error("error while decompressing packet\n");
 
@@ -118,6 +120,8 @@ rdp5_process(STREAM s)
 			case 5:
 				ui_set_null_cursor();
 				break;
+			case 6: /* Created by SP1 on Windows 2003. Unused at this time */
+				break;
 			case 8:
 				in_uint16_le(ts, x);
 				in_uint16_le(ts, y);
@@ -136,4 +140,5 @@ rdp5_process(STREAM s)
 
 		s->p = next;
 	}
+	ui_end_update();
 }

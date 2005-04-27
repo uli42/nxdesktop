@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -42,10 +42,11 @@
 #define IS_PERSISTENT(id) (g_pstcache_fd[id] > 0)
 
 extern int g_pstcache_fd[];
+extern BOOL g_use_rdp5;
 
 uint32 g_stamp;
-int g_num_bitmaps_in_memory[3];
 
+static int g_num_bitmaps_in_memory[3];
 
 /* BITMAP CACHE */
 static BMPCACHEENTRY g_bmpcache[3][0xa00];
@@ -55,9 +56,9 @@ static HBITMAP g_volatile_bc[3];
 void
 cache_remove_lru_bitmap(uint8 cache_id)
 {
-	int i;
+	uint32 i;
 	uint16 cache_idx = 0;
-	uint32 m = (uint32) - 1;
+	uint32 m = 0xffffffff;
 	BMPCACHEENTRY *pbce;
 
 	for (i = 0; i < NUM_ELEMENTS(g_bmpcache[cache_id]); i++)
@@ -115,7 +116,7 @@ cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap, uint32 stamp)
 		{
 			ui_destroy_bitmap(old);
 		}
-		else
+		else if (g_use_rdp5)
 		{
 			if (++g_num_bitmaps_in_memory[cache_id] > BMPCACHE2_C2_CELLS)
 				cache_remove_lru_bitmap(cache_id);
@@ -141,7 +142,7 @@ cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap, uint32 stamp)
 void
 cache_save_state(void)
 {
-	int id, idx;
+	uint32 id, idx;
 
 	for (id = 0; id < NUM_ELEMENTS(g_bmpcache); id++)
 		if (IS_PERSISTENT(id))
@@ -201,41 +202,26 @@ static DATABLOB g_textcache[256];
 
 /* Retrieve a text item from the cache */
 DATABLOB *
-cache_get_text(uint16 cache_id)
+cache_get_text(uint8 cache_id)
 {
 	DATABLOB *text;
 
-	if (cache_id < NUM_ELEMENTS(g_textcache))
-	{
-		text = &g_textcache[cache_id];
-		if (text->data != NULL)
-			return text;
-	}
-
-	error("Get Text %d\n", cache_id);
-	return NULL;
+	text = &g_textcache[cache_id];
+	return text;
 }
 
 /* Store a text item in the cache */
 void
-cache_put_text(uint16 cache_id, void *data, int length)
+cache_put_text(uint8 cache_id, void *data, int length)
 {
 	DATABLOB *text;
 
-	if (cache_id < NUM_ELEMENTS(g_textcache))
-	{
-		text = &g_textcache[cache_id];
-		if (text->data != NULL)
-			xfree(text->data);
-
-		text->data = xmalloc(length);
-		text->size = length;
-		memcpy(text->data, data, length);
-	}
-	else
-	{
-		error("Put Text %d\n", cache_id);
-	}
+	text = &g_textcache[cache_id];
+	if (text->data != NULL)
+		xfree(text->data);
+	text->data = xmalloc(length);
+	text->size = length;
+	memcpy(text->data, data, length);
 }
 
 

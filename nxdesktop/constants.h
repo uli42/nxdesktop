@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    Miscellaneous protocol constants
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -134,6 +134,7 @@ enum RDP_DATA_PDU_TYPE
 	RDP_DATA_PDU_BELL = 34,
 	RDP_DATA_PDU_LOGON = 38,
 	RDP_DATA_PDU_FONT2 = 39,
+	RDP_DATA_PDU_KEYBOARD_INDICATORS = 41,
 	RDP_DATA_PDU_DISCONNECT = 47
 };
 
@@ -360,6 +361,7 @@ enum RDP_INPUT_DEVICE
 
 /* NT status codes for RDPDR */
 #define STATUS_SUCCESS			0x00000000
+#define STATUS_NOT_IMPLEMENTED          0x00000001
 #define STATUS_PENDING                  0x00000103
 
 #define STATUS_NO_MORE_FILES            0x80000006
@@ -378,6 +380,7 @@ enum RDP_INPUT_DEVICE
 #define STATUS_FILE_IS_A_DIRECTORY      0xc00000ba
 #define STATUS_NOT_SUPPORTED            0xc00000bb
 #define STATUS_TIMEOUT                  0xc0000102
+#define STATUS_NOTIFY_ENUM_DIR          0xc000010c
 #define STATUS_CANCELLED                0xc0000120
 
 
@@ -391,6 +394,8 @@ enum RDP_INPUT_DEVICE
 
 #define FILE_DIRECTORY_FILE             0x00000001
 #define FILE_NON_DIRECTORY_FILE         0x00000040
+#define FILE_COMPLETE_IF_OPLOCKED       0x00000100
+#define FILE_DELETE_ON_CLOSE            0x00001000
 #define FILE_OPEN_FOR_FREE_SPACE_QUERY  0x00800000
 
 /* RDP5 disconnect PDU */
@@ -414,3 +419,149 @@ enum RDP_INPUT_DEVICE
 #define exDiscReasonLicenseErrClientEncryption		0x0108
 #define exDiscReasonLicenseCantUpgradeLicense		0x0109
 #define exDiscReasonLicenseNoRemoteConnections		0x010a
+
+/* NX 
+
+These are constants used by the channel notification from TS API
+For this moment, only the used ones were converted to defines. The others will remain here
+for a possible future use.
+
+' Flags for Console Notification
+Public Const NOTIFY_FOR_ALL_SESSIONS = 1&
+Public Const NOTIFY_FOR_THIS_SESSION = 0&
+
+' These Constants specify the current server
+Public Const WTS_CURRENT_SERVER = 0&
+Public Const WTS_CURRENT_SERVER_HANDLE = 0&
+' following was shown as a NULL in the API
+Public Const WTS_CURRENT_SERVER_NAME = vbNullString
+
+' Specifies the current session (SessionId)
+Public Const WTS_CURRENT_SESSION As Long = -1
+
+' Possible pResponse values from WTSSendMessage()
+Public Const IDTIMEOUT = 32000&
+Public Const IDASYNC = 32001&
+
+
+' Shutdown flags
+
+' log off all users except current one
+' MUST reboot before winstations can be recreated
+Public Const WTS_WSD_LOGOFF = 1&
+'
+' shutdown system
+Public Const WTS_WSD_SHUTDOWN = 2&
+'
+' shutdown and reboot
+Public Const WTS_WSD_REBOOT = 4&
+'
+' shutdown - and power off if hardware supports it
+Public Const WTS_WSD_POWEROFF = 8&
+'
+' reboot without logging off users or shutting down
+Public Const WTS_WSD_FASTREBOOT = 10&
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+
+' WTS_EVENT - Event flags for WTSWaitSystemEvent
+Public Const WTS_EVENT_ALL = 2147483647 ' wait for all event types
+Public Const WTS_EVENT_CONNECT = 8& ' WinStation connect to client
+Public Const WTS_EVENT_CREATE = 1& ' new WinStation created
+Public Const WTS_EVENT_DELETE = 2& ' existing WinStation deleted
+Public Const WTS_EVENT_DISCONNECT = 16 ' WinStation logged on without
+Public Const WTS_EVENT_FLUSH = &H80000000
+' unblock all waiters
+Public Const WTS_EVENT_LICENSE = 256& ' license state change
+Public Const WTS_EVENT_LOGOFF = 64& ' user logged off from
+Public Const WTS_EVENT_LOGON = 32& ' user logged on to existing
+Public Const WTS_EVENT_NONE = 0& ' return no event
+Public Const WTS_EVENT_RENAME = 4& ' existing WinStation renamed
+Public Const WTS_EVENT_STATECHANGE = 128& ' WinStation state change
+
+Public Const WTS_PROTOCOL_TYPE_CONSOLE = 0& ' Console
+Public Const WTS_PROTOCOL_TYPE_ICA = 1& ' ICA Protocol
+Public Const WTS_PROTOCOL_TYPE_RDP = 2& ' RDP Protocol
+*/
+ 
+#define VIRTUAL_CHANNEL_VERSION_WIN2000		1
+
+// Events passed to VirtualChannelInitEvent
+
+// Client initialized (no data)
+#define CHANNEL_EVENT_INITIALIZED		0
+
+// Connection established (data = name of Server)
+#define CHANNEL_EVENT_CONNECTED			1
+
+// Connection established with old Server, so no channel support
+#define CHANNEL_EVENT_V1_CONNECTED		2
+
+// Connection ended (no data)
+#define CHANNEL_EVENT_DISCONNECTED		3
+
+// Client terminated (no data)
+#define CHANNEL_EVENT_TERMINATED		4
+
+// NOTE - 5 through 9 not listed in cchannel.h
+// Data received from Server
+// (data = incoming data)
+#define CHANNEL_EVENT_DATA_RECEIVED		10
+
+// VirtualChannelWrite completed
+// (pData - pUserData passed on VirtualChannelWrite)
+#define CHANNEL_EVENT_WRITE_COMPLETE		11
+
+// VirtualChannelWrite cancelled
+// (pData - pUserData passed on VirtualChannelWrite)
+#define CHANNEL_EVENT_WRITE_CANCELLED		12
+
+// Return codes from VirtualChannelXxx functions
+#define CHANNEL_RC_OK				0
+#define CHANNEL_RC_ALREADY_INITIALIZED		1
+#define CHANNEL_RC_NOT_INITIALIZED		2
+#define CHANNEL_RC_ALREADY_CONNECTED		3
+#define CHANNEL_RC_NOT_CONNECTED		4
+#define CHANNEL_RC_TOO_MANY_CHANNELS		5
+#define CHANNEL_RC_BAD_CHANNEL			6
+#define CHANNEL_RC_BAD_CHANNEL_HANDLE		7
+#define CHANNEL_RC_NO_BUFFER			8
+#define CHANNEL_RC_BAD_INIT_HANDLE		9
+#define CHANNEL_RC_NOT_OPEN			10
+#define CHANNEL_RC_BAD_PROC			11
+#define CHANNEL_RC_NO_MEMORY			12
+#define CHANNEL_RC_UNKNOWN_CHANNEL_NAME		13
+#define CHANNEL_RC_ALREADY_OPEN			14
+#define CHANNEL_RC_NOT_IN_VIRTUALCHANNELENTRY	15
+#define CHANNEL_RC_NULL_DATA			16
+#define CHANNEL_RC_ZERO_LENGTH			17
+/*'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'
+' Constants from Pchannel.h included in Platform SDK
+' Virtual Channel protocol header
+' VC stuff common to Client & Server
+' 2001-04-11 version, 8603 bytes
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''*/
+#define CHANNEL_CHUNK_LENGTH			1600
+//#define CHANNEL_FLAG_FIRST			1
+//#define CHANNEL_FLAG_LAST			2
+#define CHANNEL_FLAG_MIDDLE			0
+#define CHANNEL_FLAG_FAIL			256
+//#define CHANNEL_FLAG_SHOW_PROTOCOL		16
+#define CHANNEL_FLAG_SUSPEND			32
+#define CHANNEL_FLAG_RESUME			64
+//#define CHANNEL_OPTION_INITIALIZED		0x80000000
+//#define CHANNEL_OPTION_ENCRYPT_RDP		1073741824
+#define CHANNEL_OPTION_ENCRYPT_SC		536870912
+#define CHANNEL_OPTION_ENCRYPT_CS		268435456
+#define CHANNEL_OPTION_PRI_HIGH			134217728
+#define CHANNEL_OPTION_PRI_MED			67108864
+#define CHANNEL_OPTION_PRI_LOW			33554432
+//#define CHANNEL_OPTION_COMPRESS_RDP		8388608
+#define CHANNEL_OPTION_COMPRESS			4194304
+//#define CHANNEL_OPTION_SHOW_PROTOCOL		2097152
+#define CHANNEL_MAX_COUNT			30
+#define CHANNEL_NAME_LEN			7
+
+

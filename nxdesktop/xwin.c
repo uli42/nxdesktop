@@ -1,7 +1,7 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    User interface services - X Window System
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -52,10 +52,25 @@
 #include "icon.h"
 #include <X11/xpm.h>
 #include "X11/Xatom.h"
+#include <X11/cursorfont.h>
+
+/* For seamless */
+#include <X11/keysym.h>
+#include <X11/extensions/shape.h>
+
+/* For seamless V2 */
+static VCHANNEL *fwindow_channel;
 
 #undef NXDESKTOP_XWIN_DEBUG
-
 #undef NXDESKTOP_USES_SYNC_IN_LOOP
+
+#undef NXDESKTOP_FWINDOW_DEBUG
+
+/* These controls the debug of the shape functions */
+#undef NXDESKTOP_MASK_DUMP
+#undef NXDESKTOP_MASK_DUMP_DISK
+#undef NXDESKTOP_MASK_DUMP_DISK_SIGNAL
+#undef NXDESKTOP_SHAPE_FORCESYNC
 
 #ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
 
@@ -72,10 +87,35 @@ typedef struct _PIXCACHE
 	unsigned int offset;
 } PIXCACHE;
 
+
 #define PIXCACHE_ENTRIES  20
 
 static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
+#endif
+
+typedef struct
+{
+    Window wnd;
+    char *msg;
+    int op;
+    int id;
+    char *title;
+    int x;
+    int y;
+    int w;
+    int h;
+    int max_min_type;
+} NXCLIPPER_WINDOWS;
+#define MAX_NXCLIPPER_WINDOWS 50
+static unsigned int nxclipper_windows_entries = 0;
+static BOOL first_rdp_window = True;
+static NXCLIPPER_WINDOWS nxclipper_windows[MAX_NXCLIPPER_WINDOWS];
+
+BOOL rdp_window_moving = False;
+#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+Window x_rdp_wnd = 0;
+static Pixmap pix_move_buffer;
 #endif
 
 #ifdef NXDESKTOP_ONSTART
@@ -84,13 +124,19 @@ static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
 #endif
 
+#define NXDESKTOP_MIN_WIDTH 120
+#define NXDESKTOP_MIN_HEIGHT 90
+
 extern int g_width;
 extern int g_height;
+extern int g_xpos;
+extern int g_ypos;
 extern BOOL g_sendmotion;
 extern BOOL g_fullscreen;
 extern BOOL g_grab_keyboard;
 extern BOOL g_hide_decorations;
 extern BOOL g_use_rdp5;
+
 extern char g_title[];
 extern int g_server_bpp;
 extern int g_win_button_size;
@@ -107,11 +153,15 @@ Time g_last_gesturetime;
 static int g_x_socket;
 static Screen *g_screen;
 Window g_wnd;
+extern BOOL viewport_mode;
+Window g_viewport_wnd = 0;
 uint32 g_embed_wnd;
 static Window wnd2;
 BOOL g_enable_compose = False;
 BOOL g_Unobscured;		/* used for screenblt */
 static GC g_gc = NULL;
+static GC g_create_bitmap_gc = NULL;
+static GC g_create_glyph_gc = NULL;
 static Visual *g_visual;
 static int g_depth;
 static int g_bpp;
@@ -120,6 +170,21 @@ static XIC g_IC;
 static XModifierKeymap *g_mod_map;
 static Cursor g_current_cursor;
 static HCURSOR g_null_cursor = NULL;
+static Cursor viewportCursor;
+static int viewportLastX;
+static int viewportLastY;
+int g_viewport_width;
+int g_viewport_height;
+int g_saved_viewport_width = 0;
+int g_saved_viewport_height= 0;
+int g_saved_viewport_x= 0;
+int g_saved_viewport_y= 0;
+int g_saved_wnd_x = 0;
+int g_saved_wnd_y = 0;
+int g_wnd_x;
+int g_wnd_y;
+
+void nxdesktopMoveViewport(int hShift, int vShift);
 
 /* stuff for the new FILL_RECT */
 
@@ -131,7 +196,6 @@ static int last_color;
 static int num_buf_rects = -1;
 #endif
 
-/* static Atom g_protocol_atom, g_kill_atom; */
 Atom nxdesktopAtoms[NXDESKTOP_NUM_ATOMS];
 static BOOL nxdesktopWithWM = True;
 char *nxdesktopAtomNames[NXDESKTOP_NUM_ATOMS+1] =
@@ -149,6 +213,8 @@ char *nxdesktopAtomNames[NXDESKTOP_NUM_ATOMS+1] =
 			      NULL
 };
 
+static int PACK_RDP_COMPRESSED;
+static int PACK_RDP_PLAIN;
 static BOOL g_focused;
 static BOOL g_mouse_in_wnd;
 static BOOL g_arch_match = False; /* set to True if RGB XServer and little endian */
@@ -217,6 +283,24 @@ static BOOL g_host_be;
 static BOOL g_xserver_be;
 static int g_red_shift_r, g_blue_shift_r, g_green_shift_r;
 static int g_red_shift_l, g_blue_shift_l, g_green_shift_l;
+
+extern BOOL float_window_mode;
+int g_x_offset = 0;
+int g_y_offset = 0;
+
+#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+/* shape support */
+static XImage *shape_image;
+static Pixmap shape_bitmap;
+static GC shape_gc;
+static BOOL shape_need_update = False;
+static BOOL first_shape = True;
+static BOOL shape_enabled = False;
+/* For w2000 */
+#define BACKGROUND 0x3a6ea5
+/* for 2003 */
+#define BACKGROUND 0x666f74 
+#endif
 
 /* software backing store */
 extern BOOL g_ownbackstore;
@@ -325,17 +409,17 @@ unsigned int buf_key_vector;
 { \
 	switch (m) \
 	{ \
-		case 0:	/* Outline */ \
-			XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
-			if (g_ownbackstore) \
-				XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
-			break; \
-		case 1: /* Filled */ \
-			XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
-				 cx, cy, 0, 360*64); \
-			if (g_ownbackstore) \
-				XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
-			break; \
+	    case 0:/* Outline */ \
+		XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
+		if (g_ownbackstore) \
+			XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
+	    break; \
+	    case 1: /* Filled */ \
+		XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
+			 cx, cy, 0, 360*64); \
+		if (g_ownbackstore) \
+			XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
+	    break; \
 	} \
 }
 
@@ -394,52 +478,47 @@ mwm_hide_decorations(void)
 		return;
 	}
 
-	XChangeProperty(g_display, g_wnd, hintsatom, hintsatom, 32, PropModeReplace,
+	XChangeProperty(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, hintsatom, hintsatom, 32, PropModeReplace,
 			(unsigned char *) &motif_hints, PROP_MOTIF_WM_HINTS_ELEMENTS);
 }
 
-static PixelColour
-split_colour15(uint32 colour)
-{
-	PixelColour rv;
-	rv.red = ((colour >> 7) & 0xf8) | ((colour >> 12) & 0x7);
-	rv.green = ((colour >> 2) & 0xf8) | ((colour >> 8) & 0x7);
-	rv.blue = ((colour << 3) & 0xf8) | ((colour >> 2) & 0x7);
-	return rv;
+#define SPLITCOLOUR15(colour, rv) \
+{ \
+	rv.red = ((colour >> 7) & 0xf8) | ((colour >> 12) & 0x7); \
+	rv.green = ((colour >> 2) & 0xf8) | ((colour >> 8) & 0x7); \
+	rv.blue = ((colour << 3) & 0xf8) | ((colour >> 2) & 0x7); \
 }
 
-static PixelColour
-split_colour16(uint32 colour)
-{
-	PixelColour rv;
-	rv.red = ((colour >> 8) & 0xf8) | ((colour >> 13) & 0x7);
-	rv.green = ((colour >> 3) & 0xfc) | ((colour >> 9) & 0x3);
-	rv.blue = ((colour << 3) & 0xf8) | ((colour >> 2) & 0x7);
-	return rv;
+#define SPLITCOLOUR16(colour, rv) \
+{ \
+	rv.red = ((colour >> 8) & 0xf8) | ((colour >> 13) & 0x7); \
+	rv.green = ((colour >> 3) & 0xfc) | ((colour >> 9) & 0x3); \
+	rv.blue = ((colour << 3) & 0xf8) | ((colour >> 2) & 0x7); \
+} \
+
+#define SPLITCOLOUR24(colour, rv) \
+{ \
+	rv.blue = (colour & 0xff0000) >> 16; \
+	rv.green = (colour & 0x00ff00) >> 8; \
+	rv.red = (colour & 0x0000ff); \
 }
 
-static PixelColour
-split_colour24(uint32 colour)
-{
-	PixelColour rv;
-	rv.blue = (colour & 0xff0000) >> 16;
-	rv.green = (colour & 0x00ff00) >> 8;
-	rv.red = (colour & 0x0000ff);
-	return rv;
-}
-
-static uint32
-make_colour(PixelColour pc)
-{
-	return (((pc.red >> g_red_shift_r) << g_red_shift_l)
-		| ((pc.green >> g_green_shift_r) << g_green_shift_l)
-		| ((pc.blue >> g_blue_shift_r) << g_blue_shift_l));
-}
+#define MAKECOLOUR(pc) \
+	((pc.red >> g_red_shift_r) << g_red_shift_l) \
+		| ((pc.green >> g_green_shift_r) << g_green_shift_l) \
+		| ((pc.blue >> g_blue_shift_r) << g_blue_shift_l) \
 
 #define BSWAP16(x) { x = (((x & 0xff) << 8) | (x >> 8)); }
 #define BSWAP24(x) { x = (((x & 0xff) << 16) | (x >> 16) | (x & 0xff00)); }
 #define BSWAP32(x) { x = (((x & 0xff00ff) << 8) | ((x >> 8) & 0xff00ff)); \
 			x = (x << 16) | (x >> 16); }
+
+#define BOUT16(o, x) { *(o++) = x >> 8; *(o++) = x; }
+#define BOUT24(o, x) { *(o++) = x >> 16; *(o++) = x >> 8; *(o++) = x; }
+#define BOUT32(o, x) { *(o++) = x >> 24; *(o++) = x >> 16; *(o++) = x >> 8; *(o++) = x; }
+#define LOUT16(o, x) { *(o++) = x; *(o++) = x >> 8; }
+#define LOUT24(o, x) { *(o++) = x; *(o++) = x >> 8; *(o++) = x >> 16; }
+#define LOUT32(o, x) { *(o++) = x; *(o++) = x >> 8; *(o++) = x >> 16; *(o++) = x >> 24; }
 
 static uint32
 translate_colour(uint32 colour)
@@ -448,16 +527,16 @@ translate_colour(uint32 colour)
 	switch (g_server_bpp)
 	{
 		case 15:
-			pc = split_colour15(colour);
+			SPLITCOLOUR15(colour, pc);
 			break;
 		case 16:
-			pc = split_colour16(colour);
+			SPLITCOLOUR16(colour, pc);
 			break;
 		case 24:
-			pc = split_colour24(colour);
+			SPLITCOLOUR24(colour, pc);
 			break;
 	}
-	return make_colour(pc);
+	return MAKECOLOUR(pc);
 }
 
 /* indent is confused by UNROLL8 */
@@ -477,6 +556,14 @@ translate_colour(uint32 colour)
 	while (out < end) \
 		{ stm } \
 }
+/* 3 byte output repeat */
+#define REPEAT3(stm) \
+{ \
+	while (out <= end - 8 * 3) \
+		UNROLL8(stm) \
+	while (out < end) \
+		{ stm } \
+}
 /* 4 byte output repeat */
 #define REPEAT4(stm) \
 { \
@@ -485,34 +572,36 @@ translate_colour(uint32 colour)
 	while (out < end) \
 		{ stm } \
 }
+/* *INDENT-ON* */
 
 static void
-translate8to8(uint8 * data, uint8 * out, uint8 * end)
+translate8to8(const uint8 * data, uint8 * out, uint8 * end)
 {
 	while (out < end)
 		*(out++) = (uint8) g_colmap[*(data++)];
 }
 
 static void
-translate8to16(uint8 * data, uint8 * out, uint8 * end)
+translate8to16(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint16 value;
 
 	if (g_arch_match)
 	{
+		/* *INDENT-OFF* */
 		REPEAT2
 		(
 			*((uint16 *) out) = g_colmap[*(data++)];
 			out += 2;
 		)
+		/* *INDENT-ON* */
 	}
 	else if (g_xserver_be)
 	{
 		while (out < end)
 		{
 			value = (uint16) g_colmap[*(data++)];
-			*(out++) = value >> 8;
-			*(out++) = value;
+			BOUT16(out, value);
 		}
 	}
 	else
@@ -520,15 +609,14 @@ translate8to16(uint8 * data, uint8 * out, uint8 * end)
 		while (out < end)
 		{
 			value = (uint16) g_colmap[*(data++)];
-			*(out++) = value;
-			*(out++) = value >> 8;
+			LOUT16(out, value);
 		}
 	}
 }
 
 /* little endian - conversion happens when colourmap is built */
 static void
-translate8to24(uint8 * data, uint8 * out, uint8 * end)
+translate8to24(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 
@@ -537,9 +625,7 @@ translate8to24(uint8 * data, uint8 * out, uint8 * end)
 		while (out < end)
 		{
 			value = g_colmap[*(data++)];
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			BOUT24(out, value);
 		}
 	}
 	else
@@ -547,35 +633,32 @@ translate8to24(uint8 * data, uint8 * out, uint8 * end)
 		while (out < end)
 		{
 			value = g_colmap[*(data++)];
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
+			LOUT24(out, value);
 		}
 	}
 }
 
 static void
-translate8to32(uint8 * data, uint8 * out, uint8 * end)
+translate8to32(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 
 	if (g_arch_match)
 	{
+		/* *INDENT-OFF* */
 		REPEAT4
 		(
 			*((uint32 *) out) = g_colmap[*(data++)];
 			out += 4;
 		)
+		/* *INDENT-ON* */
 	}
 	else if (g_xserver_be)
 	{
 		while (out < end)
 		{
 			value = g_colmap[*(data++)];
-			*(out++) = value >> 24;
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			BOUT32(out, value);
 		}
 	}
 	else
@@ -583,289 +666,455 @@ translate8to32(uint8 * data, uint8 * out, uint8 * end)
 		while (out < end)
 		{
 			value = g_colmap[*(data++)];
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
-			*(out++) = value >> 24;
+			LOUT32(out, value);
 		}
 	}
 }
 
-/* *INDENT-ON* */
-
 static void
-translate15to16(uint16 * data, uint8 * out, uint8 * end)
+translate15to16(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint16 pixel;
 	uint16 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_xserver_be)
 	{
-		pixel = *(data++);
-
-		if (g_host_be)
+		while (out < end)
 		{
-			BSWAP16(pixel);
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			BOUT16(out, value);
 		}
-
-		value = make_colour(split_colour15(pixel));
-
-		if (g_xserver_be)
+	}
+	else
+	{
+		while (out < end)
 		{
-			*(out++) = value >> 8;
-			*(out++) = value;
-		}
-		else
-		{
-			*(out++) = value;
-			*(out++) = value >> 8;
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			LOUT16(out, value);
 		}
 	}
 }
 
 static void
-translate15to24(uint16 * data, uint8 * out, uint8 * end)
+translate15to24(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 	uint16 pixel;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_arch_match)
 	{
-		pixel = *(data++);
-
-		if (g_host_be)
+		/* *INDENT-OFF* */
+		REPEAT3
+		(
+			pixel = *(data++);
+			SPLITCOLOUR15(pixel, pc);
+			*(out++) = pc.blue;
+			*(out++) = pc.green;
+			*(out++) = pc.red;
+		)
+		/* *INDENT-ON* */
+	}
+	else if (g_xserver_be)
+	{
+		while (out < end)
 		{
-			BSWAP16(pixel);
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			BOUT24(out, value);
 		}
-
-		value = make_colour(split_colour15(pixel));
-		if (g_xserver_be)
+	}
+	else
+	{
+		while (out < end)
 		{
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
-		}
-		else
-		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			LOUT24(out, value);
 		}
 	}
 }
 
 static void
-translate15to32(uint16 * data, uint8 * out, uint8 * end)
+translate15to32(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint16 pixel;
 	uint32 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_arch_match)
 	{
-		pixel = *(data++);
-
-		if (g_host_be)
+		/* *INDENT-OFF* */
+		REPEAT4
+		(
+			pixel = *(data++);
+			SPLITCOLOUR15(pixel, pc);
+			*(out++) = pc.blue;
+			*(out++) = pc.green;
+			*(out++) = pc.red;
+			*(out++) = 0;
+		)
+		/* *INDENT-ON* */
+	}
+	else if (g_xserver_be)
+	{
+		while (out < end)
 		{
-			BSWAP16(pixel);
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			BOUT32(out, value);
 		}
-
-		value = make_colour(split_colour15(pixel));
-
-		if (g_xserver_be)
+	}
+	else
+	{
+		while (out < end)
 		{
-			*(out++) = value >> 24;
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
-		}
-		else
-		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
-			*(out++) = value >> 24;
+			pixel = *(data++);
+			if (g_host_be)
+			{
+				BSWAP16(pixel);
+			}
+			SPLITCOLOUR15(pixel, pc);
+			value = MAKECOLOUR(pc);
+			LOUT32(out, value);
 		}
 	}
 }
 
 static void
-translate16to16(uint16 * data, uint8 * out, uint8 * end)
+translate16to16(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint16 pixel;
 	uint16 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_xserver_be)
 	{
-		pixel = *(data++);
-
 		if (g_host_be)
 		{
-			BSWAP16(pixel);
-		}
-
-		value = make_colour(split_colour16(pixel));
-
-		if (g_xserver_be)
-		{
-			*(out++) = value >> 8;
-			*(out++) = value;
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT16(out, value);
+			}
 		}
 		else
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT16(out, value);
+			}
+		}
+	}
+	else
+	{
+		if (g_host_be)
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT16(out, value);
+			}
+		}
+		else
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT16(out, value);
+			}
 		}
 	}
 }
 
 static void
-translate16to24(uint16 * data, uint8 * out, uint8 * end)
+translate16to24(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 	uint16 pixel;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_arch_match)
 	{
-		pixel = *(data++);
-
+		/* *INDENT-OFF* */
+		REPEAT3
+		(
+			pixel = *(data++);
+			SPLITCOLOUR16(pixel, pc);
+			*(out++) = pc.blue;
+			*(out++) = pc.green;
+			*(out++) = pc.red;
+		)
+		/* *INDENT-ON* */
+	}
+	else if (g_xserver_be)
+	{
 		if (g_host_be)
 		{
-			BSWAP16(pixel);
-		}
-
-		value = make_colour(split_colour16(pixel));
-
-		if (g_xserver_be)
-		{
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT24(out, value);
+			}
 		}
 		else
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT24(out, value);
+			}
+		}
+	}
+	else
+	{
+		if (g_host_be)
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT24(out, value);
+			}
+		}
+		else
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT24(out, value);
+			}
 		}
 	}
 }
 
 static void
-translate16to32(uint16 * data, uint8 * out, uint8 * end)
+translate16to32(const uint16 * data, uint8 * out, uint8 * end)
 {
 	uint16 pixel;
 	uint32 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_arch_match)
 	{
-		pixel = *(data++);
-
+		/* *INDENT-OFF* */
+		REPEAT4
+		(
+			pixel = *(data++);
+			SPLITCOLOUR16(pixel, pc);
+			*(out++) = pc.blue;
+			*(out++) = pc.green;
+			*(out++) = pc.red;
+			*(out++) = 0;
+		)
+		/* *INDENT-ON* */
+	}
+	else if (g_xserver_be)
+	{
 		if (g_host_be)
 		{
-			BSWAP16(pixel);
-		}
-
-		value = make_colour(split_colour16(pixel));
-
-		if (g_xserver_be)
-		{
-			*(out++) = value >> 24;
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT32(out, value);
+			}
 		}
 		else
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
-			*(out++) = value >> 24;
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				BOUT32(out, value);
+			}
+		}
+	}
+	else
+	{
+		if (g_host_be)
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				BSWAP16(pixel);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT32(out, value);
+			}
+		}
+		else
+		{
+			while (out < end)
+			{
+				pixel = *(data++);
+				SPLITCOLOUR16(pixel, pc);
+				value = MAKECOLOUR(pc);
+				LOUT32(out, value);
+			}
 		}
 	}
 }
 
 static void
-translate24to16(uint8 * data, uint8 * out, uint8 * end)
+translate24to16(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 pixel = 0;
 	uint16 value;
+	PixelColour pc;
+
 	while (out < end)
 	{
 		pixel = *(data++) << 16;
 		pixel |= *(data++) << 8;
 		pixel |= *(data++);
-
-		value = (uint16) make_colour(split_colour24(pixel));
-
+		SPLITCOLOUR24(pixel, pc);
+		value = MAKECOLOUR(pc);
 		if (g_xserver_be)
 		{
-			*(out++) = value >> 8;
-			*(out++) = value;
+			BOUT16(out, value);
 		}
 		else
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
+			LOUT16(out, value);
 		}
 	}
 }
 
 static void
-translate24to24(uint8 * data, uint8 * out, uint8 * end)
+translate24to24(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 pixel;
 	uint32 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_xserver_be)
 	{
-		pixel = *(data++) << 16;
-		pixel |= *(data++) << 8;
-		pixel |= *(data++);
-
-		value = make_colour(split_colour24(pixel));
-
-		if (g_xserver_be)
+		while (out < end)
 		{
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			pixel = *(data++) << 16;
+			pixel |= *(data++) << 8;
+			pixel |= *(data++);
+			SPLITCOLOUR24(pixel, pc);
+			value = MAKECOLOUR(pc);
+			BOUT24(out, value);
 		}
-		else
+	}
+	else
+	{
+		while (out < end)
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
+			pixel = *(data++) << 16;
+			pixel |= *(data++) << 8;
+			pixel |= *(data++);
+			SPLITCOLOUR24(pixel, pc);
+			value = MAKECOLOUR(pc);
+			LOUT24(out, value);
 		}
 	}
 }
 
 static void
-translate24to32(uint8 * data, uint8 * out, uint8 * end)
+translate24to32(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 pixel;
 	uint32 value;
+	PixelColour pc;
 
-	while (out < end)
+	if (g_arch_match)
 	{
-		pixel = *(data++) << 16;
-		pixel |= *(data++) << 8;
-		pixel |= *(data++);
-
-		value = make_colour(split_colour24(pixel));
-
-		if (g_xserver_be)
+		/* *INDENT-OFF* */
+#ifdef NEED_ALIGN
+		REPEAT4
+		(
+			*(out++) = *(data++);
+			*(out++) = *(data++);
+			*(out++) = *(data++);
+			*(out++) = 0;
+		)
+#else
+		REPEAT4
+		(
+			*((uint32 *) out) = *((uint32 *) data);
+			out += 4;
+			data += 3;
+		)
+#endif
+		/* *INDENT-ON* */
+	}
+	else if (g_xserver_be)
+	{
+		while (out < end)
 		{
-			*(out++) = value >> 24;
-			*(out++) = value >> 16;
-			*(out++) = value >> 8;
-			*(out++) = value;
+			pixel = *(data++) << 16;
+			pixel |= *(data++) << 8;
+			pixel |= *(data++);
+			SPLITCOLOUR24(pixel, pc);
+			value = MAKECOLOUR(pc);
+			BOUT32(out, value);
 		}
-		else
+	}
+	else
+	{
+		while (out < end)
 		{
-			*(out++) = value;
-			*(out++) = value >> 8;
-			*(out++) = value >> 16;
-			*(out++) = value >> 24;
+			pixel = *(data++) << 16;
+			pixel |= *(data++) << 8;
+			pixel |= *(data++);
+			SPLITCOLOUR24(pixel, pc);
+			value = MAKECOLOUR(pc);
+			LOUT32(out, value);
 		}
 	}
 }
@@ -885,6 +1134,8 @@ translate_image(int width, int height, uint8 * data)
 		if (g_depth == 15 && g_server_bpp == 15)
 			return data;
 		if (g_depth == 16 && g_server_bpp == 16)
+			return data;
+		if (g_depth == 24 && g_bpp == 24 && g_server_bpp == 24)
 			return data;
 	}
 
@@ -996,9 +1247,26 @@ sigusr_func (int s)
 	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
     	    XMapWindow(g_display, wnd2);
 	}
-	XUnmapWindow (g_display, g_wnd);
+	XUnmapWindow (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd);
     break;
     case SIGUSR2:
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	#ifdef NXDESKTOP_FWINDOW_DEBUG
+	nxdesktopDebug("sigusr_func","Received SIGUSR2 - Mask debug mode.\n");
+	    #ifdef NXDESKTOP_MASK_DUMP_DISK_SIGNAL
+	    if (float_window_mode)
+	    {
+		XWriteBitmapFile(g_display,"shape_bitmap.xbm",shape_bitmap,g_width,g_height,-1,-1);
+		XWriteBitmapFile(g_display,"background.xbm",g_backstore,g_width,g_height,-1,-1);
+	    }
+	    else nxdesktopDebug("sigusr_func","float_window_mode = False.\n");
+	    #else
+	    nxdesktopDebug("sigusr_func","Lack dump from here to video yet.\n");
+	    #endif
+	#endif
+	#endif
+	
 	#ifdef NXDESKTOP_XWIN_DEBUG
 	nxdesktopDebug("sigusr_func","Received SIGUSR2, unmapping window.\n");
 	#endif
@@ -1009,7 +1277,7 @@ sigusr_func (int s)
 	}
 	else 
 	{
-    	    XMapRaised (g_display, g_wnd);
+    	    XMapRaised (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd);
     	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
 	}
     break;
@@ -1092,6 +1360,9 @@ ui_init(void)
 	XPixmapFormatValues *pfm;
 	uint16 test;
 	int minkey, maxkey;
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	int event_base, error_base;
+	#endif
 	int i, screen_num, nvisuals;
 	XVisualInfo *vmatches = NULL;
 	XVisualInfo template;
@@ -1116,7 +1387,19 @@ ui_init(void)
 	g_screen = ScreenOfDisplay(g_display, screen_num);
 	g_depth = DefaultDepthOfScreen(g_screen);
 	
-	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	/* Check for the XShape extension */
+	if (!XShapeQueryExtension(g_display, &event_base, &error_base))
+	{
+	    warning("XShape extension not found. Floating window mode will not work properly\n");
+	}
+	#ifdef NXDESKTOP_FWINDOW_DEBUG
+	else
+	{
+	    nxdesktopDebug("ui_init","XShape extension OK\n");
+	}
+	#endif
+	#endif
 
 	/* Search for best TrueColor depth */
 	template.class = TrueColor;
@@ -1133,6 +1416,10 @@ ui_init(void)
 		TrueColorVisual = True;
 	}
 
+	/* NX */
+	XFree(vmatches);
+	/* NX */
+	
 	test = 1;
 	g_host_be = !(BOOL) (*(uint8 *) (&test));
 	g_xserver_be = (ImageByteOrder(g_display) == MSBFirst);
@@ -1163,20 +1450,31 @@ ui_init(void)
 		calculate_shifts(vi.red_mask, &g_red_shift_r, &g_red_shift_l);
 		calculate_shifts(vi.blue_mask, &g_blue_shift_r, &g_blue_shift_l);
 		calculate_shifts(vi.green_mask, &g_green_shift_r, &g_green_shift_l);
-		
-		/* if RGB video and averything is little endian */
-		if (vi.red_mask > vi.green_mask && vi.green_mask > vi.blue_mask)
-			if (!g_xserver_be && !g_host_be)
+
+		/* if RGB video and everything is little endian */
+		if ((vi.red_mask > vi.green_mask && vi.green_mask > vi.blue_mask) &&
+		    !g_xserver_be && !g_host_be)
+		{
+			if (g_depth <= 16 || (g_red_shift_l == 16 && g_green_shift_l == 8 &&
+					      g_blue_shift_l == 0))
+			{
 				g_arch_match = True;
+			}
+		}
+
+		if (g_arch_match)
+		{
+			DEBUG(("Architectures match, enabling little endian optimisations.\n"));
+		}
 	}
 	
 	if (nxDisplay[0] != 0)
 	{
-		nxdesktopUseNXTrans = (strncasecmp(nxDisplay, "nx", 2) == 0);
+	    nxdesktopUseNXTrans = (strncasecmp(nxDisplay, "nx", 2) == 0);
 	}
 	else
 	{	
-		nxdesktopUseNXTrans = (strncasecmp(XDisplayName(NULL), "nx", 2) == 0);
+	    nxdesktopUseNXTrans = (strncasecmp(XDisplayName(NULL), "nx", 2) == 0);
 	}
 
         XSetErrorHandler(nxdesktopErrorHandler);
@@ -1185,164 +1483,6 @@ ui_init(void)
 	warning("XFillRect optimization disabled\n");
 	#endif
 
-	if (nxdesktopUseNXTrans)
-	{
-                NXGetControlParameters(g_display, &nxdesktopLinkType, &nxdesktopProtocolMajor,
-						&nxdesktopProtocolMinor, &nxdesktopProtocolPatch,
-						&nxdesktopStopKarmaSz, &nxdesktopSplitSize,
-						&nxdesktopPackMethod, &nxdesktopPackQuality,
-                                                &nxdesktopDataLevel, &nxdesktopStreamLevel,
-                                                &nxdesktopDeltaLevel, &nxdesktopLoadCache,
-                                                &nxdesktopSaveCache, &nxdesktopStartupCache);
-
-
-		NXGetCleanupParameters(g_display, &nxdesktopCleanGet, &nxdesktopCleanAlloc,
-						&nxdesktopCleanFlush, &nxdesktopCleanSend,
-						&nxdesktopCleanImages);
-
-		NXGetImageParameters(g_display,	&nxdesktopImageSplit, &nxdesktopImageMask,
-						&nxdesktopImageFrame, &nxdesktopImageSplitMethod,
-						&nxdesktopImageMaskMethod);
-		
-		if (nxdesktopLinkType == LINK_TYPE_MODEM ||
-		    nxdesktopLinkType == LINK_TYPE_ISDN ||
-		    nxdesktopLinkType == LINK_TYPE_ADSL)
-		{
-	    	    rdp_img_cache = True;
-		    rdp_img_cache_nxcompressed = True;
-		}
-		else
-		{
-	    	    rdp_img_cache = False;
-		    rdp_img_cache_nxcompressed = False;
-		}
-		#ifdef NXDESKTOP_XWIN_DEBUG
-		nxdesktopDebug("ui_init","RDP image cache: %d.\n",rdp_img_cache);
-		nxdesktopDebug("ui_init","RDP image compressed cache: %d.\n",rdp_img_cache_nxcompressed);
-		#endif
-		/*
-		 * Activate shared memory PutImages
-		 * in X server proxy. Shared memory
-                 * on path from agent to X client
-                 * proxy is not implemented yet.
-		 */
-
-		{
-			unsigned int enableClient = 0;
-			unsigned int enableServer = 1;
-
-			unsigned int clientSegment, serverSegment;
-
-			NXGetShmemParameters(g_display, &enableClient, &enableServer,
-						&clientSegment, &serverSegment);
-
-			if (enableServer == False)
-			{
-			    info("Not using shared memory support in X server.\n");
-			}
-			else
-			{
-			    info("Using shared memory support in X server.\n");
-			}
-		}
-
-                nxdesktopStopKarmaSz = nxdesktopStopKarmaSz;
-
-		/*
-		 * Get unpack methods implemented by the proxy
-		 * chain and check if ours are supported.
-		 */
-
-		if (nxdesktopPackMethod != NO_PACK)
-		{
-			unsigned char methods[NXNumberOfPackMethods];
-
-			unsigned int entries = NXNumberOfPackMethods;
-			
-			if (NXGetUnpackParameters(g_display, &entries, methods) == 0 ||
-				entries != NXNumberOfPackMethods)
-			{
-				error("ui_init","NXGetUnpackParameters() failed on g_display '%s'.\n",
-				XDisplayName((char *)nxDisplay));
-				return False;
-			}
-			
-#ifdef NXWIN_USES_PACKED_RDP_TEXT
-                        nxdesktopCanPackRDPText = methods[PACK_RDP_TEXT];
-#endif
-			if (methods[PACK_RDP_COMPRESSED_256_COLORS] == True)
-			{
-				#ifdef NXDESKTOP_XWIN_DEBUG
-				nxdesktopDebug("ui_init","Using pack method PACK_RDP_COMPRESSED_256_COLORS.\n");
-				#endif
-
-				nxdesktopUseNXCompressedRdpImages = True;
-        	        }    
-			
-			if (methods[PACK_RDP_PLAIN_256_COLORS] == True)
-			{
-				#ifdef NXDESKTOP_XWIN_DEBUG
-				nxdesktopDebug("ui_init","Using pack method PACK_RDP_PLAIN_256_COLORS.\n");
-				#endif
-			
-				nxdesktopUseNXRdpImages = True;
-        	        }
-			if (methods[PACK_RDP_PLAIN_256_COLORS] == False &&
-			    methods[PACK_RDP_COMPRESSED_256_COLORS] == False)
-			{  
-			    warning("No available RDP pack method on g_display '%s'.\n",
-						XDisplayName((char *)nxDisplay));
-			}
-			/*if (nxdesktopPackMethod == PACK_RDP_COMPRESSED_256_COLORS &&
-				methods[PACK_RDP_COMPRESSED_256_COLORS] == True)
-        	        {
-				#ifdef NXDESKTOP_XWIN_DEBUG
-				fprintf(stderr, "ui_init: Using pack method PACK_RDP_COMPRESSED_256_COLORS.\n");
-				#endif
-
-				nxdesktopUseNXCompressedRdpImages = True;
-        	        }
-			else if (nxdesktopPackMethod == PACK_RDP_PLAIN_256_COLORS &&
-				    methods[PACK_RDP_PLAIN_256_COLORS] == True)
-	                {
-				fprintf(stderr, "ui_init: Using pack method PACK_RDP_PLAIN_256_COLORS.\n");
-
-				nxdesktopUseNXRdpImages = True;
-        	        }
-			else
-			{
-				fprintf(stderr, "ui_init: WARNING! No available RDP pack method on g_display '%s'.\n",
-						XDisplayName(nxDisplay));
-			}*/
-		}
-		else
-		{
-		    rdp_img_cache = False;
-		    rdp_img_cache_nxcompressed = False;
-		}
-
-		/*
-		 * Inform remote proxy about pixel geometry
-		 * to be used to unpack images.
-		 */
-
-		if (nxdesktopUseNXCompressedRdpImages ||
-			nxdesktopUseNXRdpImages)
-		{
-			if (NXSetUnpackGeometry(g_display, 0, g_screen, g_visual) == 0)
-			{
-				error("NXSetUnpackGeometry() failed on g_display '%s'.\n",
-						XDisplayName((char *)nxDisplay));
-
-				return False;
-			}
-		}
-	}
-	
-	/* NX */
-	g_bpp = g_depth;
-	/* NX */
-	
 	pfm = XListPixmapFormats(g_display, &i);
 	if (pfm != NULL)
 	{
@@ -1353,7 +1493,6 @@ ui_init(void)
 			if ((pfm[i].depth == g_depth) && (pfm[i].bits_per_pixel > g_bpp))
 			{
 				g_bpp = pfm[i].bits_per_pixel;
-				
 			}
 		}
 		XFree(pfm);
@@ -1392,7 +1531,7 @@ ui_init(void)
 	/*
 	 * Determine desktop size
 	 */
-	if (g_fullscreen)
+	if (g_fullscreen) 
 	{
 		g_width = WidthOfScreen(g_screen);
 		g_height = HeightOfScreen(g_screen);
@@ -1403,7 +1542,7 @@ ui_init(void)
 		g_height = HeightOfScreen(g_screen) * (-g_width) / 100;
 		g_width = WidthOfScreen(g_screen) * (-g_width) / 100;
 	}
-	else if (g_width == 0)
+	else if (g_width == 0) 
 	{
 		/* Fetch geometry from _NET_WORKAREA */
 		uint32 x, y, cx, cy;
@@ -1419,6 +1558,11 @@ ui_init(void)
 			g_width = 800;
 			g_height = 600;
 		}
+	}
+	else if (float_window_mode)
+	{
+	    g_width = WidthOfScreen(g_screen);
+	    g_height = HeightOfScreen(g_screen);
 	}
 
 	/* make sure width is a multiple of 4 */
@@ -1439,6 +1583,185 @@ ui_init(void)
 	return True;
 }
 
+BOOL
+ui_init_nx(void)
+
+{
+    #ifdef NXDESKTOP_XWIN_DEBUG
+    int i;
+    
+    
+    nxdesktopDebug("ui_init","Entered NX transport init process.\n");
+    #endif  
+    
+    if (nxdesktopUseNXTrans)
+    {
+	rdp_img_cache = True;
+	rdp_img_cache_nxcompressed = True;
+        NXGetControlParameters(g_display, &nxdesktopLinkType, &nxdesktopProtocolMajor,
+				&nxdesktopProtocolMinor, &nxdesktopProtocolPatch,
+				&nxdesktopStopKarmaSz, &nxdesktopSplitSize,
+				&nxdesktopPackMethod, &nxdesktopPackQuality,
+                                &nxdesktopDataLevel, &nxdesktopStreamLevel,
+                                &nxdesktopDeltaLevel, &nxdesktopLoadCache,
+                                &nxdesktopSaveCache, &nxdesktopStartupCache);
+
+
+	NXGetCleanupParameters(g_display, &nxdesktopCleanGet, &nxdesktopCleanAlloc,
+				&nxdesktopCleanFlush, &nxdesktopCleanSend,
+				&nxdesktopCleanImages);
+
+	NXGetImageParameters(g_display,	&nxdesktopImageSplit, &nxdesktopImageMask,
+				&nxdesktopImageFrame, &nxdesktopImageSplitMethod,
+				&nxdesktopImageMaskMethod);
+		
+	#ifdef NXDESKTOP_XWIN_DEBUG
+	nxdesktopDebug("ui_init","RDP image cache: %d.\n",rdp_img_cache);
+	nxdesktopDebug("ui_init","RDP image compressed cache: %d.\n",rdp_img_cache_nxcompressed);
+	#endif
+	/*
+	 * Activate shared memory PutImages
+	 * in X server proxy. Shared memory
+         * on path from agent to X client
+         * proxy is not implemented yet.
+	 */
+
+	{
+	    unsigned int enableClient = 0;
+	    unsigned int enableServer = 1;
+	    unsigned int clientSegment, serverSegment;
+
+	    NXGetShmemParameters(g_display, &enableClient, &enableServer,
+				    &clientSegment, &serverSegment);
+	    if (enableServer == False)
+	    {
+		info("Not using shared memory support in X server.\n");
+	    }
+	    else
+	    {
+		info("Using shared memory support in X server.\n");
+	    }
+	}
+
+        nxdesktopStopKarmaSz = nxdesktopStopKarmaSz;
+
+	/*
+	 * Get unpack methods implemented by the proxy
+	 * chain and check if ours are supported.
+	 */
+	 
+	if (nxdesktopPackMethod != NO_PACK)
+	{
+	    unsigned char methods[NXNumberOfPackMethods];
+
+	    unsigned int entries = NXNumberOfPackMethods;
+
+	    if (NXGetUnpackParameters (g_display, &entries, methods) == 0 ||
+		entries != NXNumberOfPackMethods)
+    	    {
+		error ("ui_init", "NXGetUnpackParameters() failed on g_display '%s'.\n",
+	        XDisplayName ((char *) nxDisplay));
+		return False;
+	    }
+
+	    #ifdef NXWIN_USES_PACKED_RDP_TEXT
+	    nxdesktopCanPackRDPText = methods[PACK_RDP_TEXT];
+	    #endif
+	    
+	    #ifdef NXDESKTOP_XWIN_DEBUG
+	    for (i = 0; i <= NXNumberOfPackMethods; i++)
+    	    {
+		if (methods[i])
+		    nxdesktopDebug ("ui_init", "Registered pack method %d.\n", i);
+    	    }
+	    #endif
+
+	    /* COMPRESS methods */
+	    if ((methods[PACK_RDP_COMPRESSED_16M_COLORS] == True) && (g_server_bpp > 16))
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_16M_COLORS.\n");
+		#endif
+		PACK_RDP_COMPRESSED = PACK_RDP_COMPRESSED_16M_COLORS;
+		nxdesktopUseNXCompressedRdpImages = True;
+    	    }
+	    else
+    	    if ((methods[PACK_RDP_COMPRESSED_64K_COLORS] == True) && (g_server_bpp > 8))
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_64K_COLORS.\n");
+		#endif
+		PACK_RDP_COMPRESSED = PACK_RDP_COMPRESSED_64K_COLORS;
+		nxdesktopUseNXCompressedRdpImages = True;
+    	    }
+	    else 
+	    if (methods[PACK_RDP_COMPRESSED_256_COLORS] == True)
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_256_COLORS.\n");
+		#endif
+		PACK_RDP_COMPRESSED = PACK_RDP_COMPRESSED_256_COLORS;
+		nxdesktopUseNXCompressedRdpImages = True;
+    	    }
+	    
+	    /* PLAIN methods */
+	    if ((methods[PACK_RDP_PLAIN_16M_COLORS] == True) && (g_server_bpp > 16))
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_PLAIN_16M_COLORS.\n");
+		#endif
+		PACK_RDP_PLAIN = PACK_RDP_PLAIN_16M_COLORS;
+		nxdesktopUseNXRdpImages = True;
+    	    }
+	    else
+    	    if ((methods[PACK_RDP_PLAIN_64K_COLORS] == True) && (g_server_bpp > 8))
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_PLAIN_64K_COLORS.\n");
+		#endif
+		PACK_RDP_PLAIN = PACK_RDP_PLAIN_64K_COLORS;
+		nxdesktopUseNXRdpImages = True;
+    	    }
+	    else 
+	    if (methods[PACK_RDP_PLAIN_256_COLORS] == True)
+    	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug ("ui_init", "sing pack method PACK_RDP_PLAIN_256_COLORS.\n");
+		#endif
+		PACK_RDP_PLAIN = PACK_RDP_PLAIN_256_COLORS;
+		nxdesktopUseNXRdpImages = True;
+    	    }
+	    else
+    	    {
+		warning ("No available RDP pack method on g_display '%s'.\n", XDisplayName ((char *) nxDisplay));
+		rdp_img_cache_nxcompressed = False;
+    	    }
+	}
+	else
+	{
+	    warning ("Cache disabled.\n");
+	    rdp_img_cache = False;
+	    rdp_img_cache_nxcompressed = False;
+	}
+
+	/*
+        * Inform remote proxy about pixel geometry
+        * to be used to unpack images.
+        */
+
+	if (nxdesktopUseNXCompressedRdpImages || nxdesktopUseNXRdpImages)
+	{
+	    if (NXSetUnpackGeometry(g_display, 0, g_screen, g_visual) == 0)
+	    {
+		error("NXSetUnpackGeometry() failed on g_display '%s'.\n", XDisplayName((char *)nxDisplay));
+		return False;
+	    }
+	}
+    }
+	
+    return True;
+}
+	
 void
 ui_deinit(void)
 {
@@ -1464,10 +1787,194 @@ ui_deinit(void)
 	if (g_ownbackstore)
 		XFreePixmap(g_display, g_backstore);
 
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    XDestroyImage(shape_image);
+ 	    XFreePixmap(g_display,shape_bitmap);
+ 	    XFreeGC(g_display,shape_gc);
+	}
+	#endif
+	
 	XFreeGC(g_display, g_gc);
 	XCloseDisplay(g_display);
 	g_display = NULL;
 }
+
+#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+
+/* This function returns a pixmap, suitable to create a window mask, */
+
+HBITMAP create_mask(HBITMAP bitmap, int sx, int sy, int w, int h)
+
+{
+    XImage *aux_rdp_image, *aux_shape_image;
+    Pixmap aux_pixmap;
+    int x, y;
+    
+    aux_rdp_image = XGetImage(g_display, (Pixmap)bitmap, sx, sy, w, h, AllPlanes, ZPixmap);
+    aux_shape_image = XCreateImage(g_display, g_visual, 1, XYBitmap, 0, NULL, w, h, 8, 0);
+    aux_shape_image->data = malloc(aux_shape_image->bytes_per_line * aux_shape_image->height);
+    aux_pixmap = XCreatePixmap(g_display, g_wnd, w, h, (unsigned int) 1);
+    
+    #ifdef NXDESKTOP_MASK_DUMP
+    nxdesktopDebug("create mask","aux_rdp_image\n");
+    hexdump(aux_rdp_image->data,(w/8)*h);
+    #endif
+    
+    for (y = 0; y < h; y++)
+    {
+        for (x = 0; x < w; x++)
+        {
+	    if (XGetPixel(aux_rdp_image,x,y) == BACKGROUND)
+		XPutPixel(aux_shape_image,x,y,1);
+	    else
+		XPutPixel(aux_shape_image,x,y,0);
+	}
+    }
+
+    #ifdef NXDESKTOP_MASK_DUMP
+    nxdesktopDebug("create mask","aux_shape_image\n");
+    hexdump(aux_shape_image->data,(w/8)*h);
+    #endif
+    
+    XPutImage(g_display, aux_pixmap, shape_gc, aux_shape_image, 0, 0, 0, 0, w, h);
+    XFree(aux_rdp_image);
+    XFree(aux_shape_image);
+    return (HBITMAP) aux_pixmap;
+}
+
+
+void test_shape(void)
+{
+    /* Creates a test shape mask from the backstore and optionaly dumps it to disk */
+    shape_bitmap = (Pixmap)create_mask((HBITMAP)g_backstore, 0, 0, g_width,g_height);
+    
+    #ifdef NXDESKTOP_MASK_DUMP_DISK
+    XWriteBitmapFile(g_display,"shape_bitmap.xbm",shape_bitmap,g_width,g_height,-1,-1);
+    XWriteBitmapFile(g_display,"background.xbm",g_backstore,g_width,g_height,-1,-1);
+    #endif
+    
+    XShapeCombineMask(g_display, g_wnd, ShapeBounding, 0, 0, shape_bitmap, ShapeSet);
+    XSync(g_display,False);
+}
+
+void put_mask(HBITMAP bitmap, int srcx, int srcy, int x, int y, int w, int h)
+
+{
+    #ifdef NXDESKTOP_MASK_DUMP_DISK
+    nxdesktopDebug("put_mask","bitmap coords %d %d %d %d %d %d\n",srcx, srcy, x, y, w, h);
+    XWriteBitmapFile(g_display,"bitmap.xbm",(Pixmap)bitmap,w,h,-1,-1);
+    #endif
+    XCopyArea(g_display, (Pixmap)bitmap, shape_bitmap, shape_gc, srcx, srcy, w, h, x, y);
+    XShapeCombineMask(g_display, g_wnd, ShapeBounding, 0, 0, shape_bitmap, ShapeSet);
+    #ifdef NXDESKTOP_MASK_DUMP_DISK
+    XWriteBitmapFile(g_display,"shape_bitmap.xbm",shape_bitmap,g_width,g_height,-1,-1);
+    #endif
+}
+
+void set_first_shape()
+{
+    /* Forces the application to restore the size from it's maximized state when 
+       it's initiated by simulating a click on the maximize/restore icon */
+    rdp_send_input(time(NULL), RDP_INPUT_MOUSE, 32768|4096, g_width-28, 8);
+    rdp_send_input(time(NULL), RDP_INPUT_MOUSE, 4096, g_width-28, 8);
+    
+    /* Captures the current window and creates a first shape_bitmap */
+    shape_bitmap = (Pixmap)create_mask((HBITMAP)g_backstore, 0, 0, g_width,g_height);
+    
+    #ifdef NXDESKTOP_MASK_DUMP_DISK
+    XWriteBitmapFile(g_display,"shape_bitmap.xbm",shape_bitmap,g_width,g_height,-1,-1);
+    XWriteBitmapFile(g_display,"background.xbm",g_backstore,g_width,g_height,-1,-1);
+    XWriteBitmapFile(g_display,"window.xbm",g_wnd,g_width,g_height,-1,-1);
+    #endif
+
+    XShapeCombineMask(g_display, g_wnd, ShapeBounding, 0, 0, shape_bitmap, ShapeSet);
+    
+    #ifdef NXDESKTOP_SHAPE_FORCESYNC
+    XSync(g_display,False);
+    #endif
+    
+    first_shape=False;
+}
+
+void make_mask_hole(int x, int y, int w, int h, int colour, BOOL hole)
+
+{
+    if (colour > 0)
+    {
+	if (TRANSLATE(colour) == BACKGROUND)
+	    XSetForeground(g_display, shape_gc, 0);
+	else
+	    XSetForeground(g_display, shape_gc, 1);
+    } else
+    {
+	if (hole)
+	    XSetForeground(g_display, shape_gc, 0);
+	else 
+	    XSetForeground(g_display, shape_gc, 1);
+    }
+    XFillRectangle(g_display, shape_bitmap, shape_gc, x, y, w, h);
+    
+}
+
+void nxdesktopShape(Pixmap src_pix, int src_x, int src_y, int dest_x, int dest_y, int width, int height, BOOL Dump)
+
+{
+    HBITMAP pix;
+    
+    pix = create_mask((HBITMAP)src_pix, src_x, src_y, width, height);
+    
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("nxdesktopShape","shape coords %d %d %d %d %d %d\n",src_x, src_y, dest_x, dest_y, width, height);
+    #endif
+
+    XCopyArea(g_display, (Pixmap)pix, shape_bitmap, shape_gc, 0, 0, width, height, dest_x, dest_y);
+    XShapeCombineMask(g_display, g_wnd, ShapeBounding, 0, 0, shape_bitmap, ShapeSet);
+    
+    #ifdef NXDESKTOP_MASK_DUMP_DISK
+    if (Dump && float_window_mode)
+    {
+	XWriteBitmapFile(g_display,"pix.xbm",(Pixmap)pix,width,height,-1,-1);
+    }
+    #endif
+    
+    shape_need_update = False;
+    
+    #ifdef NXDESKTOP_SHAPE_FORCESYNC
+    XSync(g_display, False);
+    #endif
+}
+
+/* Verify point (x, y), and set shape_need_update accordingly */
+
+void
+shape_update_check(int x, int y, int rdp_color)
+{
+	BOOL in_region;
+	uint32 col;
+
+	col = TRANSLATE(rdp_color);
+
+	in_region = !XGetPixel(shape_image, x, y);
+
+	if (in_region && (col == BACKGROUND))
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("shape_update_check","Painting with background in region\n");
+	    #endif
+	    shape_need_update = True;
+	}
+	else if (!in_region && (col != BACKGROUND))
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("shape_update_check","Painting with normal col outside region\n");
+	    #endif
+	    shape_need_update = True;
+	}
+}
+
+#endif
 
 void nxdesktopSetAtoms()
 {
@@ -1501,11 +2008,11 @@ void nxdesktopSetAtoms()
     #endif
     
     identity = nxdesktopAtoms[0];
-    XChangeProperty(g_display, g_wnd, identity, XA_ATOM, sizeof(int) * 8, PropModeReplace, (unsigned char *) &type,  4);
+    XChangeProperty(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, identity, XA_ATOM, sizeof(int) * 8, PropModeReplace, (unsigned char *) &type,  4);
     
-    XSetSelectionOwner(g_display, nxdesktopAtoms[5], g_wnd, CurrentTime);
+    XSetSelectionOwner(g_display, nxdesktopAtoms[5], g_viewport_wnd ? g_viewport_wnd : g_wnd, CurrentTime);
     
-    XSetWMProtocols(g_display, g_wnd, &nxdesktopAtoms[2], 1);
+    XSetWMProtocols(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, &nxdesktopAtoms[2], 1);
 }
 
 
@@ -1513,7 +2020,8 @@ BOOL
 ui_create_window(void)
 {
 	uint8 null_pointer_mask[1] = { 0x80 };
-	uint8 null_pointer_data[4] = { 0x00, 0x00, 0x00, 0x00 };
+	uint8 null_pointer_data[24] = { 0x00 };
+
 	XSetWindowAttributes attribs;
 	XClassHint *classhints;
 	XSizeHints *sizehints;
@@ -1521,13 +2029,28 @@ ui_create_window(void)
 	long input_mask, ic_input_mask;
  	XEvent xevent;
 	/* NX */
-	int i;
+	int i = 1;
+	int x1, y1;
 	XWMHints wmhints;
 	static struct sigaction sigusr_act;
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	GC temp_gc;
+	Pixmap temp_pix;
+	#endif
+	
 	/* NX */
 
-	wndwidth = g_fullscreen ? WidthOfScreen(g_screen) : g_width;
-	wndheight = g_fullscreen ? HeightOfScreen(g_screen) : g_height;
+	if (!g_embed_wnd)
+	{
+	    wndwidth = g_width;
+	    wndheight = g_height;
+        }
+	else
+        {
+	    wndwidth = g_fullscreen ? WidthOfScreen(g_screen) : g_width;
+	    wndheight = g_fullscreen ? HeightOfScreen(g_screen) : g_height;
+        }
 
 	attribs.background_pixel = BlackPixelOfScreen(g_screen);
 	attribs.border_pixel = WhitePixelOfScreen(g_screen);
@@ -1540,9 +2063,6 @@ ui_create_window(void)
 	if (attribs.backing_store == NotUseful)
 	#endif
 		g_ownbackstore = True;
-/*		ownbackstore = False;
-       NXSetExposeEvents(g_display, False, False, False);
-*/
 	/*
 	 * Always disable NoExpose and GraphicsExpose events.
 	 */
@@ -1565,6 +2085,9 @@ ui_create_window(void)
 	r = pV.red_mask;
 	g = pV.green_mask;
 	b = pV.blue_mask;
+	
+	XFree(nxVisuals);
+	
 	if(!pV.red_mask|| !pV.green_mask|| !pV.blue_mask)
 	{
 		nx_black = 0x000000;
@@ -1583,7 +2106,16 @@ ui_create_window(void)
 	}
 	useXpmIcon = getNXIcon(g_display, &nxIconPixmap, &nxIconShape);
     }
-
+	#ifdef NXDESKTOP_FWINDOW_DEBUG
+	
+	/* Warning - this is temporary as the flaoting mode should run fullscreen */
+	
+	sigusr_act.sa_handler = sigusr_func;
+	sigfillset(&(sigusr_act.sa_mask));
+	sigaction(SIGUSR1, &sigusr_act, NULL);
+	sigaction(SIGUSR2, &sigusr_act, NULL);
+	#endif
+	
 	if (g_fullscreen || ipaq)
 	{
 		attribs.override_redirect = True;
@@ -1595,8 +2127,12 @@ ui_create_window(void)
 		sigaction(SIGUSR1, &sigusr_act, NULL);
 		sigaction(SIGUSR2, &sigusr_act, NULL);
 
-		g_width = WidthOfScreen(g_screen);
-                g_height = HeightOfScreen(g_screen);
+                if (ipaq)
+                {
+                  g_width = WidthOfScreen(g_screen);
+                  g_height = HeightOfScreen(g_screen);
+                }
+
 		/*
                 if(ipaq)
                 {
@@ -1619,12 +2155,11 @@ ui_create_window(void)
 	g_width = g_width  & ~3; /* make width a multiple of 32 bits */
 
 	/* NX */
-	
-	/*g_wnd = XCreateWindow(g_display, RootWindowOfScreen(g_screen), 100,100, 1000, 1000,
-			      0, g_depth, InputOutput, g_visual,
+	/*g_wnd = XCreateWindow(g_display, RootWindowOfScreen(g_screen), xo,yo, wndwidth, wndheight,
+			      0, CopyFromParent, InputOutput, CopyFromParent,
 			      CWBackPixel | CWBackingStore | CWOverrideRedirect |
 			      CWColormap | CWBorderPixel, &attribs);*/
-	
+
 	g_wnd = XCreateWindow(g_display, RootWindowOfScreen(g_screen), xo, yo, wndwidth, wndheight,
 			      0, CopyFromParent, InputOutput, CopyFromParent,
 			      CWBackingStore | (g_fullscreen ? CWOverrideRedirect:
@@ -1632,6 +2167,9 @@ ui_create_window(void)
 	
 	if (g_gc == NULL)
 		g_gc = XCreateGC(g_display, g_wnd, 0, NULL);
+
+	if (g_create_bitmap_gc == NULL)
+		g_create_bitmap_gc = XCreateGC(g_display, g_wnd, 0, NULL);
 
 	if ((g_ownbackstore) && (g_backstore == 0))
 	{
@@ -1647,21 +2185,75 @@ ui_create_window(void)
 	if (g_fullscreen)
 	{
 		attribs.override_redirect = False;
-/*
-		wnd2 = XCreateWindow (g_display, DefaultRootWindow (g_display), 0, 0, 1, 1,
+
+		/*wnd2 = XCreateWindow (g_display, DefaultRootWindow (g_display), 0, 0, 1, 1,
 				0, CopyFromParent, InputOutput, CopyFromParent,
-				CWBackingStore | CWBackPixel , &attribs);
-                                */
+				CWBackingStore | CWBackPixel , &attribs);*/
+                                
 		wnd2 = XCreateWindow (g_display, RootWindowOfScreen(g_screen), 0, 0, 1, 1,
 				0, CopyFromParent, InputOutput, CopyFromParent,
 				CWBackingStore | CWBackPixel , &attribs);
 
 	}
-	//
+	
 	/* NX */
+	
+        if (!g_embed_wnd && !ipaq)
+	{
+	    if (g_fullscreen)
+	    {
+        	x1 = (WidthOfScreen(g_screen) - g_width)/2;
+        	y1 = (HeightOfScreen(g_screen) - g_height)/2;
+        	g_viewport_width = (WidthOfScreen(g_screen));
+        	g_viewport_height= (HeightOfScreen(g_screen));
+	    }
+            else
+	    {
+        	xo = g_saved_viewport_x;
+        	yo = g_saved_viewport_y;
+
+        	if (g_saved_wnd_x == 0 && g_saved_wnd_y == 0)
+        	{
+        	    x1 = y1 = 0;
+        	}
+        	else
+        	{
+            	    x1 = g_saved_wnd_x;
+        	    y1 = g_saved_wnd_y;
+        	}
+
+        	if (g_saved_viewport_width && g_saved_viewport_height)
+        	{
+            	    g_viewport_width = g_saved_viewport_width;
+            	    g_viewport_height = g_saved_viewport_height;
+        	}
+        	else
+        	{
+    		    g_viewport_width = wndwidth < WidthOfScreen(g_screen) ? wndwidth : WidthOfScreen(g_screen)*3/4;
+    		    g_viewport_height= wndheight< HeightOfScreen(g_screen)? wndheight: HeightOfScreen(g_screen)*3/4;
+    		}
+    	    }
+
+	    attribs.override_redirect = g_fullscreen;
+
+            if (viewport_mode)
+	    {
+		g_viewport_wnd = XCreateWindow (g_display, RootWindowOfScreen(g_screen), xo,yo,
+                                		    g_viewport_width, g_viewport_height, 0, g_depth,
+                                			InputOutput, g_visual, CWBackPixel | CWBackingStore |
+                                        		    CWOverrideRedirect | CWColormap |
+                                            			CWBorderPixel, &attribs);
+
+    		XSelectInput(g_display, g_viewport_wnd, ButtonPressMask | KeyPressMask |
+                		StructureNotifyMask | (g_fullscreen ? EnterWindowMask : 0) |
+                    		    (g_grab_keyboard ? (EnterWindowMask | LeaveWindowMask) : 0));
+		XReparentWindow (g_display, g_wnd, g_viewport_wnd, x1,y1);
+	    }
+	}
+
 	/* Check XStoreName consistency */
 		
-	XStoreName(g_display, g_wnd, g_title);
+	XStoreName(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, g_title);
 
 	if (g_hide_decorations)
 		mwm_hide_decorations();
@@ -1670,50 +2262,70 @@ ui_create_window(void)
 	if (classhints != NULL)
 	{
 		classhints->res_name = classhints->res_class = "nxdesktop";
-		XSetClassHint(g_display, g_wnd, classhints);
+		XSetClassHint(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, classhints);
 		XFree(classhints);
 	}
 
 	sizehints = XAllocSizeHints();
 	if (sizehints)
 	{
-		sizehints->flags = USPosition | PMinSize | PMaxSize;
-		sizehints->min_width = sizehints->max_width = g_width;
-		sizehints->min_height = sizehints->max_height = g_height;
-		XSetStandardProperties(g_display,
-			   g_wnd,
-			   (windowName?windowName:"nxdesktop"),
-			   (windowName?windowName:"nxdesktop"),
-			   nxIconPixmap,
-			   0, 0, sizehints);
+	    sizehints->flags = USPosition | PMinSize | PMaxSize;
+	    sizehints->min_width = NXDESKTOP_MIN_WIDTH;
+            sizehints->max_width = g_width;
+	    sizehints->min_height = NXDESKTOP_MIN_HEIGHT;
+            sizehints->max_height = g_height;
+	    XSetStandardProperties(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd,
+				(windowName?windowName:"nxdesktop"),
+				(windowName?windowName:"nxdesktop"),
+				nxIconPixmap, 0, 0, sizehints);
 
-		wmhints.icon_pixmap = nxIconPixmap;
-		if (useXpmIcon)
-		{
-		   wmhints.icon_mask = nxIconShape;
-		   wmhints.flags = IconPixmapHint | IconMaskHint;
-		} else {
-		   wmhints.flags = StateHint | IconPixmapHint;
-		}
-		XSetWMHints (g_display, g_wnd, &wmhints);
-		XSetWMNormalHints(g_display, g_wnd, sizehints);
+	    wmhints.icon_pixmap = nxIconPixmap;
+	    if (useXpmIcon)
+	    {
+		wmhints.icon_mask = nxIconShape;
+		wmhints.flags = IconPixmapHint | IconMaskHint;
+	    } else 
+	    {
+		wmhints.flags = StateHint | IconPixmapHint;
+	    }
+	    XSetWMHints (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, &wmhints);
+	    XSetWMNormalHints(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd, sizehints);
 	}
 
 	if (g_embed_wnd)
 	{
-		XReparentWindow(g_display, g_wnd, (Window) g_embed_wnd, 0, 0);
+	    XReparentWindow(g_display, g_wnd, (Window) g_embed_wnd, 0, 0);
 	}
 
 	/* NX */
 	input_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
 		VisibilityChangeMask | FocusChangeMask;
-	
-	
-	 if (g_fullscreen)
+		
+	if (g_fullscreen)
 	 	input_mask |= (EnterWindowMask | LeaveWindowMask);	
+	
 	/* NX */
-	XMapWindow(g_display, g_wnd);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    /* Sets an inital mask */
+	    temp_pix = XCreatePixmap(g_display, g_wnd, g_width, g_height, (unsigned int) 1);
+ 	    temp_gc = XCreateGC(g_display, temp_pix, 0, NULL);
+	    XSetForeground(g_display, temp_gc, BlackPixelOfScreen(g_screen));
+	    XFillRectangle(g_display, temp_pix, temp_gc, 0, 0, g_width, g_height);
+	    /*XSetForeground(g_display, shape_gc, WhitePixelOfScreen(g_screen));
+	      XFillRectangle(g_display, shape_bitmap, shape_gc, 300, 300, g_width-200, g_height-200); */
+	    XShapeCombineMask(g_display, g_wnd, ShapeBounding, 0, 0, temp_pix, ShapeSet);
+	    #ifdef NXDESKTOP_SHAPE_FORCESYNC
+	    XSync(g_display,False);
+	    #endif
+	    XFreePixmap(g_display, temp_pix);
+	    XFreeGC(g_display, temp_gc);
+	}
+	#endif
 	/* NX */
+	
 	if (g_fullscreen)
         {
 
@@ -1780,9 +2392,12 @@ ui_create_window(void)
 	if (g_fullscreen)
 		XSelectInput (g_display, wnd2, (input_mask & ~(KeyPressMask | KeyReleaseMask)) | StructureNotifyMask);
 	
+	if (g_viewport_wnd)
+	{
+    	    XMapWindow (g_display, g_viewport_wnd);
+    	}
+        XMapWindow(g_display, g_wnd); 
 	XGrabKeyboard(g_display, g_wnd, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-	
-	
 
 	/* wait for VisibilityNotify 
 	do
@@ -1798,7 +2413,6 @@ ui_create_window(void)
 	/* handle the WM_DELETE_WINDOW protocol */
 	/*g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
 	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);*/
-	
 
 	nxdesktopSetAtoms();
 	/* create invisible 1x1 cursor to be used as null cursor */
@@ -1807,23 +2421,24 @@ ui_create_window(void)
 		
 	/* NX */
 	#if defined(NXDESKTOP_LOGO) && !defined(NKDESKTOP_SPLASH)
-        if (showNXlogo)
+	if (showNXlogo)
         {
-          /*
-          * if you want some animation, change the initial value to 5 and the sleep to 1
-          */
-          int i = 1;
-          Cursor cursor;
-          cursor = XCreateFontCursor(g_display, 0);
-          XDefineCursor(g_display, g_wnd, (Cursor)cursor);
-          while (i)
-          {
-            nomachineLogo(g_wnd, g_gc, i);
-            i--;
-            sleep(3);
-          }
+	    /*
+	    * if you want some animation, change the initial value to 5 and the sleep to 1
+	    */
+          
+	    Cursor cursor;
+	    cursor = XCreateFontCursor(g_display, 0);
+	    XDefineCursor(g_display, g_wnd, (Cursor)cursor);
+	  
+	    while (i)
+	    {
+        	nomachineLogo(g_wnd, g_gc, i);
+        	i--;
+        	sleep(3);
+	    }
 	    
-          XSync(g_display, True);
+	    XSync(g_display, True);
         }
 	#endif
         if (ipaq)
@@ -1840,7 +2455,7 @@ ui_create_window(void)
            XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
         }
         #ifdef NXDESKTOP_XWIN_USES_PIXMAP_CACHE
-
+	
 	for (i = 0; i < PIXCACHE_ENTRIES; i++)
 	{
 		pixmap_cache[i].pixmap = (Pixmap) NULL;
@@ -1848,6 +2463,12 @@ ui_create_window(void)
 	}
 
 	#endif
+	
+	for (i = 0; i < MAX_NXCLIPPER_WINDOWS; i++)
+	{
+		nxclipper_windows[i].id = 0;
+		nxclipper_windows[i].wnd = (Window) NULL;
+	}
 
 	/*
         {
@@ -1855,6 +2476,7 @@ ui_create_window(void)
             xkeymap_init();
         }
 	 NX */
+	 
 	return True;
 }
 
@@ -1898,7 +2520,15 @@ ui_destroy_window(void)
 	if (g_IC != NULL)
 		XDestroyIC(g_IC);
 
-	XDestroyWindow(g_display, g_wnd);
+        if (g_viewport_wnd)
+        {
+	    XDestroyWindow (g_display, g_viewport_wnd);
+        }
+        else
+        {
+	    XDestroyWindow(g_display, g_wnd);
+        }
+
 	/* NX */
 	if (g_fullscreen)
 	  XDestroyWindow (g_display, wnd2);
@@ -1909,6 +2539,7 @@ void
 xwin_toggle_fullscreen(void)
 {
 	Pixmap contents = 0;
+        Bool savedShowNXlogo = showNXlogo;
 
 	if (!g_ownbackstore)
 	{
@@ -1917,9 +2548,19 @@ xwin_toggle_fullscreen(void)
 		XCopyArea(g_display, g_wnd, contents, g_gc, 0, 0, g_width, g_height, 0, 0);
 	}
 
+	showNXlogo = False;
+        
+        if (!g_fullscreen)
+        {
+          g_saved_wnd_x = g_wnd_x;
+          g_saved_wnd_y = g_wnd_y;
+        }
+
 	ui_destroy_window();
 	g_fullscreen = !g_fullscreen;
 	ui_create_window();
+
+	showNXlogo = savedShowNXlogo;
 
 	XDefineCursor(g_display, g_wnd, g_current_cursor);
 
@@ -1971,7 +2612,7 @@ xwin_process_events(void)
 		    #ifdef NXDESKTOP_XWIN_DEBUG
 		    nxdesktopDebug("xwin_process_events","Filtering event.\n");
 		    #endif
-		    /* DEBUG_KBD(("Filtering event\n")); */
+		    DEBUG_KBD(("Filtering event\n"));
 		    continue;
 		}
 
@@ -1999,8 +2640,8 @@ xwin_process_events(void)
 		     		rdp_send_input(ev_time, RDP_INPUT_SCANCODE, KBD_FLAG_DOWN | KBD_FLAG_UP, 0x1D, 0);
 		     		rdp_send_input(ev_time, RDP_INPUT_SCANCODE, KBD_FLAG_DOWN | KBD_FLAG_UP, 0x38, 0);
 		     		rdp_send_input(ev_time, RDP_INPUT_SCANCODE, KBD_FLAG_DOWN | KBD_FLAG_UP, 0xD3, 0);
-		     	if (g_fullscreen)
-		         	sigusr_func(SIGUSR2);
+		     		if (g_fullscreen)
+		         	    sigusr_func(SIGUSR2);
 			}
 	  	}
 		/*
@@ -2023,6 +2664,8 @@ xwin_process_events(void)
 		nxdesktopDebug("xwin_process_events","Xevent type %d.\n",xevent.type);
 		#endif
 		
+		
+		
 		switch (xevent.type)
 		{
 			/* NX */
@@ -2031,8 +2674,13 @@ xwin_process_events(void)
 			    if (g_fullscreen) 
 				sigusr_func(SIGUSR2);
 			break;
+			
 			/* NX */
 			
+			case VisibilityNotify:
+				g_Unobscured = xevent.xvisibility.state == VisibilityUnobscured;
+				break;
+				
 			/*
 			case ClientMessage:
 				 the window manager told us to quit 
@@ -2048,8 +2696,7 @@ xwin_process_events(void)
 				if (g_IC != NULL)
 					/* Multi_key compatible version */
 				{
-					XmbLookupString(g_IC,
-							&xevent.xkey, str, sizeof(str), &keysym,
+				    XmbLookupString(g_IC, &xevent.xkey, str, sizeof(str), &keysym,
 							&status);
 					if (!((status == XLookupKeySym) || (status == XLookupBoth)))
 					{
@@ -2065,6 +2712,31 @@ xwin_process_events(void)
 					XLookupString((XKeyEvent *) & xevent,
 						      str, sizeof(str), &keysym, NULL);
 				}
+				
+				
+				#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+				#ifdef NXDESKTOP_FWINDOW_DEBUG
+				if ((keysym == XK_F12) && (float_window_mode))
+				{
+				    XRectangle rect;
+				
+				    rect.x = 0;
+				    rect.y = 0;
+				    rect.width = g_width;
+				    rect.height = g_height;
+				    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, 0);
+				}
+				
+				if ((keysym == XK_F11) && (float_window_mode))
+				{
+				    fprintf(stderr,"Creating snapshot\n");
+				    XWriteBitmapFile(g_display,"shape_bitmap.xbm",shape_bitmap,g_width,g_height,-1,-1);
+				    XWriteBitmapFile(g_display,"background.xbm",g_backstore,g_width,g_height,-1,-1);
+				    XWriteBitmapFile(g_display,"window.xbm",g_wnd,g_width,g_height,-1,-1);
+				    fprintf(stderr,"Snapshot done\n");
+				}
+				#endif
+				#endif
 
 				DEBUG_KBD(("KeyPress for (keysym 0x%lx, %s)\n", keysym,
 					   get_ksname(keysym)));
@@ -2094,7 +2766,12 @@ xwin_process_events(void)
 					break;
 				/* NX */
 				/* When in g_fullscreen, unmap window on Ctrl-Alt-Escape */
-				if ((tr.scancode == 0x01) &&
+
+				/* 
+                                 * if ((tr.scancode == 0x01) &&
+                                 */
+
+                                if ((keysym == XK_m || keysym == XK_M) &&
 					(xevent.xkey.state & (ControlMask | Mod1Mask )) ==
 					(ControlMask|Mod1Mask)  )
 				{
@@ -2108,8 +2785,7 @@ xwin_process_events(void)
 					   else
 					   {
 					       rdp_send_input(last_Xtime, RDP_INPUT_SCANCODE, 0, 0xD3, 0);
-					       rdp_send_input(last_Xtime, RDP_INPUT_SCANCODE,
-					                               KBD_FLAG_DOWN | KBD_FLAG_UP, 0xD3, 0);
+					       rdp_send_input(last_Xtime, RDP_INPUT_SCANCODE, KBD_FLAG_DOWN | KBD_FLAG_UP, 0xD3, 0);
 					   }
 					   break;
 					}
@@ -2160,17 +2836,21 @@ xwin_process_events(void)
 			case ButtonPress:
 				flags = MOUSE_FLAG_DOWN;
 				/* fall through */
-
+				
 				/* NX - Still go?
 				button = xwin_translate_mouse(event.xbutton.button); */
                                 button = xkeymap_translate_button(xevent.xbutton.button);
+				
 				last_Xtime = xevent.xbutton.time;
+				
 				if (button == 0)
 					break;
+				
 				#ifdef MAGIC_PIXEL
-			         /* Iconify rdesktop when left-clicking in lower right corner */
+			         /* Iconify rdesktop when left-clicking in upper right corner */
 				if ((xevent.xbutton.button == 1) &&
-					(xevent.xbutton.x >= (g_width - 2)) && (xevent.xbutton.y <= 2))
+					(xevent.xbutton.x_root >= (WidthOfScreen(g_screen) - 2)) &&
+						(xevent.xbutton.y_root <= 2))
 				{
 					if (g_fullscreen)
 					{
@@ -2196,23 +2876,70 @@ xwin_process_events(void)
 					}
 				}
 				#endif
+				if (xevent.xbutton.window == g_viewport_wnd)
+				{
+					if ((xevent.xbutton.x < (g_width - 2) ||
+						(xevent.xbutton.x >= (g_width - 2) && 
+							xevent.xbutton.y > 2)))
+					{
+					    break;
+					}
+					if (xevent.xbutton.button != 1)
+					{
+					    break;
+					}
+				}
+                                if ((xevent.xbutton.state & (ControlMask | Mod1Mask)) ==
+                                        (ControlMask | Mod1Mask) && g_viewport_wnd)
+                                {
+                                  /*
+                                   * Start viewport navigation mode.
+                                   */
+
+                                  viewportCursor = XCreateFontCursor(g_display, XC_fleur);
+
+                                  XGrabPointer(g_display, g_wnd, True,
+                                                   PointerMotionMask | ButtonPressMask |
+                                                       ButtonReleaseMask, GrabModeAsync,
+                                                           GrabModeAsync, None, viewportCursor,
+                                                               CurrentTime);
+                                  viewportLastX = xevent.xbutton.x_root;
+                                  viewportLastY = xevent.xbutton.y_root;
+
+                                  break;
+                                }
+
 				/* NX */
 				
 			case ButtonRelease:
 				g_last_gesturetime = xevent.xbutton.time;
 				/* NX */
 				last_Xtime = g_last_gesturetime;
+				
+                                if (viewportCursor)
+                                {
+                                  /*
+                                   * Leave viewport navigation mode.
+                                   */
+
+                                  XUngrabPointer(g_display, CurrentTime);
+                                  XFreeCursor(g_display, viewportCursor);
+                                  viewportCursor = None;
+
+                                  break;
+                                }
+
 				button = xkeymap_translate_button(xevent.xbutton.button);
 				if (button == 0)
 					break;
-
+					
 				/* If win_button_size is nonzero, enable single app mode */
 				if (xevent.xbutton.y < g_win_button_size)
 				{
 					/* Stop moving window when button is released, regardless of cursor position */
 					if (g_moving_wnd && (xevent.type == ButtonRelease))
 						g_moving_wnd = False;
-
+						
 					/*  Check from right to left: */
 
 					if (xevent.xbutton.x >= g_width - g_win_button_size)
@@ -2256,12 +2983,25 @@ xwin_process_events(void)
 
 					}
 				}
-
+				
+				if ((float_window_mode) && (xevent.xbutton.y>3) && (xevent.xbutton.y<20))
+				{
+				    if (g_moving_wnd)
+					g_moving_wnd = False;
+				    else
+				    {
+				    	g_moving_wnd = True;
+					g_move_x_offset = xevent.xbutton.x;
+					g_move_y_offset = xevent.xbutton.y;
+				    }
+				}
+				
 				rdp_send_input(time(NULL), RDP_INPUT_MOUSE,
-					       flags | button, xevent.xbutton.x, xevent.xbutton.y);
+					       flags | button, xevent.xbutton.x + g_x_offset, xevent.xbutton.y + g_y_offset);
 				break;
 
 			case MotionNotify:
+			
 				if (g_moving_wnd)
 				{
 					XMoveWindow(g_display, g_wnd,
@@ -2269,16 +3009,30 @@ xwin_process_events(void)
 						    xevent.xmotion.y_root - g_move_y_offset);
 					break;
 				}
+				
+                                if (viewportCursor)
+                                {
+                                  /*
+                                   * Pointer is in viewport navigation mode.
+                                   */
+				   
+                                  nxdesktopMoveViewport(viewportLastX - xevent.xmotion.x_root,
+                                                            viewportLastY - xevent.xmotion.y_root);
+
+                                  viewportLastX = xevent.xmotion.x_root;
+                                  viewportLastY = xevent.xmotion.y_root;
+
+                                  break;
+                                }
 
 				if (g_fullscreen && !g_focused)
 					XSetInputFocus(g_display, g_wnd, RevertToPointerRoot,
-						       CurrentTime);
-				/* NX */
+						       CurrentTime);      
 				last_Xtime = xevent.xmotion.time;
-				/* NX */		       
 				
 				rdp_send_input(time(NULL), RDP_INPUT_MOUSE,
-					       MOUSE_FLAG_MOVE, xevent.xmotion.x, xevent.xmotion.y);
+					       MOUSE_FLAG_MOVE, xevent.xmotion.x + g_x_offset, xevent.xmotion.y + g_y_offset);
+					       
 				break;
 
 			case FocusIn:
@@ -2287,17 +3041,15 @@ xwin_process_events(void)
 				g_focused = True;
 				reset_modifier_keys();
 				if (g_grab_keyboard && g_mouse_in_wnd && g_fullscreen)
-				    {
 					XGrabKeyboard(g_display, g_wnd, True,
 						      GrabModeAsync, GrabModeAsync, CurrentTime);
-				    }
 				break;
 
 			case FocusOut:
 				if (xevent.xfocus.mode == NotifyUngrab)
 					break;
 				g_focused = False;
-				if (xevent.xfocus.mode == NotifyWhileGrabbed)
+				if (xevent.xfocus.mode == NotifyWhileGrabbed && !g_fullscreen)
 					XUngrabKeyboard(g_display, CurrentTime);
 				break;
 
@@ -2334,17 +3086,16 @@ xwin_process_events(void)
 				  for (i = 0; i < 256; i++)
 				  if (PressedKeys[i])
 				     rdp_send_input(last_Xtime, RDP_INPUT_SCANCODE,
-					    	KBD_FLAG_DOWN | KBD_FLAG_UP, i, 0);
+						KBD_FLAG_DOWN | KBD_FLAG_UP, i, 0);
 				}
                                 if(ipaq)
                                    break;
-				/* NX */
-				
+				/* NX */				
+
 				XUngrabKeyboard(g_display, CurrentTime);
 				break;
 
 			case Expose:
-				
 				XCopyArea(g_display, g_backstore, g_wnd, g_gc,
 					  xevent.xexpose.x, xevent.xexpose.y,
 					  xevent.xexpose.width,
@@ -2383,6 +3134,16 @@ xwin_process_events(void)
 				if (g_use_rdp5)
 				    xclip_handle_PropertyNotify(&xevent.xproperty);
 				break;
+                        case ConfigureNotify:
+                                if ((xevent.xconfigure.window == g_viewport_wnd) && !g_fullscreen)
+                                {
+                    		    g_saved_viewport_x = xevent.xconfigure.x;
+                		    g_saved_viewport_y = xevent.xconfigure.y;
+                                    g_viewport_width = g_saved_viewport_width = (xevent.xconfigure.width);
+                                    g_viewport_height = g_saved_viewport_height = (xevent.xconfigure.height);
+                                    nxdesktopMoveViewport(0, 0);
+                    		}
+                                break;
 		}
 	}
 	/* Keep going */
@@ -2407,7 +3168,7 @@ void run_events()
 int
 ui_select(int rdp_socket)
 {
-	int n = (rdp_socket > g_x_socket) ? rdp_socket : g_x_socket;
+	int n;
 	fd_set rfds, wfds;
 	struct timeval tv;
 	BOOL s_timeout = False;
@@ -2426,15 +3187,15 @@ ui_select(int rdp_socket)
 	
 	while (True)
 	{
-		n = (rdp_socket > g_x_socket) ? rdp_socket : g_x_socket;
-		/* Process any events already waiting */
-		if (!xwin_process_events())
-		    {
-		    #ifdef NXDESKTOP_XWIN_DEBUG
-		    nxdesktopDebug("ui_select","User quit.\n");
-		    #endif
-		    return 0;
-		    }
+	    n = (rdp_socket > g_x_socket) ? rdp_socket : g_x_socket;
+	    /* Process any events already waiting */
+	    if (!xwin_process_events())
+	    {
+		#ifdef NXDESKTOP_XWIN_DEBUG
+		nxdesktopDebug("ui_select","User quit.\n");
+		#endif
+		return 0;
+	    }
 
 		FD_ZERO(&rfds);
 		FD_ZERO(&wfds);
@@ -2461,15 +3222,12 @@ ui_select(int rdp_socket)
 		switch (select(n, &rfds, &wfds, NULL, &tv))
 		{
 			case -1:
-				/*error("select: %s\n", strerror(errno)); */
+				error("select: %s\n", strerror(errno));
 
 			case 0:
-				/* TODO: if tv.tv_sec just times out
-				 * we will segfault.
-				 * FIXME:
-				 */
-				//s_timeout = True;
-				//rdpdr_check_fds(&rfds, &wfds, (BOOL) True);
+				/* Abort serial read calls */
+				if (s_timeout)
+					rdpdr_check_fds(&rfds, &wfds, (BOOL) True);
 				continue;
 		}
 
@@ -2542,22 +3300,20 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	    tdata = data;
 	    if (compressed)
 	    {
-		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_COMPRESSED_256_COLORS,
+		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_COMPRESSED,
 					    g_depth, ZPixmap, data, size,
 					    width, height, bitmap_pad, 0);
-
-		NXPutPackedImage(g_display, 0, bitmap, g_gc, image,
-				PACK_RDP_COMPRESSED_256_COLORS,
+					    
+		NXPutPackedImage(g_display, 0, bitmap, g_gc, image, PACK_RDP_COMPRESSED,
 				g_depth, 0, 0, 0, 0, width, height);
 	    }
 	    else
 	    {
-		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_PLAIN_256_COLORS,
+		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_PLAIN,
 					g_depth, ZPixmap, data, size,
 					width, height, bitmap_pad, 0);
 
-		NXPutPackedImage(g_display, 0, bitmap, g_gc, image,
-				PACK_RDP_PLAIN_256_COLORS,
+		NXPutPackedImage(g_display, 0, bitmap, g_gc, image, PACK_RDP_PLAIN,
 				g_depth, 0, 0, 0, 0, width, height);
 	    }
 	}
@@ -2607,7 +3363,10 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		if (g_bpp == 24)
 			bitmap_pad = 32;
 	}
-		
+	
+	x = x-g_x_offset;
+	y = y-g_y_offset;
+	
 	#ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
 	if (nxdesktopUseNXRdpImages)
 	{
@@ -2620,10 +3379,10 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 				g_owncolmap, g_depth);
 		#endif
 
-		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_PLAIN_256_COLORS,
-						g_depth, ZPixmap, tdata, data_length,
-							width, height, BitmapPad(g_display), 0);
-
+		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_COMPRESSED,
+					    g_depth, ZPixmap, tdata, data_length,
+					    width, height, BitmapPad(g_display), 0);
+					    
 		if (g_ownbackstore)
 		{
 			#ifdef NXDESKTOP_XWIN_DEBUG
@@ -2631,9 +3390,8 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 					x, y, cx, cy, width, height);
 			#endif
 
-			NXPutPackedImage(g_display, 0, g_backstore, g_gc, image,
-						PACK_RDP_PLAIN_256_COLORS,
-							g_depth, 0, 0, x, y, cx, cy);
+			NXPutPackedImage(g_display, 0, g_backstore, g_gc, image, PACK_RDP_COMPRESSED,
+					 g_depth, 0, 0, x, y, cx, cy);
 
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
 
@@ -2648,9 +3406,8 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 					x, y, cx, cy, width, height);
 			#endif
 
-			NXPutPackedImage(g_display, 0, g_wnd, g_gc, image,
-						PACK_RDP_PLAIN_256_COLORS,
-							g_depth, 0, 0, x, y, cx, cy);
+			NXPutPackedImage(g_display, 0, g_wnd, g_gc, image, PACK_RDP_COMPRESSED,
+					 g_depth, 0, 0, x, y, cx, cy);
 		}
 
 		/*
@@ -2677,8 +3434,6 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 
 		if (g_ownbackstore)
 		{
-			
-			
 			#ifdef NXDESKTOP_XWIN_DEBUG
 			nxdesktopDebug("ui_paint_bitmap","XPutImage on backingstore pixmap %d,%d,%d,%d.\n",
 					x, y, cx, cy);
@@ -2692,6 +3447,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 			XPutImage(g_display, g_backstore, g_gc, image, 0, 0, x, y, cx, cy);
 
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
+			
 		}
 		else
 		{
@@ -2706,13 +3462,14 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 			#endif
 			
 			XPutImage(g_display, g_wnd, g_gc, image, 0, 0, x, y, cx, cy);
+			
 		}
 
 		XFree(image);
 
 		if (!g_owncolmap)
 			xfree(tdata);
-
+		
 	}
 
 	#else /* NXDESKTOP_XWIN_USES_PACKED_IMAGES */
@@ -2721,7 +3478,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	
 	#ifdef NXDESKTOP_XWIN_DEBUG
 	nxdesktopDebug("ui_paint_bitmap","XCreateImage with owncolmap %d and depth %d.\n",
-			owncolmap, depth);
+			g_owncolmap, g_depth);
 	#endif
 	
 	image = XCreateImage(g_display, g_visual, g_depth, ZPixmap, 0,
@@ -2742,6 +3499,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		XPutImage(g_display, g_backstore, g_gc, image, 0, 0, x, y, cx, cy);
 		
 		XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
+		
 	}
 	else
 	{
@@ -2757,12 +3515,23 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		
 		XPutImage(g_display, g_wnd, g_gc, image, 0, 0, x, y, cx, cy);
 	}
-
+	
 	XFree(image);
 	if (tdata != data)
 		xfree(tdata);
 	
 	#endif
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_paintbitmap ","paint bitmap\n");
+	    #endif
+	    nxdesktopShape(g_backstore,x,y,x,y,cx,cy,True);
+	}
+	#endif
+	
 }
 #ifdef NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES
 
@@ -2772,15 +3541,19 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 {
 	XImage *image;
 
+
+	x = x-g_x_offset;
+	y = y-g_y_offset;
+	
 	#ifdef NXDESKTOP_XWIN_DEBUG
 	nxdesktopDebug("ui_paint_compressed_bitmap","NXCreatePackedImage with depth %d and size %d.\n",
 			g_depth, compressed_size);
 	#endif
-
-	image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_COMPRESSED_256_COLORS,
-					g_depth, ZPixmap, compressed_data, compressed_size,
-						width, height, BitmapPad(g_display), 0);
-
+	
+	image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_COMPRESSED,
+				    g_depth, ZPixmap, compressed_data, compressed_size,
+				    width, height, BitmapPad(g_display), 0);
+	
 	if (image == NULL)
 	{
 		#ifdef NXDESKTOP_XWIN_DEBUG
@@ -2798,9 +3571,8 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 				x, y, cx, cy, width, height);
 		#endif
 
-		NXPutPackedImage(g_display, 0, g_backstore, g_gc, image,
-					PACK_RDP_COMPRESSED_256_COLORS,
-						g_depth, 0, 0, x, y, cx, cy);
+		NXPutPackedImage(g_display, 0, g_backstore, g_gc, image, PACK_RDP_COMPRESSED,
+				 g_depth, 0, 0, x, y, cx, cy);
 
 		XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
 
@@ -2815,9 +3587,8 @@ ui_paint_compressed_bitmap(int x, int y, int cx, int cy, int width, int height,
 				x, y, cx, cy, width, height);
 		#endif
 
-		NXPutPackedImage(g_display, 0, g_wnd, g_gc, image,
-					PACK_RDP_COMPRESSED_256_COLORS,
-						g_depth, 0, 0, x, y, cx, cy);
+		NXPutPackedImage(g_display, 0, g_wnd, g_gc, image, PACK_RDP_COMPRESSED,
+				 g_depth, 0, 0, x, y, cx, cy);
 	}
 
 	/*
@@ -2851,12 +3622,12 @@ ui_create_glyph(int width, int height, uint8 * data)
 	XImage *image;
 	Pixmap bitmap;
 	int scanline;
-	GC gc;
 
 	scanline = (width + 7) / 8;
 
 	bitmap = XCreatePixmap(g_display, g_wnd, width, height, 1);
-	gc = XCreateGC(g_display, bitmap, 0, NULL);
+	if (g_create_glyph_gc == 0)
+		g_create_glyph_gc = XCreateGC(g_display, bitmap, 0, NULL);
 
 	image = XCreateImage(g_display, g_visual, 1, ZPixmap, 0, (char *) data,
 			     width, height, 8, scanline);
@@ -2874,10 +3645,9 @@ ui_create_glyph(int width, int height, uint8 * data)
 	create_glyph_total+=image->height*image->bytes_per_line;
 	#endif
 	
-	XPutImage(g_display, bitmap, gc, image, 0, 0, 0, 0, width, height);
+	XPutImage(g_display, bitmap, g_create_glyph_gc, image, 0, 0, 0, 0, width, height);
 
 	XFree(image);
-	XFreeGC(g_display, gc);
 	return (HGLYPH) bitmap;
 }
 
@@ -2994,8 +3764,8 @@ ui_create_colourmap(COLOURMAP * colours)
 	#ifdef NKDESKTOP_ONSTART
         if (showNXlogo)
         {
-           //setOwnerNX_WM(g_wnd);
-           //XSync(g_display, True);
+           /*setOwnerNX_WM(g_wnd);
+           XSync(g_display, True);*/
         }
 	#endif
 	#ifdef NXDESKTOP_XWIN_DEBUG
@@ -3244,6 +4014,16 @@ ui_destblt(uint8 opcode,
 	SET_FUNCTION(opcode);
 	FILL_RECTANGLE(x, y, cx, cy);
 	RESET_FUNCTION(opcode);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_destblt","shape check coords x=%d y=%d cx=%d cy=%d\n",x, y, cx, cy);
+    	    #endif
+	    make_mask_hole(x, y, cx, cy, -1, True);
+	}
+	#endif
 }
 
 static uint8 hatch_patterns[] = {
@@ -3273,7 +4053,12 @@ ui_patblt(uint8 opcode,
 			#endif
 			SET_FOREGROUND(fgcolour);
 			FILL_RECTANGLE_BACKSTORE(x, y, cx, cy);
+			
+			#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+			if (float_window_mode)
+			    make_mask_hole(x, y, cx, cy, fgcolour, True);
 			break;
+			#endif
 
 		case 2:	/* Hatch */
 			#ifdef NXDESKTOP_XWIN_DEBUG
@@ -3290,6 +4075,12 @@ ui_patblt(uint8 opcode,
 			XSetFillStyle(g_display, g_gc, FillSolid);
 			XSetTSOrigin(g_display, g_gc, 0, 0);
 			ui_destroy_glyph((HGLYPH) fill);
+			
+			#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+			if (float_window_mode)
+			    make_mask_hole(x, y, cx, cy, fgcolour, True);
+			#endif
+			    
 			break;
 
 		case 3:	/* Pattern */
@@ -3308,6 +4099,12 @@ ui_patblt(uint8 opcode,
 			XSetFillStyle(g_display, g_gc, FillSolid);
 			XSetTSOrigin(g_display, g_gc, 0, 0);
 			ui_destroy_glyph((HGLYPH) fill);
+			
+			#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+			if (float_window_mode)
+			    make_mask_hole(x, y, cx, cy, fgcolour, True);
+			#endif
+			
 			break;
 
 		default:
@@ -3326,7 +4123,7 @@ ui_screenblt(uint8 opcode,
 	     /* src */ int srcx, int srcy)
 {
     #ifdef NXDESKTOP_XWIN_DEBUG
-    nxdesktopDebug("ui_screenblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
+    nxdesktopDebug("ui_screenblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d\n",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
     #endif
 	SET_FUNCTION(opcode);
 	if (g_ownbackstore)
@@ -3334,19 +4131,49 @@ ui_screenblt(uint8 opcode,
 		if (g_Unobscured)
 		{
 			XCopyArea(g_display, g_wnd, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
-			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x,
-				  y);
+			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
+			
+			#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+			if (float_window_mode)
+			{
+			    #ifdef NXDESKTOP_FWINDOW_DEBUG
+			    nxdesktopDebug("ui_screenblt","screenblt unobsc\n");
+    			    #endif
+			    make_mask_hole(srcx,srcy,cx,cy,-1,True);
+			    nxdesktopShape(g_backstore,srcx,srcy,x,y,cx,cy,False);
+			}
+			#endif
 		}
 		else
 		{
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
-			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x,
-				  y);
+			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
+			
+			#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+			if (float_window_mode)
+			{
+			    #ifdef NXDESKTOP_FWINDOW_DEBUG
+			    nxdesktopDebug("ui_screenblt","screenblt\n");
+    			    #endif
+			    make_mask_hole(srcx,srcy,cx,cy,-1,True);
+			    nxdesktopShape(g_backstore,srcx,srcy,x,y,cx,cy,False);
+			    
+			}
+			#endif
 		}
 	}
 	else
 	{
 		XCopyArea(g_display, g_wnd, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
+		
+		#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("ui_screenblt","This shouldn't be happening!\n");
+    		#endif
+		if (float_window_mode)
+		    nxdesktopShape(g_backstore,srcx,srcy,x,y,cx,cy,False);
+		#endif
+
 	}
 	RESET_FUNCTION(opcode);
 }
@@ -3357,13 +4184,25 @@ ui_memblt(uint8 opcode,
 	  /* src */ HBITMAP src, int srcx, int srcy)
 {
     #ifdef NXDESKTOP_XWIN_DEBUG
-    nxdesktopDebug("ui_memblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
+    nxdesktopDebug("ui_memblt","Opcode=%d, Backstore=%d, x=%d, y=%d, cx=%d, cy=%d, srcx=%d, scry=%d\n",opcode, g_ownbackstore, x, y, cx, cy, srcx, srcy);
     #endif
-	SET_FUNCTION(opcode);
-	XCopyArea(g_display, (Pixmap) src, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
-	if (g_ownbackstore)
-		XCopyArea(g_display, (Pixmap) src, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
-	RESET_FUNCTION(opcode);
+    
+    SET_FUNCTION(opcode);
+    XCopyArea(g_display, (Pixmap) src, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
+    if (g_ownbackstore)
+	XCopyArea(g_display, (Pixmap) src, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
+    
+    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+    if (float_window_mode)
+    {
+	#ifdef NXDESKTOP_FWINDOW_DEBUG
+	nxdesktopDebug("ui_memblt","memblt\n");
+    	#endif
+	nxdesktopShape((Pixmap)src,srcx,srcy,x,y,cx,cy,True);	    
+    }
+    #endif
+    
+    RESET_FUNCTION(opcode);
 }
 
 void
@@ -3416,6 +4255,16 @@ ui_line(uint8 opcode,
 	if (g_ownbackstore)
 		XDrawLine(g_display, g_backstore, g_gc, startx, starty, endx, endy);
 	RESET_FUNCTION(opcode);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_line","shape_check coords startx=%d starty=%d endx=%d endy=%d\n",startx, starty, endx, endy);
+    	    #endif
+	    make_mask_hole(startx, starty, endx, endy, pen->colour, False);
+	}
+	#endif
 }
 
 /* NX */
@@ -3467,6 +4316,16 @@ void flush_rects()
 	nxdesktopDebug("flush_rects","num_buf_rects=%d\n",num_buf_rects);
 	#endif
 	SET_FOREGROUND(last_color);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{    
+	    if (TRANSLATE(colour) == BACKGROUND)
+		make_mask_hole(x, y, cx, cy, -1, True);
+	    else make_mask_hole(x, y, cx, cy, -1, False);
+	}
+	#endif
+	
 	XFillRectangles(g_display, g_wnd, g_gc, (XRectangle *)buf_rects, num_buf_rects);
 	if (g_ownbackstore)
 	    XFillRectangles(g_display, g_backstore, g_gc, (XRectangle *)buf_rects, num_buf_rects);
@@ -3486,12 +4345,21 @@ ui_rect(int x, int y, int cx, int cy, int colour)
     if (num_buf_rects == -1)
     {
 	num_buf_rects = 0;
-	#ifdef NXDESTOP_RECT_DEBUG
+	#ifdef NXDESKTOP_RECT_DEBUG
 	nxdesktopDebug("ui_rect","First rect arrived\n");
 	#endif
 	last_color = colour;
 	buf_rect(x,y,cx,cy);
 	flush_rects();
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_rect (cache on)","shape_check coords x=%d y=%d cx=%d cy=%d\n",x, y, cx, cy);
+    	    #endif
+	}
+	#endif
     }
     
     /* If it's a rect but the color changes, force flush */
@@ -3507,8 +4375,21 @@ ui_rect(int x, int y, int cx, int cy, int colour)
     /* Put the rect into the buffer */
     buf_rect(x,y,cx,cy);
     #else
+    
     SET_FOREGROUND(colour);
+    
+    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+    if (float_window_mode)
+    {
+	#ifdef NXDESKTOP_FWINDOW_DEBUG
+	nxdesktopDebug("ui_rect (cache off)","shape_check coords x=%d y=%d cx=%d cy=%d\n",x, y, cx, cy);
+    	#endif
+	
+	make_mask_hole(x, y, cx, cy, colour, True);
+    }
     FILL_RECTANGLE(x, y, cx, cy);
+    #endif
+    
     #endif
 }
 
@@ -3658,8 +4539,22 @@ ui_draw_glyph(int mixmode,
 	XSetTSOrigin(g_display, g_gc, x, y);
 
 	FILL_RECTANGLE_BACKSTORE(x, y, cx, cy);
-
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	    make_mask_hole(x, y, cx, cy, fgcolour, True);
+	#endif
+	
 	XSetFillStyle(g_display, g_gc, FillSolid);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_draw_glyph","shape_check coords x=%d y=%d cx=%d cy=%d\n",x, y, cx, cy);
+    	    #endif
+	}
+	#endif
 }
 
 #define DO_GLYPH(ttext,idx) \
@@ -3712,6 +4607,15 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 	int elements = 0;
 	/* NX */
 	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	{
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("ui_draw_text","shape_check coords x=%d y=%d\n",x, y);
+    	    #endif
+	}
+	#endif
+	
 	SET_FOREGROUND(bgcolour);
 
 	/* Sometimes, the boxcx value is something really large, like
@@ -3723,10 +4627,22 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 	if (boxcx > 1)
 	{
 		FILL_RECTANGLE_BACKSTORE(boxx, boxy, boxcx, boxcy);
+		
+		#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+		if (float_window_mode)
+		    make_mask_hole(boxx, boxy, boxcx, boxcy, bgcolour, False);
+		#endif
+		
 	}
 	else if (mixmode == MIX_OPAQUE)
 	{
 		FILL_RECTANGLE_BACKSTORE(clipx, clipy, clipcx, clipcy);
+		
+		#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+		if (float_window_mode)    
+		    make_mask_hole(clipx, clipy, clipcx, clipcy, bgcolour, False);
+		#endif
+		
 	}
 
 	SET_FOREGROUND(fgcolour);
@@ -4143,6 +5059,14 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	XFree(image);
 	
 	#endif
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	/*if (float_window_mode)
+	{   
+	    fprintf(stderr,"desktop_restore\n"); 
+	    nxdesktopShape(0, 0, x, y, cx, cy, False);
+	}*/
+	#endif
 }
 
 /* NX */
@@ -4173,12 +5097,12 @@ void nomachineLogo(Window win, GC gc, int scale)
     {
       c = w/48;
     }
-
+    
     rect[0].x = 0;	       rect[0].y = 0;
     rect[1].x = 0;	       rect[1].y = h;
     rect[2].x = w;	       rect[2].y = h;
     rect[3].x = w;	       rect[3].y = 0;
-
+    
     XSetFunction(g_display, gc, GXcopy);
     XSetFillStyle(g_display, gc, FillSolid);
     XSetForeground(g_display, gc, nx_black);
@@ -4272,8 +5196,6 @@ void setOwnerNX_WM(Window win)
   showNXlogo = False;
 }
 #endif
-
-
 
 Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)
 {
@@ -4428,4 +5350,553 @@ void RunOrKillNXkbd()
 #endif
     xkbdRunning = True;
   }
+}  
+/* Seamless mode V2 */
+/* 
+    
+How virtual channels work
+
+The use a virtual channel, the basic steps are:
+- Init the server side channel
+    A name to the channel is registered and a call back function is provided to allow
+    the terminal server notifies the client about the events concerning the session
+- Open the client side channel
+    This step hooks another callback function which is used to have notificastions about the virtual
+    channel.
+Once the channel is stablished it's a matter of sending and retreiving data.
+Closing the channels is not necessary as the server will do that once the session is closed unless a
+persisten channel is open. In this case, the data will continue to flow even if the session is closed.
+
+*/
+
+/* TODO: 
+
+The registration process seens fine. Discover how to start the server side of the channel
+Basically calling channel_init with the correct parameters which I'll discover as soon as I
+debug the windows DLL
+
+*/
+
+/* Sends data to the fwindow channel */
+
+/*static void
+fwindow_send(STREAM s)
+{
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_send","sent: \n");
+    hexdump(s->channel_hdr + 8, s->end - s->channel_hdr - 8);
+    #endif
+    channel_send(s, fwindow_channel);
+}*/
+
+/* Callback for the fwindow channel.
+   Disabled to avoid compiler warnings.
+   At this moment, we don't have a mechanism to receive events related to 
+   the channel itself but just the channel data processing. This is not 
+   a problem as we don't have to monitor the channel state to use it so this 
+   function will remain disabled for now. 
+
+static void
+fwindow_state_process(STREAM s)
+{
+    int event dummy1, dummy2, dummy3;
+    
+    in_uint16_le(s, event);
+    in_uint16_le(s, dummy1);
+    in_uint16_le(s, dummy2);
+    in_uint16_le(s, dummy3);
+    
+    
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_state_process","CLIPPER received: \n");
+    nxdesktopDebug("fwindow_state_process","stream headers: size %0x, iso %0x, sec %0x, mcs %0x, rdp %0x channel %0x\n",s->size, s->iso_hdr, s->sec_hdr, s->mcs_hdr, s->rdp_hdr, s->channel_hdr);
+    hexdump(s->data, s->end - s->p);
+    #endif
+    event = s->data[1];
+    
+    switch (event)
+    {
+	case CHANNEL_EVENT_INITIALIZED:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","CHANNEL_EVENT_INTIALIZED received:\n");
+	    #endif
+	    break;
+	case CHANNEL_EVENT_CONNECTED:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","CHANNEL_EVENT_CONNECTED received:\n");
+	    #endif
+	    break;
+	case CHANNEL_EVENT_V1_CONNECTED:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","CHANNEL_EVENT_V1_CONNECTED received:\n");
+	    #endif
+	    break;
+	case CHANNEL_EVENT_DISCONNECTED:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","CHANNEL_EVENT_DISCONNECTED received:\n");
+	    #endif
+	    break;
+	case CHANNEL_EVENT_TERMINATED:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","CHANNEL_EVENT_TERMINATED received:\n");
+	    #endif
+	    break;
+	default:
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_state_process","Other event: (%d) received:\n",event);
+	    #endif
+	    break;
+    }
+	
+} */
+
+/* This is where the data from the clipper channel will be processed.
+
+void
+process_rdp_windows(RDP_WINDOWS c)
+{
+    int i;
+    
+    for (i = 0; i < num_rdp_windows; i++)
+    {
+	if (rdp_windows[i].id == c.id)
+	{
+	    update_shape(c.id);
+	    return;
+	}
+    }
+    if (num_rdp_windows < MAX_RDP_WINDOWS)
+    {
+	rdp_windows[num_rdp_windows] = c;
+	num_rdp_windows++;
+    }
+    
+}*/
+
+void
+add_rdp_windows(NXCLIPPER_WINDOWS c)
+{
+    int i;
+    
+    for (i = 0; i < nxclipper_windows_entries; i++)
+    {
+	if (nxclipper_windows[i].id == 0)
+	{
+	    nxclipper_windows[i] = c;
+	    return;
+	}
+    }
+    nxclipper_windows_entries++;
+    if (nxclipper_windows_entries > MAX_NXCLIPPER_WINDOWS)
+    {
+	error("add_rdp_windows: Maximum number of RDP windows reached.\n");
+    }
+    else
+    {
+	nxclipper_windows[nxclipper_windows_entries] = c;
+	fprintf(stderr, "Window %d added\n", nxclipper_windows_entries);
+    }
 }
+
+void
+update_rdp_windows(NXCLIPPER_WINDOWS c)
+{
+    int i;
+    
+    for (i = 0; i < nxclipper_windows_entries; i++)
+    {
+	if (nxclipper_windows[i].id == c.id)
+	{
+	    nxclipper_windows[i] = c;
+	    return;
+	}
+    }
+    error("update_rdp_windows: RDP Window ID not found.\n");
+}
+
+NXCLIPPER_WINDOWS
+get_rdp_windows(unsigned int id)
+{
+    int i;
+    
+    for (i = 0; i < nxclipper_windows_entries; i++)
+    {
+	if (nxclipper_windows[i].id == id)
+	{
+	    return nxclipper_windows[i];
+	}
+    }
+    error("get_rdp_windows: RDP window id not found.\n");
+}
+
+static void
+fwindow_process(STREAM s)
+{
+    
+    char *data, *aux, *value;
+    NXCLIPPER_WINDOWS tmp_win;
+    
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_process","CLIPPER received: \n");
+    nxdesktopDebug("fwindow_process","stream headers: size %0x, iso %0x, sec %0x, mcs %0x, rdp %0x channel %0x\n",s->size, s->iso_hdr, s->sec_hdr, s->mcs_hdr, s->rdp_hdr, s->channel_hdr);
+    hexdump(s->p, s->end - s->p);
+    #endif
+
+    data = s->p;
+    data[s->end-s->p-1] = '\0';
+    
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_process","Raw message data: %s\n",data);
+    #endif
+    
+    aux = strtok(data,";");
+    while (aux)
+    {
+	value=strchr(aux,'=');
+	if (value)
+	{
+	    value++;
+	    if (strstr(aux,"MSG="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","MSG received. Value: %s\n",value);
+		#endif
+		tmp_win.msg = value;
+	    }
+	    else
+	    if (strstr(aux,"OP="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","OP received. Value: %s\n",value);
+		#endif
+		tmp_win.op = atoi(value);
+	    }
+	    else
+	    if (strstr(aux,"ID="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","ID received. Value: %s\n",value);
+		#endif
+		tmp_win.id = atoi(value);
+	    }
+	    else    
+	    if (strstr(aux,"TITLE="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","TITLE received. Value: %s\n",value);
+		#endif
+		tmp_win.title = value;
+	    }
+	    else    
+	    if (strstr(aux,"X="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","X received. Value: %s\n",value);
+		#endif
+		tmp_win.x = atoi(value);
+	    }
+	    else    
+	    if (strstr(aux,"Y="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","Y received. Value: %s\n",value);
+		#endif
+		tmp_win.y = atoi(value);
+	    }
+	    else
+	    if (strstr(aux,"TYPE="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","Y received. Value: %s\n",value);
+		#endif
+		tmp_win.max_min_type = atoi(value);
+	    }
+	    else
+	    if (strstr(aux,"W="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","W received. Value: %s\n",value);
+		#endif
+		tmp_win.w = atoi(value);
+	    }
+	    else    
+	    if (strstr(aux,"H="))
+	    {
+		#ifdef NXDESKTOP_FWINDOW_DEBUG
+		nxdesktopDebug("fwindow_process","H received. Value: %s\n",value);
+		#endif
+		tmp_win.h = atoi(value);
+	    }
+	    else 
+	    {
+		unimpl("fwindow_process: ","Unknown values from clipper channel '%s' and '%s' .\n",aux,value);
+	    }
+	    
+	}
+	aux = strtok('\0',";");
+    
+    }
+    
+    switch (tmp_win.op)
+    {
+	case 0 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 0 (CREATE) received.\n");
+	    #endif
+	    
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeUnion, 0);
+	    #endif
+	    if (first_rdp_window)
+	    {
+		g_x_offset = 0;//tmp_win.x; ? Not sure if I should do that way.
+		g_y_offset = 0;//tmp_win.y; ? Let's keep it zeroed for now.
+		g_width = tmp_win.w;
+		g_height = tmp_win.h;
+		
+		XMoveResizeWindow(g_display, g_wnd, tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h);
+		
+		first_rdp_window = False;
+		add_rdp_windows(tmp_win);
+	    } 
+	    else
+	    {	
+		tmp_win.wnd = XCreateSimpleWindow(g_display, g_wnd, tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h, 0, 0, 0);
+		XMapWindow(g_display, tmp_win.wnd);
+		add_rdp_windows(tmp_win);
+	    }
+		
+	    break;
+	case 1 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 1 (DESTROY) received.\n");
+	    #endif
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSubtract, 0);
+	    #endif
+	    break;
+	case 2 :
+	    break; // Temporary?
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 2 (MOVING) received.\n");
+	    #endif
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    if (!rdp_window_moving)
+	    {
+	        pix_move_buffer = XCreatePixmap(g_display, g_wnd, tmp_win.w, tmp_win.h, g_depth);
+	        XCopyArea(g_display, g_wnd, pix_move_buffer, g_gc, tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h, 0, 0);
+	    }	
+	    
+	    XCopyArea(g_display, pix_move_buffer, g_wnd, g_gc, 0, 0, tmp_win.w, tmp_win.h, tmp_win.x, tmp_win.y);
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, Unsorted);
+	    #endif
+	    fprintf(stderr,"moving %d %d %d %d\n", tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h);
+	    XMoveWindow(g_display, g_wnd, tmp_win.x, tmp_win.y);
+	    
+	    break;
+	case 3 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 3 (RESIZING) received.\n");
+	    #endif
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, 0);
+	    #endif
+	    XResizeWindow(g_display, g_wnd, tmp_win.w, tmp_win.h);
+	    break;
+	case 4 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 4 (MIN_MAX) received. %d %d %d %d\n", tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h);
+	    #endif
+	    switch (tmp_win.max_min_type)
+	    {
+		case 2 :
+		case 6 :
+		    XIconifyWindow(g_display, g_wnd, DefaultScreen(g_display));
+		    break;
+		case 3:
+		case 11:
+		    XMoveResizeWindow(g_display, g_wnd, tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h);
+		    XMapRaised (g_display, g_wnd);
+		    break;
+		default:
+		    nxdesktopDebug("fwindow_process","TYPE %d.\n", tmp_win.max_min_type);
+		    break;
+	    }
+	    g_x_offset = tmp_win.x;
+	    g_y_offset = tmp_win.y;
+	    break;
+	case 5 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 5 (MOVE_SIZE) received.\n");
+	    #endif
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    if (rdp_window_moving)
+	    {
+		rdp_window_moving = False;
+		XCopyArea(g_display, pix_move_buffer, g_wnd, g_gc, 0, 0, tmp_win.w, tmp_win.h, tmp_win.x, tmp_win.y);
+		XFreePixmap(g_display, pix_move_buffer);
+	    }
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, 0);
+	    #endif
+	    rdp_window_moving = False;
+	    break;
+	case 6 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 6 (SIZING) received.\n");
+	    #endif
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, 0);
+	    #endif
+	    g_width = tmp_win.w;
+	    g_height = tmp_win.h;
+	    XResizeWindow(g_display, g_wnd, tmp_win.w, tmp_win.h);
+	    break;
+	case 7 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 7 (CHANGING Z POS) received.\n");
+	    #endif
+	    break;
+	case 8 :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","OP 8 (CHANGED Z POS) received.\n");
+	    #endif
+	    break;
+	default :
+	    #ifdef NXDESKTOP_FWINDOW_DEBUG
+	    nxdesktopDebug("fwindow_process","Unknown OP received.\n");
+	    #endif
+	    break;
+	
+    }
+    if (tmp_win.op != 0)
+	update_rdp_windows(tmp_win);
+}
+
+/* Opens (registers) the client side channel and provides the callback to it */
+
+BOOL
+fwindow_register(void)
+{
+    
+    fwindow_channel = channel_register("clipper", CHANNEL_OPTION_INITIALIZED, fwindow_process);
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    if (fwindow_channel != NULL)
+	nxdesktopDebug("fwindow_register","Channel CLIPPER registered.\n");
+    #endif
+    return (fwindow_channel != NULL);
+    
+}
+ 
+void
+fwindow_init(void)
+{
+
+    STREAM s;
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_init","Channel CLIPPER initialized.\n");
+    #endif
+    s = channel_init(fwindow_channel, 12); /* I'm not sure if this dummy header works but so far, so good */
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    
+    if (s != NULL)
+    {
+	nxdesktopDebug("fwindow_init","STREAM is valid.\n");
+	nxdesktopDebug("fwindow_process","stream headers: size %0x, iso %0x, sec %0x, mcs %0x, rdp %0x channel %0x\n",s->size, s->iso_hdr, s->sec_hdr, s->mcs_hdr, s->rdp_hdr, s->channel_hdr);
+    }
+    #endif
+}
+
+void nxdesktopMoveViewport(int hShift, int vShift)
+{
+    int newX;
+    int newY;
+    Bool do_move = False;
+    int viewportXSpan = g_viewport_width - g_width;
+    int viewportYSpan = g_viewport_height - g_height;
+
+    if (!g_viewport_wnd)
+    {
+	return;
+    }
+
+  /*
+   * We must keep x coordinate between viewportXSpan and zero, if viewportXSpan
+   * is less then zero. If viewportXSpan is greater or equal to zero, it means
+   * the agent root window has a size smaller than the agent default window.
+   * In this case we keep the old coordinate.
+   */
+
+    if (viewportXSpan < 0)
+    {
+	newX = g_wnd_x - hShift;
+
+	if (newX > 0)
+	{
+	    newX = 0;
+	}
+	else if (newX < viewportXSpan)
+	{
+	    newX = viewportXSpan;
+	}
+    }
+    else if (viewportXSpan == 0)
+    {
+	newX = 0;
+    }
+    else
+    {
+	newX = g_wnd_x;
+    }
+
+    if (viewportYSpan < 0)
+    {
+	newY = g_wnd_y - vShift;
+	if (newY > 0)
+	{
+	    newY = 0;
+	}
+	else if (newY < viewportYSpan)
+	{
+	    newY = viewportYSpan;
+	}
+    }
+    else if (viewportYSpan == 0)
+    {
+	newY = 0;
+    }
+    else
+    {
+	newY = g_wnd_y;
+    }
+    if (newX != g_wnd_x)
+    {
+	g_wnd_x = newX;
+	do_move = True;
+    }
+    if (newY != g_wnd_y)
+    {
+	g_wnd_y = newY;
+	do_move = True;
+    }
+
+    if (do_move)
+    {
+	#ifdef TEST
+	nxdesktopDebug("nxdesktopMoveViewport: New viewport geometry: (%d, %d)-"
+                "(%d, %d)\n", -g_wnd_x, -g_wnd_y, -g_wnd_x + g_width,
+                     -g_wnd_y + g_height);
+	#endif
+	XMoveWindow(g_display, g_wnd, g_wnd_x, g_wnd_y);
+    }
+}
+
+void
+ui_begin_update(void)
+{
+}
+
+void
+ui_end_update(void)
+{
+}
+/* end */

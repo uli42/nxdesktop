@@ -1,7 +1,7 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - RDP encryption and licensing
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -37,23 +37,16 @@
 
 #include "rdesktop.h"
 
-#ifdef WITH_OPENSSL
 #include <openssl/rc4.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 #include <openssl/bn.h>
 #include <openssl/x509v3.h>
-#else
-#include "crypto/rc4.h"
-#include "crypto/md5.h"
-#include "crypto/sha.h"
-#include "crypto/bn.h"
-#endif
 
-extern char hostname[16];
+extern char g_hostname[16];
 extern int g_width;
 extern int g_height;
-extern int keylayout;
+extern int g_keylayout;
 extern BOOL g_encryption;
 extern BOOL g_licence_issued;
 extern BOOL g_use_rdp5;
@@ -384,7 +377,7 @@ sec_send_to_channel(STREAM s, uint32 flags, uint16 channel)
 		flags &= ~SEC_ENCRYPT;
 		datalen = s->end - s->p - 8;
 
-#ifdef WITH_DEBUG
+#if WITH_DEBUG
 		DEBUG(("Sending encrypted packet:\n"));
 		hexdump(s->p + 8, datalen);
 #endif
@@ -427,7 +420,7 @@ sec_establish_key(void)
 static void
 sec_out_mcs_data(STREAM s)
 {
-	int hostlen = 2 * strlen(hostname);
+	int hostlen = 2 * strlen(g_hostname);
 	int length = 158 + 76 + 12 + 4;
 	unsigned int i;
 
@@ -463,11 +456,11 @@ sec_out_mcs_data(STREAM s)
 	out_uint16_le(s, g_height);
 	out_uint16_le(s, 0xca01);
 	out_uint16_le(s, 0xaa03);
-	out_uint32_le(s, keylayout);
+	out_uint32_le(s, g_keylayout);
 	out_uint32_le(s, 2600);	/* Client build. We are now 2600 compatible :-) */
 
 	/* Unicode name of client, padded to 32 bytes */
-	rdp_out_unistr(s, hostname, hostlen);
+	rdp_out_unistr(s, g_hostname, hostlen);
 	out_uint8s(s, 30 - hostlen);
 
 	out_uint32_le(s, 4);
@@ -883,7 +876,8 @@ sec_recv(uint8 * rdpver)
 		if (channel != MCS_GLOBAL_CHANNEL)
 		{
 			channel_process(s, channel);
-			continue;
+			*rdpver = 0xff;
+			return s;
 		}
 
 		return s;

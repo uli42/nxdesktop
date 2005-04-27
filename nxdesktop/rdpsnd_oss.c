@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -50,6 +50,7 @@ int g_dsp_fd;
 BOOL g_dsp_busy = False;
 static int g_snd_rate;
 static short g_samplewidth;
+static BOOL g_driver_broken = False;
 
 static struct audio_packet
 {
@@ -66,7 +67,7 @@ wave_out_open(void)
 
 	if (dsp_dev == NULL)
 	{
-		dsp_dev = "/dev/dsp";
+		dsp_dev = strdup("/dev/dsp");
 	}
 
 	if ((g_dsp_fd = open(dsp_dev, O_WRONLY | O_NONBLOCK)) == -1)
@@ -102,7 +103,7 @@ wave_out_format_supported(WAVEFORMATEX * pwfx)
 BOOL
 wave_out_set_format(WAVEFORMATEX * pwfx)
 {
-	int channels, format;
+	int stereo, format, fragments;
 
 	ioctl(g_dsp_fd, SNDCTL_DSP_RESET, NULL);
 	ioctl(g_dsp_fd, SNDCTL_DSP_SYNC, NULL);
@@ -121,17 +122,21 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 		return False;
 	}
 
-	channels = pwfx->nChannels;
-	if (ioctl(g_dsp_fd, SNDCTL_DSP_CHANNELS, &channels) == -1)
+	if (pwfx->nChannels == 2)
+	{
+		stereo = 1;
+		g_samplewidth *= 2;
+	}
+	else
+	{
+		stereo = 0;
+	}
+
+	if (ioctl(g_dsp_fd, SNDCTL_DSP_STEREO, &stereo) == -1)
 	{
 		perror("SNDCTL_DSP_CHANNELS");
 		close(g_dsp_fd);
 		return False;
-	}
-
-	if (channels == 2)
-	{
-		g_samplewidth *= 2;
 	}
 
 	g_snd_rate = pwfx->nSamplesPerSec;
@@ -140,6 +145,31 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 		perror("SNDCTL_DSP_SPEED");
 		close(g_dsp_fd);
 		return False;
+	}
+
+	/* try to get 7 fragments of 2^12 bytes size */
+	fragments = (7 << 16) + 12;
+	ioctl(g_dsp_fd, SNDCTL_DSP_SETFRAGMENT, &fragments);
+
+	if (!g_driver_broken)
+	{
+		audio_buf_info info;
+
+		memset(&info, 0, sizeof(info));
+		if (ioctl(g_dsp_fd, SNDCTL_DSP_GETOSPACE, &info) == -1)
+		{
+			perror("SNDCTL_DSP_GETOSPACE");
+			close(g_dsp_fd);
+			return False;
+		}
+
+		if (info.fragments == 0 || info.fragstotal == 0 || info.fragsize == 0)
+		{
+			fprintf(stderr,
+				"Broken OSS-driver detected: fragments: %d, fragstotal: %d, fragsize: %d\n",
+				info.fragments, info.fragstotal, info.fragsize);
+			g_driver_broken = True;
+		}
 	}
 
 	return True;
@@ -200,7 +230,7 @@ wave_out_write(STREAM s, uint16 tick, uint8 index)
 	packet->s.p += 4;
 
 	/* we steal the data buffer from s, give it a new one */
-	s->data = malloc(s->size);
+	s->data = (uint8 *) malloc(s->size);
 
 	if (!g_dsp_busy)
 		wave_out_play();
@@ -216,6 +246,7 @@ wave_out_play(void)
 	static long startedat_s;
 	static BOOL started = False;
 	struct timeval tv;
+	audio_buf_info info;
 
 	while (1)
 	{
@@ -236,7 +267,32 @@ wave_out_play(void)
 			started = True;
 		}
 
-		len = write(g_dsp_fd, out->p, out->end - out->p);
+		len = out->end - out->p;
+
+		if (!g_driver_broken)
+		{
+			memset(&info, 0, sizeof(info));
+			if (ioctl(g_dsp_fd, SNDCTL_DSP_GETOSPACE, &info) == -1)
+			{
+				perror("SNDCTL_DSP_GETOSPACE");
+				return;
+			}
+
+			if (info.fragments == 0)
+			{
+				g_dsp_busy = 1;
+				return;
+			}
+
+			if (info.fragments * info.fragsize < len
+			    && info.fragments * info.fragsize > 0)
+			{
+				len = info.fragments * info.fragsize;
+			}
+		}
+
+
+		len = write(g_dsp_fd, out->p, len);
 		if (len == -1)
 		{
 			if (errno != EWOULDBLOCK)
@@ -255,7 +311,7 @@ wave_out_play(void)
 			duration = (out->size * (1000000 / (g_samplewidth * g_snd_rate)));
 			elapsed = (tv.tv_sec - startedat_s) * 1000000 + (tv.tv_usec - startedat_us);
 
-			if (elapsed >= (duration * 7) / 10)
+			if (elapsed >= (duration * 85) / 100)
 			{
 				rdpsnd_send_completion(packet->tick, packet->index);
 				free(out->data);

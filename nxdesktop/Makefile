@@ -6,7 +6,7 @@
 
 #**************************************************************************
 #*                                                                        *
-#* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           *
+#* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           *
 #*                                                                        *
 #* NXDESKTOP, NX protocol compression and NX extensions to this software  *
 #* are copyright of NoMachine. Redistribution and use of the present      *
@@ -31,23 +31,22 @@ mandir      = $(prefix)/man
 datadir     = $(prefix)/share
 
 INCLUDES = -I../nxcomp -I../nxcompext
-LDLIBS   = -lXpm -L../nxcompext -lXcompext -L../nxcomp -lXcomp -lX11
-VERSION     = 1.4.0-38
+LDLIBS   = -lXpm -L../nxcompext -lXcompext -L../nxcomp -lXcomp -lX11 -lXext
+VERSION     = 1.5.0-2
 KEYMAP_PATH = $(datadir)/keymaps-windows/
 
 RDPOBJ   = tcp.o iso.o mcs.o secure.o licence.o rdp.o orders.o bitmap.o cache.o rdp5.o channels.o rdpdr.o serial.o printer.o disk.o parallel.o printercache.o mppc.o pstcache.o
 X11OBJ   = rdesktop.o xwin.o xkeymap.o ewmhints.o xclip.o cliprdr.o
 VNCOBJ   = vnc/rdp2vnc.o vnc/vnc.o vnc/xkeymap.o vnc/x11stubs.o
-CRYPTOBJ = crypto/rc4_enc.o crypto/rc4_skey.o crypto/md5_dgst.o crypto/sha1dgst.o crypto/bn_exp.o crypto/bn_mul.o crypto/bn_div.o crypto/bn_sqr.o crypto/bn_add.o crypto/bn_shift.o crypto/bn_asm.o crypto/bn_ctx.o crypto/bn_lib.o
 
 include Makeconf  # configure-generated
 
 all: $(TARGETS)
 
-nxdesktop: $(X11OBJ) $(SOUNDOBJ) $(RDPOBJ) $(CRYPTOBJ)
+nxdesktop: $(X11OBJ) $(SOUNDOBJ) $(RDPOBJ)
 	$(CC) $(CFLAGS) -o nxdesktop $(X11OBJ) $(SOUNDOBJ) $(RDPOBJ) $(CRYPTOBJ) $(LDFLAGS) $(LDLIBS) 
 
-rdp2vnc: $(VNCOBJ) $(SOUNDOBJ) $(RDPOBJ) $(CRYPTOBJ)
+rdp2vnc: $(VNCOBJ) $(SOUNDOBJ) $(RDPOBJ)
 	$(CCLD) $(CFLAGS) -o rdp2vnc $(VNCOBJ) $(SOUNDOBJ) $(RDPOBJ) $(CRYPTOBJ) $(LDFLAGS) $(LDVNC)
 
 vnc/rdp2vnc.o: rdesktop.c

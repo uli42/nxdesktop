@@ -2,7 +2,7 @@
    rdesktop: A Remote Desktop Protocol client.
    User interface services - X keyboard mapping
 
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    Copyright (C) Peter Astrand <peter@cendio.se> 2003
    
    This program is free software; you can redistribute it and/or modify
@@ -22,7 +22,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -54,10 +54,32 @@
 #define KEYMAP_MASK 0xffff
 #define KEYMAP_MAX_LINE_LENGTH 80
 
+/*
+ * Viewport navigation
+ */
+
+#define MAX_INC 200
+#define INC_STEP 5
+#define nextinc(x)  ((x) < MAX_INC ? (x) += INC_STEP : (x))
+
+static int viewportInc = 1;
+
+enum DirectionKeyState {
+  no_action = 0,
+  up_key,
+  down_key,
+  left_key,
+  right_key
+};
+
+static enum DirectionKeyState viewportKeystate = no_action;
+
+extern void nxdesktopMoveViewport(int hShift, int vShift);
+
 extern Display *g_display;
 extern Window g_wnd;
 extern char keymapname[16];
-extern int keylayout;
+extern int g_keylayout;
 extern int g_win_button_size;
 extern BOOL g_enable_compose;
 extern BOOL g_use_rdp5;
@@ -157,8 +179,8 @@ xkeymap_read(char *mapname)
 		/* map */
 		if (strncmp(line, "map ", 4) == 0)
 		{
-			keylayout = strtol(line + 4, NULL, 16);
-			DEBUG_KBD(("Keylayout 0x%x\n", keylayout));
+			g_keylayout = strtol(line + 4, NULL, 16);
+			DEBUG_KBD(("Keylayout 0x%x\n", g_keylayout));
 			continue;
 		}
 
@@ -320,7 +342,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 {
 	switch (keysym)
 	{
-		case XK_Return:
+		case XK_F:
+                case XK_f:
 			if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
 			    && (get_key_state(state, XK_Control_L)
 				|| get_key_state(state, XK_Control_R)))
@@ -399,6 +422,86 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 				return True;
 			break;
 
+                case XK_Up:
+                case XK_KP_Up:
+                case XK_KP_8:
+                        if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
+                            && (get_key_state(state, XK_Control_L)
+                                || get_key_state(state, XK_Control_R)))
+            		{
+                	    if (pressed)
+                	    {
+                		if (viewportKeystate != up_key)
+                		{
+                		    viewportKeystate = up_key;
+                    		    viewportInc = 1;
+                        	}
+                		nxdesktopMoveViewport (0, -nextinc(viewportInc));
+                		return True; 
+                	    }
+            		}
+                        break;
+
+                case XK_Down:
+                case XK_KP_Down:
+                case XK_KP_2:
+                        if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
+                            && (get_key_state(state, XK_Control_L)
+                                || get_key_state(state, XK_Control_R)))
+                        {
+                          if (pressed)
+                          {
+                            if (viewportKeystate != down_key)
+                            {
+                              viewportKeystate = down_key;
+                              viewportInc = 1;
+                            }
+                            nxdesktopMoveViewport (0, +nextinc(viewportInc));
+                            return True;
+                          }
+                        }
+                        break;
+
+                case XK_Left:
+                case XK_KP_Left:
+                case XK_KP_4:
+                        if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
+                            && (get_key_state(state, XK_Control_L)
+                                || get_key_state(state, XK_Control_R)))
+                        {
+                          if (pressed)
+                          {
+                            if (viewportKeystate != left_key)
+                            {
+                              viewportKeystate = left_key;
+                              viewportInc = 1;
+                            }
+                            nxdesktopMoveViewport (-nextinc(viewportInc), 0);
+                            return True;
+                          }
+                        }
+                        break;
+ 
+                case XK_Right:
+                case XK_KP_Right:
+                case XK_KP_6:
+                        if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
+                            && (get_key_state(state, XK_Control_L)
+                                || get_key_state(state, XK_Control_R)))
+                        {
+                          if (pressed)
+                          {
+                            if (viewportKeystate != right_key)
+                            {
+                              viewportKeystate = right_key;
+                              viewportInc = 1;
+                            }
+                            nxdesktopMoveViewport (+nextinc(viewportInc), 0);
+                            return True;
+                          }
+                        }
+                        break;
+ 
 	}
 	return False;
 }
@@ -427,7 +530,15 @@ xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state)
 			tr.modifiers = MapLeftShiftMask;
 		}
 	}
+	
+	
 
+	if (((remote_modifier_state & MapLeftCtrlMask)	|| (remote_modifier_state & MapRightCtrlMask)) && get_key_state(state, XK_Caps_Lock))
+	{
+		DEBUG_KBD(("CapsLock + CTRL pressed, releasing LeftShift\n"));
+		tr.modifiers ^= MapLeftShiftMask;
+	}
+	
 	if (tr.scancode != 0)
 	{
 		DEBUG_KBD(("Found key translation, scancode=0x%x, modifiers=0x%x\n",

@@ -19,9 +19,26 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include "rdesktop.h"
 
-#define MAX_CHANNELS			4
+#define MAX_CHANNELS			5
 #define CHANNEL_CHUNK_LENGTH		1600
 #define CHANNEL_FLAG_FIRST		0x01
 #define CHANNEL_FLAG_LAST		0x02

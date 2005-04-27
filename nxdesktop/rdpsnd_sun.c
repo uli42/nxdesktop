@@ -22,7 +22,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -71,7 +71,7 @@ wave_out_open(void)
 
 	if (dsp_dev == NULL)
 	{
-		dsp_dev = "/dev/audio";
+		dsp_dev = strdup("/dev/audio");
 	}
 
 	if ((g_dsp_fd = open(dsp_dev, O_WRONLY | O_NONBLOCK)) == -1)
@@ -184,11 +184,7 @@ wave_out_volume(uint16 left, uint16 right)
 	uint balance;
 	uint volume;
 
-	if (ioctl(g_dsp_fd, AUDIO_GETINFO, &info) == -1)
-	{
-		perror("AUDIO_GETINFO");
-		return;
-	}
+	AUDIO_INITINFO(&info);
 
 	volume = (left > right) ? left : right;
 

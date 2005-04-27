@@ -1,7 +1,7 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Protocol services - RDP layer
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2004 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -60,6 +60,7 @@ extern BOOL nxdesktopUseNXRdpImages;
 extern BOOL nxdesktopUseNXCompressedRdpImages;
 extern unsigned int buf_key_vector;
 extern BOOL rdp_img_cache;
+BOOL need_init_nx = True;
 /* NX */
 
 uint8 *g_next_packet;
@@ -67,7 +68,7 @@ uint32 g_rdp_shareid;
 
 extern RDPCOMP g_mppc_dict;
 
-#ifdef WITH_DEBUG
+#if WITH_DEBUG
 static uint32 g_packetno;
 #endif
 
@@ -84,7 +85,13 @@ rdp_recv(uint8 * type)
 		rdp_s = sec_recv(&rdpver);
 		if (rdp_s == NULL)
 			return NULL;
-		if (rdpver != 3)
+		if (rdpver == 0xff)
+		{
+			g_next_packet = rdp_s->end;
+			*type = 0;
+			return rdp_s;
+		}
+		else if (rdpver != 3)
 		{
 			/* rdp5_process should move g_next_packet ok */
 			rdp5_process(rdp_s);
@@ -111,7 +118,7 @@ rdp_recv(uint8 * type)
 	in_uint8s(rdp_s, 2);	/* userid */
 	*type = pdu_type & 0xf;
 
-#ifdef WITH_DEBUG
+#if WITH_DEBUG
 	DEBUG(("RDP packet #%d, (type %x)\n", ++g_packetno, *type));
 	hexdump(g_next_packet, length);
 #endif /*  */
@@ -523,7 +530,7 @@ rdp_out_order_caps(STREAM s)
 	/* NX */
 	if (!g_use_rdp5)
 	    rdp_img_cache = False;
-	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt? */
+	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt */
 	/* char *p;
 	*(p = NULL) = 0;*/
 	#ifdef NXDESKTOP_RDP_DEBUG
@@ -737,7 +744,9 @@ rdp_send_confirm_active(void)
 	rdp_out_order_caps(s);
 	if (False)
 	    g_use_rdp5 ? rdp_out_bmpcache2_caps(s) : rdp_out_bmpcache_caps(s);
+	
 	rdp_out_bmpcache_caps(s);
+	
 	rdp_out_colcache_caps(s);
 	rdp_out_activate_caps(s);
 	rdp_out_control_caps(s);
@@ -993,13 +1002,6 @@ process_bitmap_updates(STREAM s)
 		DEBUG(("BITMAP_UPDATE(l=%d,t=%d,r=%d,b=%d,w=%d,h=%d,Bpp=%d,cmp=%d)\n",
 		       left, top, right, bottom, width, height, Bpp, compress));
 
-		/* Server may limit bpp - this is how we find out */
-		if (g_server_bpp != bpp)
-		{
-			warning("Server limited colour depth to %d bits\n", bpp);
-			g_server_bpp = bpp;
-		}
-
 		if (!compress)
 		{
 			int y;
@@ -1065,7 +1067,8 @@ process_bitmap_updates(STREAM s)
 		}
 		#else /*NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES*/
 
-		bmpdata = xmalloc(width * height);
+		//bmpdata = xmalloc(width * height);
+		bmpdata = (uint8 *) xmalloc(width * height * Bpp);
 		if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
 		{
 			#ifdef NXDESKTOP_RDP_DEBUG
@@ -1122,6 +1125,7 @@ process_update_pdu(STREAM s)
 
 	in_uint16_le(s, update_type);
 
+	ui_begin_update();
 	switch (update_type)
 	{
 		case RDP_UPDATE_ORDERS:
@@ -1154,6 +1158,7 @@ process_update_pdu(STREAM s)
 		default:
 			unimpl("process_update_pdu","update %d\n", update_type);
 	}
+	ui_end_update();
 }
 
 /* Process a disconnect PDU */
@@ -1187,7 +1192,8 @@ process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 
 	if (ctype & RDP_MPPC_COMPRESSED)
 	{
-
+		if (len > RDP_MPPC_DICT_SIZE)
+			error("error decompressed packet size exceeds max\n");
 		if (mppc_expand(s->p, clen, ctype, &roff, &rlen) == -1)
 			error("error while decompressing packet\n");
 
@@ -1249,7 +1255,7 @@ void
 rdp_main_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 {
 	while (rdp_loop(deactivated, ext_disc_reason))
-	;
+		;
 }
 
 /* used in uiports and rdp_main_loop, processes the rdp packets waiting */
@@ -1265,10 +1271,18 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 	{
 		s = rdp_recv(&type);
 		if (s == NULL)
-			return False;
+		{
+		    return False;
+		}
 		switch (type)
 		{
 			case RDP_PDU_DEMAND_ACTIVE:
+				if (need_init_nx)
+				{
+				    if (!ui_init_nx())
+					disc = True;
+				    need_init_nx = False;
+				}
 				process_demand_active(s);
 				*deactivated = False;
 				break;
@@ -1289,6 +1303,7 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 		cont = g_next_packet < s->end;
 	}
 	return True;
+	
 }
 
 /* Test a connection up to the RDP layer */

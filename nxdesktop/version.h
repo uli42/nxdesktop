@@ -1,6 +1,6 @@
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -17,5 +17,5 @@
  
 #define NXDESKTOP_SESSION 2
 #define NXDESKTOP_MAJOR_VERSION 1
-#define NXDESKTOP_MINOR_VERSION 4
+#define NXDESKTOP_MINOR_VERSION 5
 #define NXDESKTOP_RELEASE       0

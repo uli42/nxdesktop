@@ -1,35 +1,567 @@
 ChangeLog:
 
-nxdesktop-1.4.0-61
+nxdesktop-1.5.0-34
 
-- Solved problem that makes the RDP session crashes when connected
-  to a RDP 4 server like the original TS for Windows NT.
-  TRSL042225.
+- Initialization of xo and yo when launched from command line are 
+  now correct.
   
-- Modified the debug routines to avoid possible compilation problems
-  gcc 2.95.
-
-nxdesktop-1.4.0-60
-
-- Changed debug entry on xwin.c to improve compatibility with gcc 2.95.3
-  used on Suse 7.3
-
-nxdesktop-1.4.0-59
-
-- Solved bug on the debug code which was making nxdesktop segfault if
-  the new XWIN operation debug is activated.
+- Solved problem that made the amount of data traffic between nxserver
+  and nxclient becomes very high when link type LAN is selected.
   
-- Little code cleanning on xwin.c and orders.c
+- Changed the way of NX transport is initialized when the RDP session
+  is recognized by the server.
 
-- Changed sequence of debug #ifdef's
+nxdesktop-1.5.0-33
 
-nxdesktop-1.4.0-58
+- The moving windows operation now is purelly done on the X client
+  side only and not following the RDP window when it's moved. 
+  This way, the X window movement is a snap and there's no need to
+  handle the different offsets between the RDP window and the X 
+  window.
 
-- Solved bug which was causing MS Visio 2002 to close the session as
-  reported by Andreas Krause. 
+- Support for multiple windows is beeing modified to handle them
+  in a different way. This is required because some update packets
+  can partially operates across more than one window thus, to keep
+  the result consistent, this packet would have to be splitted.
+  Now, with the separation between the RDP windows position and the X
+  window position, the windows are going to placed in a virtual 
+  desktop where they don't overlap, forcing the RDP updates to be
+  contained intirely into one window.
+
+nxdesktop-1.5.0-32
+
+- Applied corrections on redirection from rdesktop 1.4.0.
+
+- Added preliminary support for minimize/maximize windows under
+  floating window mode. It's not fully functional yet. If the window
+  is minimized, the RDP server closes the session. To avoid this,
+  nxclipper has to be modified.
+
+nxdesktop-1.5.0-31
+
+- Solved bug that moved the window if it was resized when in seamless
+  mode.
+
+nxdesktop-1.5.0-30
+
+- Implemented seamless mode. Creation, destroying, resizing are
+  working fine. Moving still have some issues specially if there
+  is more than one window active.
   
-NOTE: This will also probably solve the problem with his ERP. I'm waiting
-      his answer on this matter.
+- As the messages coming from nxclipper are not in sync with the RDP
+  packets, a flag was added to avoid processing packets while there
+  is still messages coming.
+  
+- When the seamless mode is activated, the whole screen space avaliable
+  is used, the windows border are eliminated and all "eye candy" from
+  default "experience" options are disabled, except the "full window
+  content drag". This option is necessary for now to generate the
+  correct "moving" messages. The idea is to eliminate it to which will
+  vastly improve performance.
+  
+- The messages "NOT IMPLEMENTED: RDP5 opcode 6" and "NOT IMPLEMENTED: 
+  CLIPRDR packet type 7", created by Windows 2003 SP1 are now ignored.
+  There's no lack of funcionality when those flags are ignored.
+  
+- Disabled detection of the xshape extension.
+
+- Changed sequence of resizing to improve performance.
+
+nxdesktop-1.5.0-29
+
+- Initial support for X windows and RDP windows correspondence.
+
+- Removed unused flag into orders processing.
+
+- Corrected typo in CHANGELOG.
+
+nxdesktop-1.5.0-28
+
+- Disabled mask/shape processing of the RDP windows.
+
+- Added entries to recognize the new messages sent by nxclipper
+  namelly WM_WINDOWSPOSCHANGED and WM_WINDOWPOSCHANGING.
+  
+- Changed window information buffer to deal with the z-depth 
+  information.
+
+nxdesktop-1.5.0-27
+
+- Solved problem with cache initialization that could cause errors
+  when nxdesktop is executed from the command line.
+  
+- No more need to specify fullscreen mode.
+
+- Added "emergency key" F12. This is a debug measure. If the window is
+  lost or hidden by mistake, pressing F12 will make the desktop visible.
+  
+- Improved "move window" now the contents of the window are correctly 
+  preserved when moved. It's not perfect yet tough.
+  
+- Added special treatment for resizing.
+
+- When floating mode is selected, a special flag is automaticaly sent
+  to the server to force the exibition of the windows contents.
+  
+- Started implementation of the minimize, maximize and restore functions 
+  which were not provided by the original TSClipper. Maximize works 
+  already.
+  
+- Changed the way the inital mask is created.
+
+- Removed some compiler warnings.
+
+- Some cosmetic changes.
+
+- Changed configure script to solve problem with Solaris.
+
+- Fine tunned performance flags for floating windows mode. All eye-candy
+  is disabled except full window drag.
+  
+- Added new message parameter "TYPE" to the clipper message parser. 
+  This characterize the sub-operation provided by the minimize/maximize
+  /restore process.
+
+nxdesktop-1.5.0-26
+
+- Change atoms properties to deal with viewport mode.
+
+- Added flag to disable viewport mode when seamless mode is enabled.
+
+- Cosmetic changes on viewport code.
+
+- Restaured the funcion of Alt+F4 key combination.
+
+- Imported changes from nxdesktop-1.5.0-24-STE1.
+
+- Implememted procedures to create, destroy, move and resize windows
+  in floating window mode.
+
+nxdesktop-1.5.0-25
+
+- Message parser improved.
+
+- Added debug messages to the message parser.
+
+- RDP server windows are now storaged in a cache array to keep
+  track of it's characteristics.
+  
+- Nxdesktop window now changes itself in response to RDP messages to
+  change it's size and position.
+
+nxdesktop-1.5.0-24
+
+- Modified clipper channel parser to deal with unexpected data.
+
+- Corrected typo on CHANGELOG.
+
+nxdesktop-1.5.0-23
+
+- Imported changes from nxdesktop-1.5.0-21-MAR1.
+
+- Added debug routines to dump data from the clipper channel.
+
+- Changed callback procedure to the clipper channel to capture the 
+  event loop.
+  
+- Added parser to receive the windows data and put store it in a 
+  usefull format.
+  
+- Created array to hold the windows information.
+
+- Made changes on the clipper component used on the windows server to
+  send the information in format easier to parse.
+  
+- Made some cosmetic changes in xwin.c and constants.h.
+
+- Added some comentaries in the new code above.
+
+nxdesktop-1.5.0-22
+
+- Imported constants relative to the channels processing from TS SDK.
+
+- Added entry points to the callback functions of the RDP extension.
+
+- The RDP extension is now responding correctly and the information 
+  regarding the RDP windows, including ID, event, type,  title, size 
+  and position are now avaliable via the "clipper" channel.
+
+nxdesktop-1.5.0-21
+
+- Enabled the callback for the "clipper" channel.
+
+- Imported improvemments and corrections from rdesktop-1.4.0.
+
+- Integrated changes from nxdesktop-1.5.0-MAR2.
+
+- Corrected wrong declaration of function nxdesktopMoveViewport.
+
+- The directories "crypto" and vnc are no longer used.
+
+- The cryptography headers are now from OpenSSH.
+
+- Changes in the configure script to support the changes above.
+
+nxdesktop-1.5.0-20
+
+- The "clipper" channel is now correctly recognized by the windows 
+  server this means that nxdesktop is sending the right initialization 
+  sequence that enables the channel used for the seamless windows 
+  process making the windows server aware that the related RDP 
+  extension will be used and mimicking the windows client-side TS API.
+  
+- Changed channels initialization order.
+  
+nxdesktop-1.5.0-19
+
+- Integrated changes from nxdesktop-1.5.0-18-MAR1.
+
+- Added channel parameters to the "CLIPPER" channel.
+
+- Changed format of channel "CLIPPER" registration to be compatible with
+  the one found using MS RDP client.
+
+nxdesktop-1.5.0-18-MAR1
+
+- Implemented FRSA052271: Dynamic handling of the main window's size
+  in the RDP agent.
+
+- Implemented FRSA052270: Dynamic handling of the full-screen attribu-
+  te in the RDP agent.
+
+nxdesktop-1.5.0-18
+
+- Corrected typo in Info message.
+
+- Corrected wrong file permissions in "configure".
+
+- Debug code for the channel communications added.
+
+nxdesktop-1.5.0-17
+
+- Revision of the depth limit fall back process. If the windows server 
+  limits the color depth of the RDP session, nxdesktop will falls back 
+  to the highest avaliable one.
+
+- Updated copyright notice on the files. FRCA052260.
+
+- Updated fr-ch (swiss-french) keymap.
+
+nxdesktop-1.5.0-16
+
+- All code related to the seamless window based on masks is disabled.
+
+- Reactivated code that handles the new channel to be used to change
+  information between the windows server and nxdesktop related to the
+  windows. The channel is called CLIPPER at this time to be compatible
+  with the server side test code.
+
+- Rectangles buffer and optimizer re-enabled.
+
+- Pixmap cache activated.
+
+- Small change in the initialization process related to the changes
+  on the options parser.
+
+- Code clean-up related to the debug conditionals and features.
+
+nxdesktop-1.5.0-15
+
+- Corrected typo in CHANGELOG.
+
+- Changed the parameter "rdpcolordepth" to "rdpcolors".
+
+nxdesktop-1.5.0-14
+
+- Solved bug preventing nxdesktop to run if single application and 
+  fullscreen are selected without using the floating window mode.
+  
+- Now the RDP image cache is aways on unless explicitely disabled.
+  FRSA052358.
+
+- Added parameters "rdpcolordepth" and "rdpcache" to options file
+  parser.
+  
+- Disabled debug option that creates a disk image of certain test 
+  masks.
+
+nxdesktop-1.5.0-13
+
+- Added debug function "Snapshot". When activated, the F12 key takes a
+  snapshot of the current window, current backstore and current shape
+  bitmap creating the files "window.xbm", "backstore.xbm" and 
+  "shape_bitmap.xbm".
+  
+- Added debug function "Shape reset". When activated, the F11 key tries
+  to reset the window mask to a suitable situation.
+  This function requires a special nxcomp called nxcomp-1.5.3-ADI1 because
+  it creates a message bigger than the write buffer can handle currently.
+  The session will fail if used with any current nxcomp.
+  
+- The FILL_RECT operations are now handled by an specific function that 
+  checks if the rectangle will be part of the background or not and updates
+  the shape mask acordingly.
+  
+- The resizing of the client window now works.
+
+- Moving the client window works partialy. The window is moved but the
+  mask does not updates correctly yet.
+  
+- The glyphs and text rendering area is now adjusted to be visible before
+  the rendering.
+  
+- Operations like lines are, for now, ignored as the are already covered 
+  by the fill_rectangle and paint_bitmap ones.
+  
+nxdesktop-1.5.0-12
+
+- Disabled parameters parsing debug.
+
+- Added signal2 handler to dump the masks at any moment.
+
+nxdesktop-1.5.0-11
+
+- Modified orders.c to deal with on-the-fly creating of masks for the
+  bitmaps.
+  
+- Added defines to enable/disable the masks creation functions.
+
+- Added defines to control the dump of the shapes (screen and disk).
+
+- Corrected typo on CHANGELOG.
+
+- Corrected typos on rdesktop.c debug messages.
+
+- Added support for "domain" parameter on the command line and 
+  options file. 
+  
+nxdesktop-1.5.0-10
+
+- Changed logic of enabling RDP image cache. Previously, nxdesktop's
+  configuration had priority over the response to the server side
+  capabilities query.
+  
+- Mask creation process is now compatible with latest directives.
+
+- Several debug entry-points added for the mask processing. Still need to
+  clean up the dubug routines and add the correct #ifdef's.
+
+- Added capability to dump to disk and screen partial, complete shapes and
+  source images added. When dumped to the disk, the shapes are standard
+  XBM files.
+  
+- Several different calling points for the masks update were created or
+  adjusted from the previous locations. Currently working on when call the
+  updates for each operation.
+  
+nxdesktop-1.5.0-9
+
+- Cosmetic changes on xwin.c.
+
+- Removed mask dump files.
+
+- Added image dump code to help debugging.
+
+- Started implementation of a new way to create the masks required 
+  to make the floating windows apearance. Instead of  grab them just 
+  before they are sent to the window, the masks  will be created when 
+  the bitmaps arrive from the RDP server.
+  
+- Small change on the caching procedure to make sure that the 
+  persistent bitmap caches (which are stored on disk) are disabled.
+  
+- Removed redundant rectangles cache flush.
+
+- A initial mask is created just after the window mapping. This avoids
+  the login window to have the border if the floating mode is on.
+  Some experiment is still needed to find a suitable initial value for
+  this mask that doesn't mess the subsequent bitmaps right after.
+  
+- The callback function for the CLIPPER channel is commented out to
+  avoid a compiler warning as this function is not been used currently.
+
+nxdesktop-1.5.0-8
+
+- Corrected compilation problem on solaris 8.
+
+- Disabled floating debug code.
+
+nxdesktop-1.5.0-7
+
+- Mask creation reevaluated. Now a clean mask is prepared before any
+  bitmap is sent to the window.
+  This was necessary to avoid gaps on the subsequent partial mask
+  processing that will damage the result.
+  
+- Implemented a fixed mask to test the XShapeCombineMask actual
+  behaviour.
+  
+- If the floating window mode is selected, the border are automaticaly
+  removed.
+  
+- Floating window mode disabled by default.
+
+- Removed compiler warnings.
+
+nxdesktop-1.5.0-6
+
+- Changed logic on PIXMAP_CACHE ifdefs.
+
+- Changed entry-points of bitmap processing to allow a ordered
+  creation of the bitmap masks.
+
+nxdesktop-1.5.0-5
+
+- Added detection of the XShape extension.
+
+- Changed VERSION constants.
+
+- Added XShape manipulation on non-compressed bitmaps.
+
+nxdesktop-1.5.0-4
+
+- Fixed keyboard problem with shortcuts on some windows applications
+  fails if CAPSLOCK is on. TRSL052316.
+
+nxdesktop-1.5.0-3
+
+- Started implementation of the new floating (seamless) windows mode.
+
+- Removed compiler warnings on parallel.c and cache.c.
+
+nxdesktop-1.5.0-2
+
+- Enabled experimental local elipse processing.
+
+- Removed small memory leak on ui_init().
+
+- Removed memory leak on the floating window code.
+
+nxdesktop-1.5.0-1
+
+- Opened the 1.5.0 branch based on nxdesktop-1.4.1-20.
+
+nxdesktop-1.4.1-20
+
+- Finished implementation for experimental floating-window mode
+  (seamless window).
+  
+- Added command line option -F to enable floating-window mode.
+
+nxdesktop-1.4.1-19
+
+- Solved problem with 16bpp bitmap rendering.
+
+- Small cached 24bpp images wasn't retrieved correctly. Solved.
+
+- Added support for PLAIN modes for 16 and 24 bpp.
+
+- Fixed problem when caching high color images with cache 
+  v2 (RDP5 mode).
+
+nxdesktop-1.4.1-18
+
+- Disabled debug code.
+
+nxdesktop-1.4.1-17
+
+- Small typo on CHANGELOG corrected.
+
+- Small adjustments to event handling code.
+
+nxdesktop-1.4.1-16
+
+- Corrected error on xwin.c and rdp.c discovered when
+  NXDESKTOP_XWIN_USES_PACKED_IMAGES was disabled for testing.
+
+- Started integration of SHAPE patch to use on simulated seamless 
+  mode.
+  
+NOTE: This version produces copious debug information.
+
+nxdesktop-1.4.1-15
+
+- Merged changes on nxdesktop-1.4.0-60 and nxdesktop-1.4.0-61.
+
+- Clean up on xwin.c code.
+
+- Corrected typos.
+
+nxdesktop-1.4.1-14
+
+- Merged changes on nxdesktop-1.4.0-59
+
+NOTE: Several debug options are active on this release.
+
+nxdesktop-1.4.1-13
+
+- Merged changes made on nxdesktop-1.4.0-58 to avoid session crash
+  when using MS Visio.
+  
+- Corrected typo on CHANGELOG.
+
+- Changed selection logic of color depth.
+
+nxdesktop-1.4.1-12
+
+- Added trap to close the RDP connection if the server has a limited 
+  color depth and the session requests a bigger depth.
+
+nxdesktop-1.4.1-11
+
+- Removed debug message left activated by mistake.
+
+nxdesktop-1.4.1-10
+
+- Persistent cache activated for testing and debug.
+
+- Default bpp returns to 8.
+
+nxdesktop-1.4.1-9
+
+- Removed temporary option from old keyboard handling.
+
+- Added the parameter "depth" to the read from the options file.
+  This parameter indicates the choosed session color depth.
+
+nxdesktop-1.4.1-8
+
+- Small typo con CHANGELOG corrected.
+
+- 16 and 24 bpp modes are now functional.
+
+NOTE: For now, the bpp is hardcoded in 8 and the parameter -a (into 
+      nxnode.conf for instance) has to be used to have a greater number 
+      of colors because nxclient does not have this option yet.
+      Known issues: tooltips and a few bitmaps does not work well yet.
+      
+NOTE2: I was unable to test it on dev01 yet.
+
+nxdesktop-1.4.1-7
+
+- Changed version number
+
+- Ported and updated changes made on previous 1.4.1 releases
+
+NOTE: This version now needs nxcomp 1.4.1-3 to compile.
+
+nxdesktop-1.4.1-6-ADI2
+
+- Added a time out safe guard to detect when the connection with
+  the RDP server stops responding for more than 30 sec.
+  This should solve the FRSL042147.
+  
+NOTE: This was not fully tested like in different platforms and network 
+      conditions yet.
+
+nxdesktop-1.4.1-6-ADI1
+
+- 1.4.1 branch version based on nxdesktop-1.4.0-57
+
+- Added flag --with-static-openssl to compile libcrypto staticly.
+
+NOTE: This was tested on a redhat based distro only. Probably will need 
+      changes to work on other distros/platforms.
 
 nxdesktop-1.4.0-57
 

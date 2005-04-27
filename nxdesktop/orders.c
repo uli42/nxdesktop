@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2003 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -43,6 +43,14 @@ extern uint8 *g_next_packet;
 static RDP_ORDER_STATE g_order_state;
 extern BOOL g_use_rdp5;
 extern BOOL rdp_img_cache_nxcompressed;
+extern BOOL rdp_window_moving;
+extern int g_x_offset;
+extern int g_y_offset;
+
+#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+static HBITMAP mask_cache[3][0xa00];
+extern BOOL float_window_mode;
+#endif
 
 /* Read field indicating which parameters are present */
 static void
@@ -211,7 +219,7 @@ process_destblt(STREAM s, DESTBLT_ORDER * os, uint32 present, BOOL delta)
 	DEBUG(("DESTBLT(op=0x%x,x=%d,y=%d,cx=%d,cy=%d)\n",
 	       os->opcode, os->x, os->y, os->cx, os->cy));
 
-	ui_destblt(ROP2_S(os->opcode), os->x, os->y, os->cx, os->cy);
+	ui_destblt(ROP2_S(os->opcode), os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy);
 }
 
 /* Process a pattern blt order */
@@ -244,7 +252,7 @@ process_patblt(STREAM s, PATBLT_ORDER * os, uint32 present, BOOL delta)
 	DEBUG(("PATBLT(op=0x%x,x=%d,y=%d,cx=%d,cy=%d,bs=%d,bg=0x%x,fg=0x%x)\n", os->opcode, os->x,
 	       os->y, os->cx, os->cy, os->brush.style, os->bgcolour, os->fgcolour));
 
-	ui_patblt(ROP2_P(os->opcode), os->x, os->y, os->cx, os->cy,
+	ui_patblt(ROP2_P(os->opcode), os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy,
 		  &os->brush, os->bgcolour, os->fgcolour);
 }
 
@@ -276,7 +284,7 @@ process_screenblt(STREAM s, SCREENBLT_ORDER * os, uint32 present, BOOL delta)
 	DEBUG(("SCREENBLT(op=0x%x,x=%d,y=%d,cx=%d,cy=%d,srcx=%d,srcy=%d)\n",
 	       os->opcode, os->x, os->y, os->cx, os->cy, os->srcx, os->srcy));
 
-	ui_screenblt(ROP2_S(os->opcode), os->x, os->y, os->cx, os->cy, os->srcx, os->srcy);
+	ui_screenblt(ROP2_S(os->opcode), os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy, os->srcx, os->srcy);
 }
 
 /* Process a line order */
@@ -306,7 +314,7 @@ process_line(STREAM s, LINE_ORDER * os, uint32 present, BOOL delta)
 
 	rdp_parse_pen(s, &os->pen, present >> 7);
 
-	DEBUG(("LINE(op=0x%x,sx=%d,sy=%d,dx=%d,dx=%d,fg=0x%x)\n",
+	DEBUG(("LINE(op=0x%x,sx=%d,sy=%d,dx=%d,dy=%d,fg=0x%x)\n",
 	       os->opcode, os->startx, os->starty, os->endx, os->endy, os->pen.colour));
 
 	if (os->opcode < 0x01 || os->opcode > 0x10)
@@ -315,7 +323,7 @@ process_line(STREAM s, LINE_ORDER * os, uint32 present, BOOL delta)
 		return;
 	}
 
-	ui_line(os->opcode - 1, os->startx, os->starty, os->endx, os->endy, &os->pen);
+	ui_line(os->opcode - 1, os->startx-g_x_offset, os->starty-g_y_offset, os->endx, os->endy, &os->pen);
 }
 
 /* Process an opaque rectangle order */
@@ -354,7 +362,8 @@ process_rect(STREAM s, RECT_ORDER * os, uint32 present, BOOL delta)
 	}
 
 	DEBUG(("RECT(x=%d,y=%d,cx=%d,cy=%d,fg=0x%x)\n", os->x, os->y, os->cx, os->cy, os->colour));
-	ui_rect(os->x, os->y, os->cx, os->cy, os->colour);
+
+	ui_rect(os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy, os->colour);
 }
 
 /* Process a desktop save order */
@@ -388,9 +397,9 @@ process_desksave(STREAM s, DESKSAVE_ORDER * os, uint32 present, BOOL delta)
 	height = os->bottom - os->top + 1;
 
 	if (os->action == 0)
-		ui_desktop_save(os->offset, os->left, os->top, width, height);
+		ui_desktop_save(os->offset, os->left-g_x_offset, os->top-g_y_offset, width, height);
 	else
-		ui_desktop_restore(os->offset, os->left, os->top, width, height);
+		ui_desktop_restore(os->offset, os->left-g_x_offset, os->top-g_y_offset, width, height);
 }
 
 /* Process a memory blt order */
@@ -431,11 +440,18 @@ process_memblt(STREAM s, MEMBLT_ORDER * os, uint32 present, BOOL delta)
 
 	DEBUG(("MEMBLT(op=0x%x,x=%d,y=%d,cx=%d,cy=%d,id=%d,idx=%d)\n",
 	       os->opcode, os->x, os->y, os->cx, os->cy, os->cache_id, os->cache_idx));
+
 	bitmap = cache_get_bitmap(os->cache_id, os->cache_idx);
 	if (bitmap == NULL)
 		return;
-
-	ui_memblt(ROP2_S(os->opcode), os->x, os->y, os->cx, os->cy, bitmap, os->srcx, os->srcy);
+	
+	/* NX */
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	    put_mask(mask_cache[os->cache_id][os->cache_idx], os->srcx, os->srcy, os->x, os->y, os->cx, os->cy);
+	/* NX */
+	#endif
+	ui_memblt(ROP2_S(os->opcode), os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy, bitmap, os->srcx, os->srcy);
 }
 
 /* Process a 3-way blt order */
@@ -488,11 +504,18 @@ process_triblt(STREAM s, TRIBLT_ORDER * os, uint32 present, BOOL delta)
 	DEBUG(("TRIBLT(op=0x%x,x=%d,y=%d,cx=%d,cy=%d,id=%d,idx=%d,bs=%d,bg=0x%x,fg=0x%x)\n",
 	       os->opcode, os->x, os->y, os->cx, os->cy, os->cache_id, os->cache_idx,
 	       os->brush.style, os->bgcolour, os->fgcolour));
+
 	bitmap = cache_get_bitmap(os->cache_id, os->cache_idx);
 	if (bitmap == NULL)
 		return;
 
-	ui_triblt(os->opcode, os->x, os->y, os->cx, os->cy,
+	/* NX */
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	    put_mask(mask_cache[os->cache_id][os->cache_idx], os->srcx, os->srcy, os->x, os->y, os->cx, os->cy);
+	/* NX */
+	#endif
+	ui_triblt(os->opcode, os->x-g_x_offset, os->y-g_y_offset, os->cx, os->cy,
 		  bitmap, os->srcx, os->srcy, &os->brush, os->bgcolour, os->fgcolour);
 }
 
@@ -748,7 +771,6 @@ process_polyline(STREAM s, POLYLINE_ORDER * os, uint32 present, BOOL delta)
                 ui_poly_line(ROP2_NXOR, (short *)&x_points, pCount / 2, &pen);
           }
 	/* NX */
-	
 	/* for (line = 0; (line < os->lines) && (data < os->datasize); line++)
 	{
 		xfrom = x;
@@ -891,22 +913,27 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 	if (present & 0x002000)
 		in_uint16_le(s, os->boxbottom);
 
-	/* 0x004000, 0x008000, 0x020000 and 0x040000 occur sporadicly, for example in the
-	   spreadsheet test of wintach */
+	/*
+	 * Unknown members, seen when connecting to a session that was disconnected with
+	 * mstsc and with wintach's spreadsheet test.
+	 */
 	if (present & 0x004000)
-		in_uint8s(s, 1);	/* unknown */
+		in_uint8s(s, 1);
 
 	if (present & 0x008000)
-		in_uint8s(s, 1);	/* unknown */
+		in_uint8s(s, 1);
 
 	if (present & 0x010000)
-		in_uint8s(s, 1);	/* guess */
+	{
+		in_uint8s(s, 1);	/* guessing the length here */
+		warning("Unknown order state member (0x010000) in text2 order.\n");
+	}
 
 	if (present & 0x020000)
-		in_uint8s(s, 4);	/* unknown */
+		in_uint8s(s, 4);
 
 	if (present & 0x040000)
-		in_uint8s(s, 4);	/* unknown */
+		in_uint8s(s, 4);
 
 	if (present & 0x080000)
 		in_uint16_le(s, os->x);
@@ -929,11 +956,11 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 
 	DEBUG(("\n"));
 
-	ui_draw_text(os->font, os->flags, os->mixmode, os->x, os->y,
-		     os->clipleft, os->cliptop,
+	ui_draw_text(os->font, os->flags, os->mixmode, os->x-g_x_offset, os->y-g_y_offset,
+		     os->clipleft-g_x_offset, os->cliptop-g_y_offset,
 		     os->clipright - os->clipleft,
 		     os->clipbottom - os->cliptop,
-		     os->boxleft, os->boxtop,
+		     os->boxleft-g_x_offset, os->boxtop-g_y_offset,
 		     os->boxright - os->boxleft,
 		     os->boxbottom - os->boxtop, os->bgcolour, os->fgcolour, os->text, os->length);
 }
@@ -973,7 +1000,12 @@ process_raw_bmpcache(STREAM s)
 	}
 	bitmap = ui_create_bitmap(width, height, inverted, bufsize, False);
 	xfree(inverted);
-	cache_put_bitmap(cache_id, cache_idx, bitmap,0);
+	cache_put_bitmap(cache_id, cache_idx, bitmap, 0);
+	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	if (float_window_mode)
+	    mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
+	#endif
 }
 
 /* Process a bitmap cache order */
@@ -998,7 +1030,11 @@ process_bmpcache(STREAM s)
 	in_uint16_le(s, bufsize);	/* bufsize */
 	in_uint16_le(s, cache_idx);
 
-	if (!g_use_rdp5)
+	if (g_use_rdp5)
+	{
+		size = bufsize;
+	}
+	else
 	{
 
 		/* Begin compressedBitmapData */
@@ -1009,10 +1045,6 @@ process_bmpcache(STREAM s)
 		in_uint16_le(s, final_size);
 
 	}
-	else
-	{
-		size = bufsize;
-	}
 	in_uint8p(s, data, size);
 
  	DEBUG(("BMPCACHE(cx=%d,cy=%d,id=%d,idx=%d,bpp=%d,size=%d,pad1=%d,bufsize=%d,pad2=%d,rs=%d,fs=%d)\n", width, height, cache_id, cache_idx, bpp, size, pad1, bufsize, pad2, row_size, final_size));
@@ -1021,6 +1053,11 @@ process_bmpcache(STREAM s)
 	{
 	    bitmap = ui_create_bitmap(width, height, data, size, True);
 	    cache_put_bitmap(cache_id, cache_idx, bitmap,0);
+	    
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    if (float_window_mode)
+		mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
+	    #endif
 	}
 	else
 	{
@@ -1033,6 +1070,11 @@ process_bmpcache(STREAM s)
 		
 		bitmap = ui_create_bitmap(width, height, bmpdata, size, False);
 		cache_put_bitmap(cache_id, cache_idx, bitmap,0);
+		
+		#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+		if (float_window_mode)
+		    mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
+		#endif
 	    }
 	    else
 	    {
@@ -1087,10 +1129,25 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 	DEBUG(("BMPCACHE2(compr=%d,flags=%x,cx=%d,cy=%d,id=%d,idx=%d,Bpp=%d,bs=%d)\n",
 	       compressed, flags, width, height, cache_id, cache_idx, Bpp, bufsize));
 
-	bmpdata = (uint8 *) xmalloc(width * height * Bpp);
-
-	if (compressed)
+	if (rdp_img_cache_nxcompressed)
 	{
+	    bitmap = ui_create_bitmap(width, height, data, bufsize, True);
+	    cache_put_bitmap(cache_id, cache_idx, bitmap, 0);
+	    
+	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+	    if (float_window_mode)
+		mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
+	    #endif
+	    if (flags & PERSIST)
+			pstcache_put_bitmap(cache_id, cache_idx, bitmap_id, width, height,
+					    width * height * Bpp, bitmap);
+	}
+	else
+	{
+	    bmpdata = (uint8 *) xmalloc(width * height * Bpp);
+
+	    if (compressed)
+	    {
 		if (!bitmap_decompress(bmpdata, width, height, data, bufsize, Bpp))
 		{
 			DEBUG(("Failed to decompress bitmap data\n"));
@@ -1105,21 +1162,30 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 			       &data[y * (width * Bpp)], width * Bpp);
 	}
 
-	bitmap = ui_create_bitmap(width, height, bmpdata, bufsize, False);
+	    bitmap = ui_create_bitmap(width, height, bmpdata, bufsize, False);
 
-	if (bitmap)
-	{
+	    if (bitmap)
+	    {
 		cache_put_bitmap(cache_id, cache_idx, bitmap, 0);
+		
+		#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
+		if (float_window_mode)
+		    mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
+		#endif
+		
 		if (flags & PERSIST)
 			pstcache_put_bitmap(cache_id, cache_idx, bitmap_id, width, height,
 					    width * height * Bpp, bmpdata);
-	}
-	else
-	{
+	    }
+	    else
+	    {
 		DEBUG(("process_bmpcache2: ui_create_bitmap failed\n"));
+	    }
+
+	    xfree(bmpdata);
 	}
 
-	xfree(bmpdata);
+	
 }
 
 /* Process a colourmap cache order */
@@ -1236,7 +1302,6 @@ process_secondary_order(STREAM s)
 	s->p = next_order;
 }
 
-
 /* Process an order PDU */
 void
 process_orders(STREAM s, uint16 num_orders)
@@ -1250,21 +1315,21 @@ process_orders(STREAM s, uint16 num_orders)
 	while (processed < num_orders)
 	{
 		in_uint8(s, order_flags);
-		
+
 		if (!(order_flags & RDP_ORDER_STANDARD))
 		{
 			error("Order parsing failed. Order flags = %0x.\n",order_flags);
 			break;
 		}
-		
+
 		if (order_flags & RDP_ORDER_SECONDARY)
-		{	
+		{
 			process_secondary_order(s);
 		}
 		else
 		{
 			if (order_flags & RDP_ORDER_CHANGE)
-			{	
+			{
 				in_uint8(s, os->order_type);
 			}
 
@@ -1384,7 +1449,6 @@ process_orders(STREAM s, uint16 num_orders)
 			    ui_reset_clip();
 			}
 		}
-
 		processed++;
 	}
 	#if NXDESKTOP_ORDERS_DEBUG
@@ -1396,7 +1460,6 @@ process_orders(STREAM s, uint16 num_orders)
 	flush_rects();
 	#endif
 }
-
 
 /* Reset order state */
 void
