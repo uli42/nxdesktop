@@ -1,7 +1,7 @@
 /*
    rdesktop: A Remote Desktop Protocol client.
    RDP order processing
-   Copyright (C) Matthew Chapman 1999-2002
+   Copyright (C) Matthew Chapman 1999-2005
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -70,7 +70,8 @@ enum RDP_SECONDARY_ORDER_TYPE
 	RDP_ORDER_BMPCACHE = 2,
 	RDP_ORDER_FONTCACHE = 3,
 	RDP_ORDER_RAW_BMPCACHE2 = 4,
-	RDP_ORDER_BMPCACHE2 = 5
+	RDP_ORDER_BMPCACHE2 = 5,
+	RDP_ORDER_BRUSHCACHE = 7
 };
 
 typedef struct _DESTBLT_ORDER
@@ -263,10 +264,10 @@ typedef struct _TEXT2_ORDER
 {
 	uint8 font;
 	uint8 flags;
+	uint8 opcode;
 	uint8 mixmode;
-	uint8 unknown;
-	uint32 fgcolour;
 	uint32 bgcolour;
+	uint32 fgcolour;
 	sint16 clipleft;
 	sint16 cliptop;
 	sint16 clipright;
@@ -275,6 +276,7 @@ typedef struct _TEXT2_ORDER
 	sint16 boxtop;
 	sint16 boxright;
 	sint16 boxbottom;
+	BRUSH brush;
 	sint16 x;
 	sint16 y;
 	uint8 length;

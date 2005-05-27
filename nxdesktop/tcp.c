@@ -51,7 +51,7 @@
 #define INADDR_NONE ((unsigned long) -1)
 #endif
 
-// NX
+/* NX */
 #undef  NXDESKTOP_TCP_DEBUG
 #undef  NXDESKTOP_TCP_DUMP
 
@@ -80,15 +80,17 @@ extern char nxDisplay[255];
 extern Display *g_display;
 extern char windowName[255];
 
+#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
 extern int  nxdesktopStopKarmaSz;
 static long bytesFromLastKarma = 0;
+#endif
 static struct sigaction sigact;
 
 #ifdef NXDESKTOP_TCP_DEBUG
 static unsigned long tcpRead;
 static unsigned long tcpWritten;
 #endif
-// NX
+/* NX */
 
 /* Initialise TCP transport data packet */
 STREAM
@@ -125,9 +127,9 @@ tcp_send(STREAM s)
 
 	while (total < length)
 	{
-		alarm(30);
+		//alarm(30);
 		sent = send(sock, s->data + total, length - total, 0);
-		alarm(0);
+		//alarm(0);
 		
 		if (sent <= 0)
 		{
@@ -152,135 +154,164 @@ tcp_send(STREAM s)
 }
 
 /* NX */
+#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
 static Bool SyncPredicate(Display *display, XEvent *event, XPointer ptr)
 {
   return (event -> xclient.data.l[0] == NXSyncNotify &&
               event -> type == ClientMessage && event -> xclient.window == 0 &&
                       event -> xclient.message_type == 0 && event -> xclient.format == 32);
 }
+#endif
 /* NX */
 
 /* Receive a message on the TCP layer */
 STREAM
 tcp_recv(STREAM s, uint32 length)
 {
-	unsigned int new_length, end_offset, p_offset;
-	int rcvd = 0;
-	XEvent event;
 	
-#ifdef NXDESKTOP_TCP_DEBUG
-	int kiloRead = tcpRead / 1024;
-#endif
-	
-	if (s == NULL)
-	{
-		/* read into "new" stream */
-		if (length > in.size)
-		{
-			in.data = (uint8 *) xrealloc(in.data, length);
-			in.size = length;
-		}
-		in.end = in.p = in.data;
-		s = &in;
-	}
-	else
-	{
-		/* append to existing stream */
-		new_length = (s->end - s->data) + length;
-		if (new_length > s->size)
-		{
-			p_offset = s->p - s->data;
-			end_offset = s->end - s->data;
-			s->data = (uint8 *) xrealloc(s->data, new_length);
-			s->size = new_length;
-			s->p = s->data + p_offset;
-			s->end = s->data + end_offset;
-		}
-	}
+    unsigned int new_length, end_offset, p_offset;
+    int rcvd = 0;
+    
+    #ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
+    XEvent event;
+    #endif
 
-	while (length > 0)
+    #ifdef NXDESKTOP_TCP_DEBUG
+    int kiloRead = tcpRead / 1024;
+    #endif
+
+    if (s == NULL)
+    {
+	/* read into "new" stream */
+	if (length > in.size)
 	{
-	    if (!ui_select(sock))
+	    in.data = (uint8 *) xrealloc(in.data, length);
+	    in.size = length;
+	}
+	in.end = in.p = in.data;
+	s = &in;
+    }
+    else
+    {
+    /* append to existing stream */
+	new_length = (s->end - s->data) + length;
+	if (new_length > s->size)
+	{
+	    p_offset = s->p - s->data;
+	    end_offset = s->end - s->data;
+	    s->data = (uint8 *) xrealloc(s->data, new_length);
+	    s->size = new_length;
+	    s->p = s->data + p_offset;
+	    s->end = s->data + end_offset;
+	}
+    }
+
+    while (length > 0)
+    {
+	go_ui_select:
+	if (!ui_select(sock))
+	{
+	    #ifdef NXDESKTOP_TCP_DEBUG
+            nxdesktopDebug("tcp_recv","User quit.\n");
+	    #endif
+	    /* User quit */
+	    return NULL;
+	}
+	
+	if ((nxdesktopUseNXTrans) && (NXTransCongestion()))
+    	{
+	    struct timeval timeout;
+	    
+	    #ifdef NXDESKTOP_TCP_DEBUG
+            nxdesktopDebug("tcp_recv","Waiting for NX decongestion.\n");
+	    #endif
+	    
+	    timeout.tv_sec = 10;
+	    timeout.tv_usec = 0;
+	    NXTransContinue(&timeout);
+	    goto go_ui_select;
+	} 
+	   
+	read_again:
+	alarm(30);
+	rcvd = recv(sock, s->end, length, 0);
+	alarm(0);
+	if (rcvd < 0)
+	{
+	    if (rcvd != EINTR)
 	    {
-		/* User quit */
-		return NULL;
+		error("tcp_recv: Receiving error %s\n", strerror(errno));
+		close(sock);
+		if (nxDisplay[0] != 0)
+		{
+	    	    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
+	    	    snprintf(errorCaption,511,"Error");
+	    	    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+	    	    wait(NULL);
+		}
 		s = NULL;
+		return NULL;
 	    }
-
-		alarm(30);
-		rcvd = recv(sock, s->end, length, 0);
-		alarm(0);
-		
-		if (rcvd < 0)
-		{
-			error("tcp_recv: Receiving error %s\n", strerror(errno));
-			close(sock);
-			if (nxDisplay[0] != 0)
-			{
-			    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
-		    	    snprintf(errorCaption,511,"Error");
-		    	    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
-		    	    wait(NULL);
-			}
-			s = NULL;
-			return NULL;
-		}
-		else if (rcvd == 0)
-		{
-			error("tcp_recv: Connection closed\n");
-			s = NULL;
-			return NULL;
-		}
-		
-		/* NX */
-		#ifdef NXDESKTOP_TCP_DUMP
-		if (rdpDump != -1 && rcvd > 0)
-		{
-			write(rdpDump, in.end, rcvd);
-		}
-		#endif
-		
-		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-		if (nxdesktopUseNXTrans)
-		{
-		    bytesFromLastKarma += rcvd;
-		    if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
-        		{
-			    #ifdef NXDESKTOP_NXKARMA_DEBUG
-                	    nxdesktopDebug("tcp_recv","Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
-			    #endif
-			
-			    NXSync(g_display, NXSyncWaitForLink, 0);
-			    while (!XCheckIfEvent(g_display, &event, SyncPredicate, NULL))
-    			    {
-			    }
-			    #ifdef NXDESKTOP_NXKARMA_DEBUG
-                	    nxdesktopDebug("tcp_recv","Karma received\n");
-			    #endif
-                	    bytesFromLastKarma = 0;
-			}
-		}
-		#endif
-				
-		#ifdef NXDESKTOP_TCP_DEBUG
-		tcpRead += rcvd;
-		#endif
-		/* NX */
-		s->end += rcvd;
-		length -= rcvd;
+	    else
+	    {
+		warning("tcp_recv","Received EINTR. Trying to read again\n");
+		goto read_again;
+	    }
 	}
-	
-	/* NX */
-	#ifdef NXDESKTOP_TCP_DEBUG
-	if ((tcpRead / 1024) > kiloRead)
+	else if (rcvd == 0)
 	{
-	    nxdesktopDebug("tcp_recv","%ld total bytes read.\n", tcpRead);
+	    error("tcp_recv: Connection closed\n");
+	    s = NULL;
+	    return NULL;
+	}
+	/* NX */
+	#ifdef NXDESKTOP_TCP_DUMP
+	if (rdpDump != -1 && rcvd > 0)
+	{
+	    write(rdpDump, in.end, rcvd);
 	}
 	#endif
-
-	/* NX */
+		
+	#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
+	if (nxdesktopUseNXTrans)
+	{
+	    bytesFromLastKarma += rcvd;
+	    if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
+    	    {
+		#ifdef NXDESKTOP_NXKARMA_DEBUG
+            	nxdesktopDebug("tcp_recv","Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
+		#endif
+		
+		NXSync(g_display, NXSyncWaitForLink, 0);
+		while (!XCheckIfEvent(g_display, &event, SyncPredicate, NULL))
+    		{
+		}
+		#ifdef NXDESKTOP_NXKARMA_DEBUG
+                nxdesktopDebug("tcp_recv","Karma received\n");
+		#endif
+                bytesFromLastKarma = 0;
+	    }
+	}
+	#endif
 	
-	return s;
+	#ifdef NXDESKTOP_TCP_DEBUG
+	tcpRead += rcvd;
+	#endif
+	/* NX */
+	s->end += rcvd;
+	length -= rcvd;
+    }
+	
+    /* NX */
+    #ifdef NXDESKTOP_TCP_DEBUG
+    if ((tcpRead / 1024) > kiloRead)
+    {
+	nxdesktopDebug("tcp_recv","%ld total bytes read.\n", tcpRead);
+    }
+    #endif
+    /* NX */
+	
+    return s;
 }
 
 /* Establish a connection on the TCP layer */
@@ -378,8 +409,8 @@ tcp_connect(char *server)
 	sigact.sa_flags &= ~SA_RESTART;
 	sigaction(SIGALRM, &sigact, NULL); 
 
-	//alarm(30);
-	/* NX */
+	/*alarm(30);
+	 NX */
 
 	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
 	{

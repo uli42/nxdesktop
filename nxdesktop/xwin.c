@@ -47,6 +47,7 @@
 #include "xproto.h"
 #include <signal.h>
 #include "proto.h"
+#include <X11/Xlibint.h>
 
 #include "version.h"
 #include "icon.h"
@@ -54,17 +55,21 @@
 #include "X11/Xatom.h"
 #include <X11/cursorfont.h>
 
-/* For seamless */
 #include <X11/keysym.h>
+
+#ifdef NXDESKTOP_FWINDOW_MODE
+/* For seamless */
+
 #include <X11/extensions/shape.h>
 
 /* For seamless V2 */
 static VCHANNEL *fwindow_channel;
+#endif
 
 #undef NXDESKTOP_XWIN_DEBUG
 #undef NXDESKTOP_USES_SYNC_IN_LOOP
 
-#undef NXDESKTOP_FWINDOW_DEBUG
+#define NXDESKTOP_FWINDOW_DEBUG
 
 /* These controls the debug of the shape functions */
 #undef NXDESKTOP_MASK_DUMP
@@ -73,6 +78,8 @@ static VCHANNEL *fwindow_channel;
 #undef NXDESKTOP_SHAPE_FORCESYNC
 
 #ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
+
+
 
 unsigned int *last_colormap;
 unsigned int last_colormap_entries;
@@ -94,6 +101,7 @@ static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
 #endif
 
+#ifdef NXDESKTOP_FWINDOW_MODE
 typedef struct
 {
     Window wnd;
@@ -111,6 +119,7 @@ typedef struct
 static unsigned int nxclipper_windows_entries = 0;
 static BOOL first_rdp_window = True;
 static NXCLIPPER_WINDOWS nxclipper_windows[MAX_NXCLIPPER_WINDOWS];
+#endif
 
 BOOL rdp_window_moving = False;
 #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
@@ -145,7 +154,6 @@ extern int xo;
 extern int yo;
 extern BOOL ipaq;
 extern BOOL magickey;
-static int x_socket;
 extern char windowName[255];
 
 Display *g_display;
@@ -1375,15 +1383,14 @@ ui_init(void)
 		return False;
 	}*/
    
-	x_socket = ConnectionNumber(g_display); /* NX */
+	g_x_socket = ConnectionNumber(g_display); /* NX */
 	{
           extern void tcp_resize_buf(int, int, int);
           extern int rdp_bufsize;
-          tcp_resize_buf(x_socket, 0, rdp_bufsize);
+          tcp_resize_buf(g_x_socket, 0, rdp_bufsize);
         }
 	
 	screen_num = DefaultScreen(g_display);
-	g_x_socket = ConnectionNumber(g_display);
 	g_screen = ScreenOfDisplay(g_display, screen_num);
 	g_depth = DefaultDepthOfScreen(g_screen);
 	
@@ -2106,14 +2113,14 @@ ui_create_window(void)
 	}
 	useXpmIcon = getNXIcon(g_display, &nxIconPixmap, &nxIconShape);
     }
-	#ifdef NXDESKTOP_FWINDOW_DEBUG
-	
+	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
 	/* Warning - this is temporary as the flaoting mode should run fullscreen */
 	
 	sigusr_act.sa_handler = sigusr_func;
 	sigfillset(&(sigusr_act.sa_mask));
 	sigaction(SIGUSR1, &sigusr_act, NULL);
 	sigaction(SIGUSR2, &sigusr_act, NULL);
+	
 	#endif
 	
 	if (g_fullscreen || ipaq)
@@ -2126,7 +2133,9 @@ ui_create_window(void)
 		sigfillset(&(sigusr_act.sa_mask));
 		sigaction(SIGUSR1, &sigusr_act, NULL);
 		sigaction(SIGUSR2, &sigusr_act, NULL);
-
+		NXTransSignal(SIGUSR1, NX_SIGNAL_FORWARD);
+		NXTransSignal(SIGUSR2, NX_SIGNAL_FORWARD);
+		
                 if (ipaq)
                 {
                   g_width = WidthOfScreen(g_screen);
@@ -2152,6 +2161,7 @@ ui_create_window(void)
 		sigusr_act.sa_handler = SIG_IGN;
 		g_width = (g_width + 3) & ~3; /* make width a multiple of 32 bits */
 	}
+	
 	g_width = g_width  & ~3; /* make width a multiple of 32 bits */
 
 	/* NX */
@@ -2464,11 +2474,13 @@ ui_create_window(void)
 
 	#endif
 	
+	#ifdef NXDESKTOP_FWINDOW_MODE
 	for (i = 0; i < MAX_NXCLIPPER_WINDOWS; i++)
 	{
 		nxclipper_windows[i].id = 0;
 		nxclipper_windows[i].wnd = (Window) NULL;
 	}
+	#endif
 
 	/*
         {
@@ -3161,7 +3173,62 @@ void run_events()
 	nxdesktopDebug("run_events","No more events to process.\n");
 	#endif
     }
-	return;
+    return;
+}
+
+int nxdesktopSelect(int maxfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
+{
+    #ifdef NX_SELECT_DEBUG
+    nxdesktopDebug("nxdesktopSelect","Called with [%d][%p][%p][%p][%p].\n", 
+	maxfds, (void *) readfds, (void *) writefds, (void *) exceptfds, (void *) timeout);
+    #endif
+    if (NXTransRunning())
+    {
+        fd_set t_readfds, t_writefds;
+        struct timeval t_timeout;
+        int n, r, e;
+	#ifdef NX_SELECT_DEBUG
+	if (exceptfds != NULL)
+	{
+	    nxdesktopDebug("nxdesktopSelect", "Can't handle exception fds in select. Exiting.\n");
+	    exit(1);
+	}
+	#endif
+	if (readfds == NULL)
+	{
+	    FD_ZERO(&t_readfds);
+            readfds = &t_readfds;
+        }
+        if (writefds == NULL)
+        {
+            FD_ZERO(&t_writefds);
+	    writefds = &t_writefds;
+	}
+        if (timeout == NULL)
+        {
+	    t_timeout.tv_sec  = 10;
+	    t_timeout.tv_usec = 0;
+	    timeout = &t_timeout;
+	}
+
+        n = maxfds;
+
+	if (NXTransPrepare(&n, readfds, writefds, timeout) != 0)
+	{
+	    NXTransSelect(&r, &e, &n, readfds, writefds, timeout);
+            NXTransExecute(&r, &e, &n, readfds, writefds, timeout);
+	    errno = e;
+            return r;
+	}
+	else
+	{
+	    return 0;
+	}
+    }
+    else
+    {
+	return select(maxfds, readfds, writefds, exceptfds, timeout);
+    }
 }
 
 /* Returns 0 after user quit, 1 otherwise */
@@ -3176,7 +3243,7 @@ ui_select(int rdp_socket)
 	/* NX
 	 * Be sure we get all events from X server.
 	 */
-
+	 
 	#ifdef NXDESKTOP_XWIN_USES_SYNC_IN_LOOP
 	XSync(g_display, False);
 	#else
@@ -3196,50 +3263,58 @@ ui_select(int rdp_socket)
 		#endif
 		return 0;
 	    }
+	    
+	    FD_ZERO(&rfds);
+	    FD_ZERO(&wfds);
+	    FD_SET(rdp_socket, &rfds);
+	    FD_SET(g_x_socket, &rfds);
+	
 
-		FD_ZERO(&rfds);
-		FD_ZERO(&wfds);
-		FD_SET(rdp_socket, &rfds);
-		FD_SET(g_x_socket, &rfds);
+	    #ifdef WITH_RDPSND
+	    /* FIXME: there should be an API for registering fds */
+	    if (g_dsp_busy)
+	    {
+		FD_SET(g_dsp_fd, &wfds);
+		n = (g_dsp_fd > n) ? g_dsp_fd : n;
+	    }
+	    #endif
+	    /* default timeout */
+	    tv.tv_sec = 60;
+	    tv.tv_usec = 0;
+	    
+	    /* add redirection handles */
+	    rdpdr_add_fds(&n, &rfds, &wfds, &tv, &s_timeout);
+	    n++;
 
-#ifdef WITH_RDPSND
-		/* FIXME: there should be an API for registering fds */
-		if (g_dsp_busy)
-		{
-			FD_SET(g_dsp_fd, &wfds);
-			n = (g_dsp_fd > n) ? g_dsp_fd : n;
-		}
-#endif
-		/* default timeout */
-		tv.tv_sec = 60;
-		tv.tv_usec = 0;
+	    Retry:
+	    switch (nxdesktopSelect(n, &rfds, &wfds, NULL, &tv))
+	    {
+		case -1:
+		    if (errno != EINTR)
+		    {
+			error("select: %s\n", strerror(errno));
+		    }
+		    else
+		    {
+			warning("ui_select", "EINTR fired!\n");
+			goto Retry;
+		    }
+		case 0:
+		    /* Abort serial read calls */
+		    if (s_timeout)
+			rdpdr_check_fds(&rfds, &wfds, (BOOL) True);
+		    continue;
+	    }
+		
+	    rdpdr_check_fds(&rfds, &wfds, (BOOL) False);
+		
+	    if (FD_ISSET(rdp_socket, &rfds))
+		return 1;
 
-		/* add redirection handles */
-		rdpdr_add_fds(&n, &rfds, &wfds, &tv, &s_timeout);
-
-		n++;
-
-		switch (select(n, &rfds, &wfds, NULL, &tv))
-		{
-			case -1:
-				error("select: %s\n", strerror(errno));
-
-			case 0:
-				/* Abort serial read calls */
-				if (s_timeout)
-					rdpdr_check_fds(&rfds, &wfds, (BOOL) True);
-				continue;
-		}
-
-		rdpdr_check_fds(&rfds, &wfds, (BOOL) False);
-
-		if (FD_ISSET(rdp_socket, &rfds))
-			return 1;
-
-#ifdef WITH_RDPSND
-		if (g_dsp_busy && FD_ISSET(g_dsp_fd, &wfds))
-			wave_out_play();
-#endif
+	    #ifdef WITH_RDPSND
+	    if (g_dsp_busy && FD_ISSET(g_dsp_fd, &wfds))
+	        wave_out_play();
+	    #endif
 	}
 }
 
@@ -4275,13 +4350,13 @@ ui_poly_line(uint8 opcode, short *points, int count,
     #ifdef NXDESKTOP_XWIN_DEBUG
     nxdesktopDebug("ui_poly_line","Opcode=%d, count=%d.\n",opcode,count);
     #endif
-	SET_FUNCTION(opcode);
-	SET_FOREGROUND(pen->colour);
+    SET_FUNCTION(opcode);
+    SET_FOREGROUND(pen->colour);
 
-	XDrawLines(g_display, g_wnd, g_gc, (XPoint*)points, count, CoordModeOrigin);
-	if (g_ownbackstore)
-        	XDrawLines(g_display, g_backstore, g_gc, (XPoint*)points, count, CoordModeOrigin);
-	RESET_FUNCTION(opcode);
+    XDrawLines(g_display, g_wnd, g_gc, (XPoint*)points, count, CoordModeOrigin);
+    if (g_ownbackstore)
+	XDrawLines(g_display, g_backstore, g_gc, (XPoint*)points, count, CoordModeOrigin);
+    RESET_FUNCTION(opcode);
 }
 
 #ifdef NXDESKTOP_USES_RECT_BUF
@@ -4465,10 +4540,25 @@ ui_polygon(uint8 opcode,
 }
 
 void
+ui_polyline(uint8 opcode,
+	    /* dest */ POINT * points, int npoints,
+	    /* pen */ PEN * pen)
+{
+	/* TODO: set join style */
+	SET_FUNCTION(opcode);
+	SET_FOREGROUND(pen->colour);
+	XDrawLines(g_display, g_wnd, g_gc, (XPoint *) points, npoints, CoordModePrevious);
+	if (g_ownbackstore)
+		XDrawLines(g_display, g_backstore, g_gc, (XPoint *) points, npoints,
+			   CoordModePrevious);
+	RESET_FUNCTION(opcode);
+}
+
+void
 ui_ellipse(uint8 opcode,
-		/* mode */ uint8 fillmode,
-		/* dest */ int x, int y, int cx, int cy,
-		/* brush */ BRUSH * brush, int bgcolour, int fgcolour)
+	   /* mode */ uint8 fillmode,
+	   /* dest */ int x, int y, int cx, int cy,
+	   /* brush */ BRUSH * brush, int bgcolour, int fgcolour)
 {
 	uint8 style, i, ipattern[8];
 	Pixmap fill;
@@ -4489,7 +4579,7 @@ ui_ellipse(uint8 opcode,
 
 		case 2:	/* Hatch */
 			fill = (Pixmap) ui_create_glyph(8, 8,
-						        hatch_patterns + brush->pattern[0] * 8);
+							hatch_patterns + brush->pattern[0] * 8);
 			SET_FOREGROUND(fgcolour);
 			SET_BACKGROUND(bgcolour);
 			XSetFillStyle(g_display, g_gc, FillOpaqueStippled);
@@ -5473,6 +5563,7 @@ process_rdp_windows(RDP_WINDOWS c)
     
 }*/
 
+#ifdef NXDESKTOP_FWINDOW_MODE
 void
 add_rdp_windows(NXCLIPPER_WINDOWS c)
 {
@@ -5494,7 +5585,7 @@ add_rdp_windows(NXCLIPPER_WINDOWS c)
     else
     {
 	nxclipper_windows[nxclipper_windows_entries] = c;
-	fprintf(stderr, "Window %d added\n", nxclipper_windows_entries);
+	fprintf(stderr, "Window %d added. ID = %d.\n", nxclipper_windows_entries,c.id);
     }
 }
 
@@ -5511,7 +5602,9 @@ update_rdp_windows(NXCLIPPER_WINDOWS c)
 	    return;
 	}
     }
-    error("update_rdp_windows: RDP Window ID not found.\n");
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    warning("update_rdp_windows: RDP Window ID not found.\n");
+    #endif
 }
 
 NXCLIPPER_WINDOWS
@@ -5527,7 +5620,19 @@ get_rdp_windows(unsigned int id)
 	}
     }
     error("get_rdp_windows: RDP window id not found.\n");
+    return (NXCLIPPER_WINDOWS) ;
 }
+
+void fwindow_send(STREAM s)
+{
+    #ifdef NXDESKTOP_FWINDOW_DEBUG
+    nxdesktopDebug("fwindow_send","sent: \n");
+    hexdump(s->channel_hdr + 8, s->end - s->channel_hdr - 8);
+    #endif
+    channel_send(s, fwindow_channel);
+}
+
+
 
 static void
 fwindow_process(STREAM s)
@@ -5543,6 +5648,7 @@ fwindow_process(STREAM s)
     #endif
 
     data = s->p;
+    
     data[s->end-s->p-1] = '\0';
     
     #ifdef NXDESKTOP_FWINDOW_DEBUG
@@ -5658,6 +5764,8 @@ fwindow_process(STREAM s)
 		
 		first_rdp_window = False;
 		add_rdp_windows(tmp_win);
+		
+		
 	    } 
 	    else
 	    {	
@@ -5768,9 +5876,9 @@ fwindow_process(STREAM s)
 	    break;
 	
     }
-    if (tmp_win.op != 0)
-	update_rdp_windows(tmp_win);
+    update_rdp_windows(tmp_win);
 }
+
 
 /* Opens (registers) the client side channel and provides the callback to it */
 
@@ -5801,10 +5909,11 @@ fwindow_init(void)
     if (s != NULL)
     {
 	nxdesktopDebug("fwindow_init","STREAM is valid.\n");
-	nxdesktopDebug("fwindow_process","stream headers: size %0x, iso %0x, sec %0x, mcs %0x, rdp %0x channel %0x\n",s->size, s->iso_hdr, s->sec_hdr, s->mcs_hdr, s->rdp_hdr, s->channel_hdr);
+	nxdesktopDebug("fwindow_init","stream headers: size %0x, iso %0x, sec %0x, mcs %0x, rdp %0x channel %0x\n",s->size, s->iso_hdr, s->sec_hdr, s->mcs_hdr, s->rdp_hdr, s->channel_hdr);
     }
     #endif
 }
+#endif
 
 void nxdesktopMoveViewport(int hShift, int vShift)
 {

@@ -3,6 +3,6 @@ CC          = gcc
 INSTALL     = install
 CRYPTOBJ    =
 SOUNDOBJ    = rdpsnd.o rdpsnd_oss.o
-CFLAGS      = -DKEYMAP_PATH=\"$(KEYMAP_PATH)\" -Wall -O2 -I../nx-X11/exports/include -DWITH_OPENSSL -DWITH_RDPSND -DL_ENDIAN -DHAVE_DECL_DIRFD
+CFLAGS      = -DKEYMAP_PATH=\"$(KEYMAP_PATH)\" -Wall -O2 -I../nx-X11/exports/include -DWITH_OPENSSL -DWITH_RDPSND -DL_ENDIAN -DHAVE_DECL_DIRFD=1
 LDFLAGS     =  -L../nx-X11/exports/lib -lcrypto
 TARGETS     =  nxdesktop

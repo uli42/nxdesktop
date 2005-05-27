@@ -242,7 +242,8 @@ void ui_line(uint8 opcode, int startx, int starty, int endx, int endy, PEN * pen
 void ui_poly_line(uint8 opcode, short *points, int count, PEN *pen);
 void ui_rect(int x, int y, int cx, int cy, int colour);
 void ui_polygon(uint8 opcode, uint8 fillmode, POINT * point, int npoints, BRUSH * brush,
- 		int bgcolour, int fgcolour);
+		int bgcolour, int fgcolour);
+void ui_polyline(uint8 opcode, POINT * point, int npoints, PEN * pen);
 void ui_ellipse(uint8 opcode, uint8 fillmode, int x, int y, int cx, int cy, BRUSH * brush,
  		int bgcolour, int fgcolour);
 /* NX */

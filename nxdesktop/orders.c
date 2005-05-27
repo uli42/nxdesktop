@@ -687,11 +687,10 @@ process_polygon2(STREAM s, POLYGON2_ORDER * os, uint32 present, BOOL delta)
 static void
 process_polyline(STREAM s, POLYLINE_ORDER * os, uint32 present, BOOL delta)
 {
-	int index, line, data;
-	int x, y, xfrom, yfrom;
+	int index, next, data;
 	uint8 flags = 0;
 	PEN pen;
-	uint8 opcode;
+	POINT *points;
 
 	if (present & 0x01)
 		rdp_in_coord(s, &os->x, delta);
@@ -730,69 +729,36 @@ process_polyline(STREAM s, POLYLINE_ORDER * os, uint32 present, BOOL delta)
 		return;
 	}
 
-	opcode = os->opcode - 1;
-	x = os->x;
-	y = os->y;
+	points = (POINT *) xmalloc((os->lines + 1) * sizeof(POINT));
+	memset(points, 0, (os->lines + 1) * sizeof(POINT));
+
+	points[0].x = os->x;
+	points[0].y = os->y;
 	pen.style = pen.width = 0;
 	pen.colour = os->fgcolour;
 
 	index = 0;
 	data = ((os->lines - 1) / 4) + 1;
-	/* NX */
-	if (os->lines > 0)
-        {
-                short x_points[(os->lines * 2) + 2];
-                int pCount = 0;
-
-                x_points[pCount++] = x;
-                x_points[pCount++] = y;
-
-                for (line = 0; (line < os->lines) && (data < os->datasize); line++)
-	        {
-        		xfrom = x;
-	        	yfrom = y;
-
-		        if (line % 4 == 0)
-	        		flags = os->data[index++];
-
-		        if ((flags & 0xc0) == 0)
-			        flags |= 0xc0;
-
-        		if (flags & 0x40)
-	        		x += parse_delta(os->data, &data);
-
-	        	if (flags & 0x80)
-		        	y += parse_delta(os->data, &data);
-
-                        x_points[pCount++] = x;
-                        x_points[pCount++] = y;
-        		flags <<= 2;
-                }
-                ui_poly_line(ROP2_NXOR, (short *)&x_points, pCount / 2, &pen);
-          }
-	/* NX */
-	/* for (line = 0; (line < os->lines) && (data < os->datasize); line++)
+	for (next = 1; (next <= os->lines) && (data < os->datasize); next++)
 	{
-		xfrom = x;
-		yfrom = y;
-
-		if (line % 4 == 0)
+		if ((next - 1) % 4 == 0)
 			flags = os->data[index++];
 
-		if ((flags & 0xc0) == 0)
-			flags |= 0xc0;	 none = both 
+		if (~flags & 0x80)
+			points[next].x = parse_delta(os->data, &data);
 
-		if (flags & 0x40)
-			x += parse_delta(os->data, &data);
-
-		if (flags & 0x80)
-			y += parse_delta(os->data, &data);
-
-		ui_line(opcode, xfrom, yfrom, x, y, &pen);
+		if (~flags & 0x40)
+			points[next].y = parse_delta(os->data, &data);
 
 		flags <<= 2;
-	}*/
-	
+	}
+
+	if (next - 1 == os->lines)
+		ui_polyline(os->opcode - 1, points, os->lines + 1, &pen);
+	else
+		error("polyline parse error\n");
+
+	xfree(points);
 }
 
 /* Process an ellipse order */
@@ -878,7 +844,7 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 		in_uint8(s, os->flags);
 
 	if (present & 0x000004)
-		in_uint8(s, os->unknown);
+		in_uint8(s, os->opcode);
 
 	if (present & 0x000008)
 		in_uint8(s, os->mixmode);
@@ -913,27 +879,7 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 	if (present & 0x002000)
 		in_uint16_le(s, os->boxbottom);
 
-	/*
-	 * Unknown members, seen when connecting to a session that was disconnected with
-	 * mstsc and with wintach's spreadsheet test.
-	 */
-	if (present & 0x004000)
-		in_uint8s(s, 1);
-
-	if (present & 0x008000)
-		in_uint8s(s, 1);
-
-	if (present & 0x010000)
-	{
-		in_uint8s(s, 1);	/* guessing the length here */
-		warning("Unknown order state member (0x010000) in text2 order.\n");
-	}
-
-	if (present & 0x020000)
-		in_uint8s(s, 4);
-
-	if (present & 0x040000)
-		in_uint8s(s, 4);
+	rdp_parse_brush(s, &os->brush, present >> 14);
 
 	if (present & 0x080000)
 		in_uint16_le(s, os->x);
@@ -947,7 +893,7 @@ process_text2(STREAM s, TEXT2_ORDER * os, uint32 present, BOOL delta)
 		in_uint8a(s, os->text, os->length);
 	}
 
-	DEBUG(("TEXT2(x=%d,y=%d,cl=%d,ct=%d,cr=%d,cb=%d,bl=%d,bt=%d,bb=%d,br=%d,fg=0x%x,bg=0x%x,font=%d,fl=0x%x,mix=%d,unk=0x%x,n=%d)\n", os->x, os->y, os->clipleft, os->cliptop, os->clipright, os->clipbottom, os->boxleft, os->boxtop, os->boxright, os->boxbottom, os->fgcolour, os->bgcolour, os->font, os->flags, os->mixmode, os->unknown, os->length));
+	DEBUG(("TEXT2(x=%d,y=%d,cl=%d,ct=%d,cr=%d,cb=%d,bl=%d,bt=%d,br=%d,bb=%d,bs=%d,bg=0x%x,fg=0x%x,font=%d,fl=0x%x,op=0x%x,mix=%d,n=%d)\n", os->x, os->y, os->clipleft, os->cliptop, os->clipright, os->clipbottom, os->boxleft, os->boxtop, os->boxright, os->boxbottom, os->brush.style, os->bgcolour, os->fgcolour, os->font, os->flags, os->opcode, os->mixmode, os->length));
 
 	DEBUG(("Text: "));
 
@@ -1015,10 +961,10 @@ process_bmpcache(STREAM s)
 	HBITMAP bitmap;
 	uint16 cache_idx, size;
 	uint8 cache_id, width, height, bpp, Bpp;
-	uint8 *data;
-	uint8 *bmpdata;
+	uint8 *data, *bmpdata;
 	uint16 bufsize, pad2, row_size, final_size;
 	uint8 pad1;
+
 	pad2 = row_size = final_size = 0xffff;	/* Shut the compiler up */
 
 	in_uint8(s, cache_id);
@@ -1215,7 +1161,9 @@ process_colcache(STREAM s)
 	DEBUG(("COLCACHE(id=%d,n=%d)\n", cache_id, map.ncolours));
 
 	hmap = ui_create_colourmap(&map);
-	ui_set_colourmap(hmap);
+
+	if (cache_id)
+		ui_set_colourmap(hmap);
 
 	xfree(map.colours);
 }

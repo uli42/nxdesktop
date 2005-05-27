@@ -1,5 +1,92 @@
 ChangeLog:
 
+nxdesktop-1.5.0-43
+
+- Solved bug in options file parser of the fullscreen flag.
+
+nxdesktop-1.5.0-42
+
+- Solved the freeze of nxdesktop by changing the select() procedure in
+  xwin.c by givving NX a chance to check it's own descriptors. It was
+  based on _XSelect from XlibInt.c.
+  
+- Simplified the logic related to handling the congestion state.
+
+- Restored the signal handlers and timers.
+
+- Added debug messages to the congestion testing.
+
+- Added debug messages related to the changes on the ui_select above.
+
+- Some cosmetic changes on xwin.c.
+
+nxdesktop-1.5.0-41
+
+- Added experimental error handling for EINTR.
+
+- Changed option "rdpcolors" to "rdpcolours" into the options parser.
+
+- Corrected typo in tcp_recv debug messages.
+
+- Removed autoconf file left by mistake.
+
+nxdesktop-1.5.0-40
+
+- Fixed compilation problem on Solaris 8.
+
+nxdesktop-1.5.0-39
+
+- Added support for polygon and ellipse opcodes.
+
+- Corrected typo in TCP message error.
+
+nxdesktop-1.5.0-38
+
+- NXTransCongestion() now replaces NXKarma/NXSync, as required.
+
+- Added debug flag NXDESKTOP_CONGESTION_DEBUG.
+
+- Some cosmetic changes on xwin.c.
+
+- Updated keyboard maps from latest stable rdesktop.
+
+nxdesktop-1.5.0-37
+
+- Solved problem that caused message errors like "Info: X request 
+  #149 failed with message 'BadLength (poly request too large or 
+  internal Xlib length error'".
+
+- Corrected typo in CHANGELOG.
+
+- Updated orders processing to be compatible with updated PolyLine
+  processing.
+
+- Solved memory leak left by shapping routines.
+
+nxdesktop-1.5.0-36
+
+- Floating window mode is disabled.
+
+- Disabled NXSync and NXKarma to implement and test NXTransCongest().
+
+- Added PolyLine orders processing.
+
+- Changed SIGNAL handling according to the new NXcomp capabilities.
+
+- Started implementation of NXTransCongestion replacing NXSync and 
+  NXKarma.
+  
+- General cleaning up of the code to remove compiler warnings.
+
+nxdesktop-1.5.0-35
+
+- Added single exit point where NXDestroyTrans() is called.
+
+- Corrected bug that prevented the floating window mode to be 
+  activated if the debug mode is de-activated.
+  
+- Changed CLIPPER message parser to match changes on nxclipper.
+
 nxdesktop-1.5.0-34
 
 - Initialization of xo and yo when launched from command line are 

@@ -384,6 +384,7 @@ case `uname -s` in
   SunOS)
     echo "INCLUDES	=  -I../nxcomp -I../nxcompext -I/usr/local/include -I/usr/sfw/include">> Makeconf
     ldflags="$ldflags -L/usr/sfw/lib -lsocket -lnsl -R$rpath"
+    cflags="$cflags -DHAVE_DIRENT_H=1 -DHAVE_DECL_DIRFD=0 -DDIR_FD_MEMBER_NAME=dd_fd"
     ;;
   OSF1)
     ldflags="$ldflags -Wl,-rpath,$rpath"
@@ -391,10 +392,11 @@ case `uname -s` in
   HP-UX)
     cflags="$cflags -D_XOPEN_SOURCE_EXTENDED"
     ;;
+  Linux)
+    cflags="$cflags -DHAVE_DECL_DIRFD=1"
+    ;;
 esac
 
-
-cflags="$cflags -DHAVE_DECL_DIRFD"
 echo "CFLAGS      = $cflags" >>Makeconf
 echo "LDFLAGS     = $ldflags" >>Makeconf
 echo "TARGETS     = $targets" >>Makeconf

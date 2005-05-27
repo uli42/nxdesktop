@@ -84,7 +84,8 @@ BOOL g_bitmap_cache_persist_enable = False;
 BOOL g_bitmap_cache_precache = True;
 BOOL g_encryption = True;
 BOOL packet_encryption = True;
-BOOL g_desktop_save = True;
+BOOL g_desktop_save = True;	/* desktop save order */
+BOOL g_polygon_ellipse_orders = True;	/* polygon / ellipse orders */
 BOOL g_fullscreen = False;
 BOOL g_grab_keyboard = True;
 BOOL g_hide_decorations = False;
@@ -137,6 +138,7 @@ int agentArgument(int i, char *argv[]);
 void NXTranslateKeymap();
 void InitKeyboardsList();
 void ShowHeaderInfo();
+void nxdesktopExit();
 static char *nxdesktopReadPasswdFromFile(char *fname);
 #undef NXDESKTOP_DISABLE_DESKTOP_SAVE
 #define NXDESKTOP_RDP_BUFSIZE   4096
@@ -421,6 +423,9 @@ main(int argc, char *argv[])
 	
 	int nx_argc = 0; 
 	char *nx_argv[argc];	
+	
+	/* register exit point */
+	atexit(*nxdesktopExit);
 	
 	/* show initial info */
 	ShowHeaderInfo();
@@ -784,10 +789,12 @@ main(int argc, char *argv[])
 				}
 				break;
 			case 'F':
+				/* Force float window mode to be disabled */
+				break;
 				float_window_mode = True;
 				g_rdp5_performanceflags = 0x6D; /* Disable all eye candy but the full window drag */
 				g_hide_decorations = True;
-				break;
+				/*break;*/
 			/* End NX options */
 			case 'h':
 			case '?':
@@ -884,6 +891,7 @@ main(int argc, char *argv[])
 #endif
 	rdpdr_init();
 	
+	#ifdef NXDESKTOP_FWINDOW_MODE
 	if (float_window_mode)
 	{
 	    if (fwindow_register())
@@ -894,6 +902,7 @@ main(int argc, char *argv[])
 		error("main loop: ","CLIPPER channel not registered.\n");
 	    fwindow_init();
 	}
+	#endif
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
 		error("Connection to RDP server '%s' failed.\n",server);
@@ -1524,11 +1533,11 @@ char *argv[];
 
     if (!strcmp(argv[i], "-geometry"))
     {
-	if (!strcmp(argv[i+1],"fullscreen"))
+	if (!strcmp(argv[i+1],"-fullscreen"))
 	{
 	    g_fullscreen = True;
-    	}
-        else 
+	}
+	else
 	if (!strcmp(argv[i+1],"-ipaq"))
     	{
     	    g_fullscreen = True;
@@ -1791,14 +1800,21 @@ char *argv[];
 		    nxdesktopDebug("keymapname ","%s\n",keymapname);
 		    #endif
 		}
-	
+		
+		if (!strcmp(command,"fullscreen"))
+		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("geometry ","%s\n",value);
+		    #endif
+		    if (!strcmp(value,"1"))
+    			{
+    			    g_fullscreen = True;
+			}
+    		}
+
 		if (!strcmp(command, "geometry"))
 		{
-		    if (!strcmp(value,"fullscreen"))
-			{
-			    g_fullscreen = True;
-    			}
-    			else 
+		    
 			if (!strcmp(value,"-ipaq"))
     			{
     			    g_fullscreen = True;
@@ -1836,10 +1852,10 @@ char *argv[];
 			}
 		}
 		
-		if (!strcmp(command, "rdpcolors"))
+		if (!strcmp(command, "rdpcolours"))
 		{
 		    #ifdef NXDESKTOP_PARAM_DEBUG
-		    nxdesktopDebug("rdpcolors ","%s\n",value);
+		    nxdesktopDebug("rdpcolours ","%s\n",value);
 		    #endif
 		    if (!strcmp(value,"256"))
 			g_server_bpp = 8;
@@ -1925,6 +1941,15 @@ char *nxdesktopReadPasswdFromFile(char *fname)
     return (char *)passwd;
 }
 
+void nxdesktopExit()
+
+{
+    #ifdef NXDESKTOP_PARAM_DEBUG
+    nxdesktopDebug("nxdesktopExit: ","nxdesktop ended normally.\n");
+    #endif
+    if (NXTransRunning())
+	NXTransDestroy();
+}
     
 void InitKeyboardsList(void)
     
