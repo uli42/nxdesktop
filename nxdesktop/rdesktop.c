@@ -91,8 +91,8 @@ BOOL g_grab_keyboard = True;
 BOOL g_hide_decorations = False;
 /* NX */
 BOOL g_use_rdp5 = True;
-BOOL rdp_img_cache = False;
-BOOL rdp_img_cache_nxcompressed = False;
+BOOL rdp_img_cache = True;
+BOOL rdp_img_cache_nxcompressed = True;
 BOOL username_option = False;
 BOOL prompt_password = False;
 BOOL float_window_mode = False;
@@ -1852,10 +1852,10 @@ char *argv[];
 			}
 		}
 		
-		if (!strcmp(command, "rdpcolours"))
+		if (!strcmp(command, "rdpcolors"))
 		{
 		    #ifdef NXDESKTOP_PARAM_DEBUG
-		    nxdesktopDebug("rdpcolours ","%s\n",value);
+		    nxdesktopDebug("rdpcolors ","%s\n",value);
 		    #endif
 		    if (!strcmp(value,"256"))
 			g_server_bpp = 8;
@@ -1890,7 +1890,6 @@ char *argv[];
 		    #endif
 		    if (!strcmp(value,"0"))
 		    {
-			rdp_img_cache = False;
 			rdp_img_cache_nxcompressed = False;
 		    }
 		}

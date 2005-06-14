@@ -1,8 +1,61 @@
 ChangeLog:
 
+nxdesktop-1.5.0-49
+
+- The RDP compressed cache was set as active when nxdesktop was called
+  from the command line. Solved.
+  
+- Corrected typo in methods selection debug messages.
+
+nxdesktop-1.5.0-48
+
+- Changed the "rdpcolours" parameter parser back to "rdpcolors".
+
+- Removed bug that prevented the rdp cache to be disabled if 
+  requested.
+
+nxdesktop-1.5.0-47
+
+- Removed one debug message left active by mistake.
+
+- Disabled the XSetSelection owner added in version 1.4.0-37. This call
+  was added to solve a problem with the clipboard refusing to work at
+  that time with the windows client. This seens to be no longer needed
+  and is even causing problems.
+  
+- The cache selection logic was simplified.
+
+nxdesktop-1.5.0-46
+
+- Disabled a debug flag related to the seamless mode. It was harmless
+  because the seamless mode was disabled already. I did that for the
+  sake of consistency.
+  
+- All 4 color depth modes avaliable (8, 15, 16 and 24 bpp) are now 
+  working fine together.
+  
+- Refined the xwin.c debug with different defines for graphics, events,
+  parameters, dump graphics, text and pack methods.
+
+nxdesktop-1.5.0-45
+
+- Fixed problem with openoffice in high color modes. TRCL052310.
+
+- Changed local pack method selection to support 32K (15 bpp) mode.
+
+- Small cosmetic changes on orders.c.
+
+- Added debug messages for all the primary packet orders.
+
+nxdesktop-1.5.0-44
+
+- Changed selction pack method to make use of the 15 bpp compression.
+
+- Added debug points in the orders loop.
+
 nxdesktop-1.5.0-43
 
-- Solved bug in options file parser of the fullscreen flag.
+- Solved problem with the fullscreen flag in the options file parser.
 
 nxdesktop-1.5.0-42
 

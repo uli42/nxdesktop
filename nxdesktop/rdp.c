@@ -61,6 +61,7 @@ extern BOOL nxdesktopUseNXRdpImages;
 extern BOOL nxdesktopUseNXCompressedRdpImages;
 extern unsigned int buf_key_vector;
 extern BOOL rdp_img_cache;
+extern BOOL rdp_img_cache_nxcompressed;
 BOOL need_init_nx = True;
 /* NX */
 
@@ -530,7 +531,10 @@ rdp_out_order_caps(STREAM s)
 	order_caps[2] = 1;	/* screen blt */
 	/* NX */
 	if (!g_use_rdp5)
+	{
 	    rdp_img_cache = False;
+	    rdp_img_cache_nxcompressed = False;
+	}
 	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt */
 	/* char *p;
 	*(p = NULL) = 0;*/

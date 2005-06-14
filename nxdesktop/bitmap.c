@@ -297,7 +297,7 @@ bitmap_decompress2(uint8 * output, int width, int height, uint8 * input, int siz
 	uint8 mixmask, mask = 0;
 	uint16 mix = 0xffff;
 	int fom_mask = 0;
-
+	
 	while (input < end)
 	{
 		fom_mask = 0;

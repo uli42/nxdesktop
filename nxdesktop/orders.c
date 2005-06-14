@@ -52,6 +52,8 @@ static HBITMAP mask_cache[3][0xa00];
 extern BOOL float_window_mode;
 #endif
 
+#undef NXDESKTOP_ORDERS_DEBUG
+
 /* Read field indicating which parameters are present */
 static void
 rdp_in_present(STREAM s, uint32 * present, uint8 flags, int size)
@@ -201,6 +203,7 @@ rdp_parse_brush(STREAM s, BRUSH * brush, uint32 present)
 static void
 process_destblt(STREAM s, DESTBLT_ORDER * os, uint32 present, BOOL delta)
 {
+
 	if (present & 0x01)
 		rdp_in_coord(s, &os->x, delta);
 
@@ -926,8 +929,8 @@ process_raw_bmpcache(STREAM s)
 	in_uint8s(s, 1);	/* pad */
 	in_uint8(s, width);
 	
-	#if NXDESKTOP_ORDERS_DEBUG
-	nxdesktopDebug("process_raw_bmpcache","raw w=%d",width);
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_raw_bmpcache","raw w=%d\n",width);
 	#endif
 	
 	in_uint8(s, height);
@@ -964,6 +967,10 @@ process_bmpcache(STREAM s)
 	uint8 *data, *bmpdata;
 	uint16 bufsize, pad2, row_size, final_size;
 	uint8 pad1;
+
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_bmpcache","raw w=%d\n",width);
+	#endif
 
 	pad2 = row_size = final_size = 0xffff;	/* Shut the compiler up */
 
@@ -1010,7 +1017,7 @@ process_bmpcache(STREAM s)
 	    bmpdata = (uint8 *) xmalloc(width * height * Bpp);
 	    if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
 	    {
-		#if NXDESKTOP_ORDERS_DEBUG
+		#ifdef NXDESKTOP_ORDERS_DEBUG
 		nxdesktopDebug("process_bmp_cache","cache w=%d",width);
 		#endif
 		
@@ -1039,6 +1046,10 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 	uint8 cache_id, cache_idx_low, width, height, Bpp;
 	uint16 cache_idx, bufsize;
 	uint8 *data, *bmpdata, *bitmap_id;
+	
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_bmpcache2","raw w=%d\n",width);
+	#endif
 
 	bitmap_id = NULL;	/* prevent compiler warning */
 	cache_id = flags & ID_MASK;
@@ -1077,7 +1088,15 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 
 	if (rdp_img_cache_nxcompressed)
 	{
-	    bitmap = ui_create_bitmap(width, height, data, bufsize, True);
+	    if (compressed)
+	    {
+		bitmap = ui_create_bitmap(width, height, data, bufsize, True);
+	    }
+	    else
+	    {
+		bitmap = ui_create_bitmap(width, height, data, bufsize, False);
+	    }
+		
 	    cache_put_bitmap(cache_id, cache_idx, bitmap, 0);
 	    
 	    #ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
@@ -1085,8 +1104,8 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 		mask_cache[cache_id][cache_idx] = create_mask(bitmap, 0, 0, width, height);
 	    #endif
 	    if (flags & PERSIST)
-			pstcache_put_bitmap(cache_id, cache_idx, bitmap_id, width, height,
-					    width * height * Bpp, bitmap);
+		pstcache_put_bitmap(cache_id, cache_idx, bitmap_id, width, height,
+				    width * height * Bpp, bitmap);
 	}
 	else
 	{
@@ -1100,13 +1119,13 @@ process_bmpcache2(STREAM s, uint16 flags, BOOL compressed)
 			xfree(bmpdata);
 			return;
 		}
-	}
-	else
-	{
+	    }
+	    else
+	    {
 		for (y = 0; y < height; y++)
 			memcpy(&bmpdata[(height - y - 1) * (width * Bpp)],
 			       &data[y * (width * Bpp)], width * Bpp);
-	}
+	    }
 
 	    bitmap = ui_create_bitmap(width, height, bmpdata, bufsize, False);
 
@@ -1144,6 +1163,10 @@ process_colcache(STREAM s)
 	uint8 cache_id;
 	int i;
 
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_colcache","raw w=%d\n",width);
+	#endif
+	
 	in_uint8(s, cache_id);
 	in_uint16_le(s, map.ncolours);
 
@@ -1178,6 +1201,10 @@ process_fontcache(STREAM s)
 	int i, datasize;
 	uint8 *data;
 
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_fontcache","raw w=%d\n",width);
+	#endif
+
 	in_uint8(s, font);
 	in_uint8(s, nglyphs);
 
@@ -1210,6 +1237,10 @@ process_secondary_order(STREAM s)
 	uint16 flags;
 	uint8 type;
 	uint8 *next_order;
+	
+	#ifdef NXDESKTOP_ORDERS_DEBUG
+	nxdesktopDebug("process_secondary_order","raw w=%d\n",width);
+	#endif
 
 	in_uint16_le(s, length);
 	in_uint16_le(s, flags);	/* used by bmpcache2 */
@@ -1399,7 +1430,7 @@ process_orders(STREAM s, uint16 num_orders)
 		}
 		processed++;
 	}
-	#if NXDESKTOP_ORDERS_DEBUG
+	#ifdef NXDESKTOP_ORDERS_DEBUG
 	/* not true when RDP_COMPRESSION is set */
 	if (s->p != g_next_packet)
 		error("%d bytes remaining\n", (int) (g_next_packet - s->p));

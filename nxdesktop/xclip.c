@@ -407,7 +407,7 @@ xclip_init(void)
 	rdesktop_clipboard_formats_atom =
 		XInternAtom(g_display, "_RDESKTOP_CLIPBOARD_FORMATS", False);
 	XSelectInput(g_display, DefaultRootWindow(g_display), PropertyChangeMask);
-	/* NX */
+	/* NX 
 	XSetSelectionOwner(g_display, XA_PRIMARY, DefaultRootWindow(g_display), CurrentTime); 
-	/* NX */
+	   NX */
 }
