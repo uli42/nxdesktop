@@ -1946,7 +1946,7 @@ void nxdesktopExit()
     #ifdef NXDESKTOP_PARAM_DEBUG
     nxdesktopDebug("nxdesktopExit: ","nxdesktop ended normally.\n");
     #endif
-    if (NXTransRunning())
+    if (nxdesktopUseNXTrans)
 	NXTransDestroy();
 }
     

@@ -1,5 +1,23 @@
 ChangeLog:
 
+nxdesktop-1.5.0-52
+
+- Changed the calls to NXDialog to NXTransDialog to be compatible with
+  the latest changes in nxcomp.
+  
+- Small modification in xclip.c to allow compilation in gcc 2.95.
+
+nxdesktop-1.5.0-51
+
+- Implemented INCR (incremental) transfers for clipboard operations. 
+  This should allow large amounts of data to be transfered.
+
+nxdesktop-1.5.0-50
+
+- Unified method of detection of NX transport.
+
+- Disabled Floating Window Mode from command line parameters options.
+
 nxdesktop-1.5.0-49
 
 - The RDP compressed cache was set as active when nxdesktop was called

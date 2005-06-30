@@ -73,6 +73,7 @@ static struct stream in;
 static struct stream out;
 int g_tcp_port_rdp = TCP_PORT_RDP;
 extern BOOL nxdesktopUseNXTrans;
+extern Window g_wnd;
 /* NX */
 char errorMsg[512];
 char errorCaption[512];
@@ -246,7 +247,7 @@ tcp_recv(STREAM s, uint32 length)
 		{
 	    	    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
 	    	    snprintf(errorCaption,511,"Error");
-	    	    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+	    	    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
 	    	    wait(NULL);
 		}
 		s = NULL;
@@ -381,7 +382,7 @@ tcp_connect(char *server)
 		{
 		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nUnable to resolve host.",server);
 		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
 		    wait(NULL);
 		}
 		return False;
@@ -394,7 +395,7 @@ tcp_connect(char *server)
 		{
 		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
 		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
 		    wait(NULL);
 		}
 		return False;
@@ -426,7 +427,7 @@ tcp_connect(char *server)
 		{
 		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
 		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXDialog(errorCaption, errorMsg, "ok", 0, (char *)nxDisplay );
+		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
 		    wait(NULL);
 		}
 		return False;

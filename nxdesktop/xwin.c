@@ -1413,7 +1413,7 @@ ui_init(void)
 	}
 	#endif
 	#endif
-
+	
 	/* Search for best TrueColor depth */
 	template.class = TrueColor;
 	vmatches = XGetVisualInfo(g_display, VisualClassMask, &template, &nvisuals);
@@ -1481,14 +1481,16 @@ ui_init(void)
 		}
 	}
 	
-	if (nxDisplay[0] != 0)
+	/*if (nxDisplay[0] != 0)
 	{
 	    nxdesktopUseNXTrans = (strncasecmp(nxDisplay, "nx", 2) == 0);
 	}
 	else
 	{	
 	    nxdesktopUseNXTrans = (strncasecmp(XDisplayName(NULL), "nx", 2) == 0);
-	}
+	}*/
+		
+	nxdesktopUseNXTrans = NXTransRunning();
 
         XSetErrorHandler(nxdesktopErrorHandler);
 
@@ -1602,7 +1604,6 @@ ui_init_nx(void)
 {
     #ifdef NXDESKTOP_XWIN_METHODS_DEBUG
     int i;
-    
     
     nxdesktopDebug("ui_init","Entered NX transport init process.\n");
     #endif  
