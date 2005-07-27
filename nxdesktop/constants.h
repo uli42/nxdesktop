@@ -383,7 +383,6 @@ enum RDP_INPUT_DEVICE
 #define STATUS_NOTIFY_ENUM_DIR          0xc000010c
 #define STATUS_CANCELLED                0xc0000120
 
-
 /* RDPDR constants */
 #define RDPDR_MAX_DEVICES               0x10
 #define DEVICE_TYPE_SERIAL              0x01

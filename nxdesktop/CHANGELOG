@@ -1,5 +1,66 @@
 ChangeLog:
 
+nxdesktop-1.5.0-59
+
+- Removed an extra error message left behind by mistake.
+
+nxdesktop-1.5.0-58
+
+- Modified nxdesktopDialog() to detect if nxdesktop is running from 
+  the command line. In this case, neither NXTransAlert() nor 
+  NXTransDialog() is used to show the error messages, just the text
+  to stderr is printed.
+
+nxdesktop-1.5.0-57
+
+- Fixed typos in CHANGELOG.
+
+- Modified nxdesktopDialog() to support both NXTransAlert() and 
+  NXTransDialog(), using the first if the NX transport is running 
+  and the later otherwise.
+
+nxdesktop-1.5.0-56
+
+- Updated messages to use the latest version of NXalert.h.
+
+- Removed a duplicated debug message.
+
+nxdesktop-1.5.0-55
+
+- Disabled debug message relative to ending procedure.
+
+- Added support for NXTransAlert().
+
+- Added more complete termination options, with termination ending
+  codes.
+  
+- Initialization sequence changed to init the NX transport before
+  the network and RDP. This allows to capture the error codes and
+  show them using the newly implemented NXTransAlert().
+  
+- Added visual warning to the user if the RDP server have limitations
+  to the color depth and/or resolutions requested by the user.
+  
+- Added error messages that inform the user in case of the RDP session
+  is closed by limits on the server, timeouts, licensing errors, 
+  network errors, security issues or manual disconection by the system 
+  administrator or other user with due rights.
+  
+nxdesktop-1.5.0-54
+
+- Solved bug with wrong #ifdef which was causing the compressed RDP
+  cache not been activated if the debug is enabled.
+  
+- Improved single point of termination procedure.
+
+nxdesktop-1.5.0-53
+
+- Removed references to nxkdb.
+
+- Small clean-up in xwin.c debug code.
+
+- Removed references to NXSync and NXKarma.
+
 nxdesktop-1.5.0-52
 
 - Changed the calls to NXDialog to NXTransDialog to be compatible with

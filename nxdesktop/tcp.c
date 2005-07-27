@@ -46,6 +46,7 @@
 #include <signal.h>		/* sigaction - NX */
 #include <NXlib.h>
 #include "rdesktop.h"
+#include "NXalert.h"
 
 #ifndef INADDR_NONE
 #define INADDR_NONE ((unsigned long) -1)
@@ -73,7 +74,6 @@ static struct stream in;
 static struct stream out;
 int g_tcp_port_rdp = TCP_PORT_RDP;
 extern BOOL nxdesktopUseNXTrans;
-extern Window g_wnd;
 /* NX */
 char errorMsg[512];
 char errorCaption[512];
@@ -81,10 +81,6 @@ extern char nxDisplay[255];
 extern Display *g_display;
 extern char windowName[255];
 
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-extern int  nxdesktopStopKarmaSz;
-static long bytesFromLastKarma = 0;
-#endif
 static struct sigaction sigact;
 
 #ifdef NXDESKTOP_TCP_DEBUG
@@ -128,9 +124,9 @@ tcp_send(STREAM s)
 
 	while (total < length)
 	{
-		//alarm(30);
+		alarm(30);
 		sent = send(sock, s->data + total, length - total, 0);
-		//alarm(0);
+		alarm(0);
 		
 		if (sent <= 0)
 		{
@@ -154,17 +150,6 @@ tcp_send(STREAM s)
 	#endif
 }
 
-/* NX */
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-static Bool SyncPredicate(Display *display, XEvent *event, XPointer ptr)
-{
-  return (event -> xclient.data.l[0] == NXSyncNotify &&
-              event -> type == ClientMessage && event -> xclient.window == 0 &&
-                      event -> xclient.message_type == 0 && event -> xclient.format == 32);
-}
-#endif
-/* NX */
-
 /* Receive a message on the TCP layer */
 STREAM
 tcp_recv(STREAM s, uint32 length)
@@ -173,10 +158,6 @@ tcp_recv(STREAM s, uint32 length)
     unsigned int new_length, end_offset, p_offset;
     int rcvd = 0;
     
-    #ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-    XEvent event;
-    #endif
-
     #ifdef NXDESKTOP_TCP_DEBUG
     int kiloRead = tcpRead / 1024;
     #endif
@@ -245,10 +226,7 @@ tcp_recv(STREAM s, uint32 length)
 		close(sock);
 		if (nxDisplay[0] != 0)
 		{
-	    	    snprintf(errorMsg,511,"The RDP server closed the connection.\nPlease report this problem to support\npersonnel.\nError is %d.",errno);
-	    	    snprintf(errorCaption,511,"Error");
-	    	    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
-	    	    wait(NULL);
+		    nxdesktopDialog(TCP_MESSAGE, errno);
 		}
 		s = NULL;
 		return NULL;
@@ -273,28 +251,6 @@ tcp_recv(STREAM s, uint32 length)
 	}
 	#endif
 		
-	#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-	if (nxdesktopUseNXTrans)
-	{
-	    bytesFromLastKarma += rcvd;
-	    if (bytesFromLastKarma >= nxdesktopStopKarmaSz)
-    	    {
-		#ifdef NXDESKTOP_NXKARMA_DEBUG
-            	nxdesktopDebug("tcp_recv","Karma will be sent, received bytes [%ld]\n", bytesFromLastKarma);
-		#endif
-		
-		NXSync(g_display, NXSyncWaitForLink, 0);
-		while (!XCheckIfEvent(g_display, &event, SyncPredicate, NULL))
-    		{
-		}
-		#ifdef NXDESKTOP_NXKARMA_DEBUG
-                nxdesktopDebug("tcp_recv","Karma received\n");
-		#endif
-                bytesFromLastKarma = 0;
-	    }
-	}
-	#endif
-	
 	#ifdef NXDESKTOP_TCP_DEBUG
 	tcpRead += rcvd;
 	#endif
@@ -380,10 +336,7 @@ tcp_connect(char *server)
 		error("Unable to resolve host '%s'\n", server);
 		if (nxDisplay[0] != 0)
 		{
-		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nUnable to resolve host.",server);
-		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
-		    wait(NULL);
+		    nxdesktopDialog(TCP_MESSAGE, REMOTE_SERVER_RDP_NOT_FOUND_ALERT);
 		}
 		return False;
 	}
@@ -393,10 +346,7 @@ tcp_connect(char *server)
 		error("Connection to RDP server '%s' failed. Reason is %d: %s.\n",server,errno,strerror(errno));
 		if (nxDisplay[0] != 0)
 		{
-		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
-		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
-		    wait(NULL);
+		    nxdesktopDialog(TCP_MESSAGE, errno);
 		}
 		return False;
 	}
@@ -410,8 +360,8 @@ tcp_connect(char *server)
 	sigact.sa_flags &= ~SA_RESTART;
 	sigaction(SIGALRM, &sigact, NULL); 
 
-	/*alarm(30);
-	 NX */
+	alarm(30);
+	/* NX */
 
 	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
 	{
@@ -425,10 +375,7 @@ tcp_connect(char *server)
 		sigaction(SIGALRM, NULL, &sigact);
 		if (nxDisplay[0] != 0)
 		{
-		    snprintf(errorMsg,511,"Connection to RDP server '%s' failed.\nError is %d, '%s'.",server,errno,strerror(errno));
-		    snprintf(errorCaption,511,"%s",(char *)windowName);
-		    NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
-		    wait(NULL);
+		    nxdesktopDialog(TCP_MESSAGE, errno);
 		}
 		return False;
 	}
@@ -511,6 +458,6 @@ AlarmHandler(int signal)
 {
     error("Connection timed out. Session closing\n");
     alarm(0);
-    exit(1);
+    nxdesktopExit(1);
 }
 /* NX */

@@ -38,6 +38,7 @@
 #include <time.h>
 #include "rdesktop.h"
 #include "proto.h"
+#include "NXalert.h"
 
 extern uint16 g_mcs_userid;
 extern char g_username[16];
@@ -798,6 +799,8 @@ rdp_process_bitmap_caps(STREAM s)
 	if (g_server_bpp != bpp)
 	{
 		warning("colour depth changed from %d to %d\n", g_server_bpp, bpp);
+		if (nxdesktopUseNXTrans)
+		    nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_COLOR_LIMIT_ALERT);
 		g_server_bpp = bpp;
 	}
 	if (g_width != width || g_height != height)
@@ -806,6 +809,8 @@ rdp_process_bitmap_caps(STREAM s)
 			width, height);
 		g_width = width;
 		g_height = height;
+		if (nxdesktopUseNXTrans)
+		    nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_GEOMETRY_LIMIT_ALERT);
 		ui_resize_window();
 	}
 }
@@ -1279,13 +1284,13 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 		switch (type)
 		{
 			case RDP_PDU_DEMAND_ACTIVE:
-				if (need_init_nx)
+				process_demand_active(s);
+				/*if (need_init_nx)
 				{
 				    if (!ui_init_nx())
 					disc = True;
 				    need_init_nx = False;
-				}
-				process_demand_active(s);
+				}*/
 				*deactivated = False;
 				break;
 			case RDP_PDU_DEACTIVATE:
@@ -1311,7 +1316,7 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 /* Test a connection up to the RDP layer */
 BOOL
 test_rdp_connect(char *server)
-{	
+{
 	if (!tcp_connect(server))
 	{
 	    return False;

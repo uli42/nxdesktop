@@ -48,6 +48,8 @@
 #include "rdesktop.h"
 #include "version.h"
 #include "proto.h"
+#include "NXalert.h"
+#include "NX.h"
 
 #ifdef EGD_SOCKET
 #include <sys/socket.h>		/* socket connect */
@@ -133,17 +135,14 @@ struct struct_keymaps
 } keyboard_defs[NUM_KEYMAPS];
 
 extern BOOL nxdesktopUseNXTrans;
-extern void RunOrKillNXkbd();
 int agentArgument(int i, char *argv[]);
 void NXTranslateKeymap();
 void InitKeyboardsList();
 void ShowHeaderInfo();
-void nxdesktopExit();
 static char *nxdesktopReadPasswdFromFile(char *fname);
 #undef NXDESKTOP_DISABLE_DESKTOP_SAVE
 #define NXDESKTOP_RDP_BUFSIZE   4096
 char nxDisplay[255];
-BOOL ipaq = False;
 BOOL magickey = True;
 extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
 int xo = 0;
@@ -424,9 +423,6 @@ main(int argc, char *argv[])
 	int nx_argc = 0; 
 	char *nx_argv[argc];	
 	
-	/* register exit point */
-	atexit(*nxdesktopExit);
-	
 	/* show initial info */
 	ShowHeaderInfo();
 	InitKeyboardsList();
@@ -583,13 +579,6 @@ main(int argc, char *argv[])
 				yo = -1;
 				break;
 			
-			case 'i':
-				g_fullscreen = True;
-                                ipaq = True;
-				xo = -1;
-				yo = -1;
-				break;
-
 			case 'b':
 				g_bitmap_cache = False;
 				break;
@@ -874,14 +863,17 @@ main(int argc, char *argv[])
 	rdp2vnc_connect(server, flags, domain, password, shell, directory);
 	return 0;
 #else
+	if (!ui_init_nx())
+	    nxdesktopExit(1);
+	
+	if (!ui_open_display())
+	{
+	    return 1;
+	}
+	
 	if (!test_rdp_connect(server))
 	    return 1;
 	
-	if (!ui_open_display())
-	    {
-		error("Nxdesktop cannot open X display.\n");
-		return 1;
-	    }
 	if (!ui_init())
 		return 1;
 
@@ -903,10 +895,11 @@ main(int argc, char *argv[])
 	    fwindow_init();
 	}
 	#endif
+	
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
 		error("Connection to RDP server '%s' failed.\n",server);
-		return 1;
+		nxdesktopExit(1);
 	}
 	else
 	{
@@ -934,12 +927,11 @@ main(int argc, char *argv[])
 	
 	if (ui_create_window())
 	{
-	    /* NX */
-	    if (ipaq) RunOrKillNXkbd();
-	    
-	    /* NX */
 	    rdp_main_loop(&deactivated, &ext_disc_reason);
-	    if (ipaq) RunOrKillNXkbd();
+	    if ((ext_disc_reason > 0) && (nxdesktopUseNXTrans))
+	    {	
+		nxdesktopDialog(RDP_MESSAGE, ext_disc_reason);
+	    }
 	    ui_destroy_window();
 	}
 
@@ -948,27 +940,31 @@ main(int argc, char *argv[])
 	cache_save_state();	
 	info("Disconnecting from RDP server '%s'.\n",server);
 	ui_deinit();
-
+	
 	if (ext_disc_reason >= 2)
 		print_disconnect_reason(ext_disc_reason);
+		
+	if (nxdesktopUseNXTrans)
+	    nxdesktopExit(0);
 
 	if (deactivated)
 	{
 		/* clean disconnect */
-		return 0;
+		    return 0;
+		
 	}
 	else
 	{
 		if (ext_disc_reason == exDiscReasonAPIInitiatedDisconnect
 		    || ext_disc_reason == exDiscReasonAPIInitiatedLogoff)
 		{
-			/* not so clean disconnect, but nothing to worry about */
-			return 0;
+		    /* not so clean disconnect, but nothing to worry about */
+		    return 0;
 		}
 		else
 		{
-			/* return error */
-			return 2;
+		    /* return error */
+		    return 2;
 		}
 	}
 
@@ -1067,7 +1063,7 @@ xmalloc(int size)
 	if (mem == NULL)
 	{
 		error("xmalloc %d\n", size);
-		exit(1);
+		nxdesktopExit(1);
 	}
 	return mem;
 }
@@ -1084,7 +1080,7 @@ xrealloc(void *oldmem, int size)
 	if (mem == NULL)
 	{
 		error("xrealloc %d\n", size);
-		exit(1);
+		nxdesktopExit(1);
 	}
 	return mem;
 }
@@ -1538,12 +1534,6 @@ char *argv[];
 	    g_fullscreen = True;
 	}
 	else
-	if (!strcmp(argv[i+1],"-ipaq"))
-    	{
-    	    g_fullscreen = True;
-    	    ipaq = True;
-	}
-        else 
 	{
 	    int j = 0;
 	    XParseGeometry(argv[i+1], &xo, &yo, &g_width, &g_height);
@@ -1737,7 +1727,7 @@ char *argv[];
 	if ((fp = fopen(options_file,"r")) == NULL)
 	{
 	    error("agentArgument: Options file could not be opened.\n");
-	    exit(1);
+	    nxdesktopExit(1);
 	}
 
 	options = malloc(1024);
@@ -1755,7 +1745,7 @@ char *argv[];
 	if (x == 0)
 	{
 	    error("agentArgument: Options file is empty.\n");
-    	    exit(1);
+    	    nxdesktopExit(1);
 	}
 	
 	x = 0;
@@ -1814,25 +1804,16 @@ char *argv[];
 
 		if (!strcmp(command, "geometry"))
 		{
-		    
-			if (!strcmp(value,"-ipaq"))
-    			{
-    			    g_fullscreen = True;
-    			    ipaq = True;
-			}
-    			else 
-			{
-			    j = 0;
-			    XParseGeometry(value, &xo, &yo, &g_width, &g_height);
-			    while(value[j])
+		    j = 0;
+		    XParseGeometry(value, &xo, &yo, &g_width, &g_height);
+		    while(value[j])
+		    {
+			if(value[j] == '+')
 			    {
-				if(value[j] == '+')
-				{
-				    value[j] = 'x';
-            			}
-            			j++;
-        		    }
-    			}
+				value[j] = 'x';
+            		    }
+            		j++;
+        	    }
 		    #ifdef NXDESKTOP_PARAM_DEBUG
 		    nxdesktopDebug("geometry ","%s\n",value);
 		    #endif
@@ -1848,7 +1829,7 @@ char *argv[];
 			    error("agentArgument: session type is not windows.\n");
 			    if (command) 
 				free(command);
-			    exit(1);
+			    nxdesktopExit(1);
 			}
 		}
 		
@@ -1940,14 +1921,15 @@ char *nxdesktopReadPasswdFromFile(char *fname)
     return (char *)passwd;
 }
 
-void nxdesktopExit()
+void nxdesktopExit(int reason)
 
 {
     #ifdef NXDESKTOP_PARAM_DEBUG
-    nxdesktopDebug("nxdesktopExit: ","nxdesktop ended normally.\n");
+    nxdesktopDebug("nxdesktopExit: ","nxdesktop ended. Exit code %d.\n", reason);
     #endif
     if (nxdesktopUseNXTrans)
 	NXTransDestroy();
+    exit(reason);
 }
     
 void InitKeyboardsList(void)

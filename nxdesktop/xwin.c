@@ -57,6 +57,8 @@
 
 #include <X11/keysym.h>
 
+#include "NXalert.h"
+
 #ifdef NXDESKTOP_FWINDOW_MODE
 /* For seamless */
 
@@ -84,8 +86,6 @@ static VCHANNEL *fwindow_channel;
 #undef NXDESKTOP_SHAPE_FORCESYNC
 
 #ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
-
-
 
 unsigned int *last_colormap;
 unsigned int last_colormap_entries;
@@ -158,7 +158,6 @@ extern int g_win_button_size;
 
 extern int xo;
 extern int yo;
-extern BOOL ipaq;
 extern BOOL magickey;
 extern char windowName[255];
 
@@ -243,9 +242,6 @@ BOOL nxdesktopUseNXTrans = False;
 BOOL nxdesktopUseNXRdpImages = False;
 BOOL nxdesktopUseNXCompressedRdpImages = False;
 
-#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-BOOL nxdesktopSleep = False;
-#endif
 /* nxproxy control parameters */
 
 #ifdef NXDESKTOP_DEBUG_XPUTIMAGE
@@ -356,12 +352,6 @@ static char PressedKeys[256];
 /*
 static char MacToPC_keys[256] =
 */
-
-/* nxkbd stuff */
-Bool  checkIpaq();
-Bool  xkbdRunning = False;
-pid_t pidkbd;
-extern Bool ipaqWorking;
 
 uint32  last_Xtime = 0; /* last X server time received in an xevent */
 
@@ -1256,11 +1246,6 @@ sigusr_func (int s)
 	#ifdef NXDESKTOP_XWIN_EVENTS_DEBUG
 	nxdesktopDebug("sigusr_func","Received SIGUSR1, unmapping window.\n");
 	#endif
-	if(ipaq)
-	{
-	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
-    	    XMapWindow(g_display, wnd2);
-	}
 	XUnmapWindow (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd);
     break;
     case SIGUSR2:
@@ -1284,16 +1269,8 @@ sigusr_func (int s)
 	#ifdef NXDESKTOP_XWIN_EVENTS_DEBUG
 	nxdesktopDebug("sigusr_func","Received SIGUSR2, unmapping window.\n");
 	#endif
-	if(ipaq)
-	{
-    	    XMapWindow (g_display, g_wnd);
-    	    XUnmapWindow(g_display, wnd2);
-	}
-	else 
-	{
-    	    XMapRaised (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd);
-    	    XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
-	}
+    	XMapRaised (g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd);
+    	XIconifyWindow (g_display, wnd2, DefaultScreen(g_display));
     break;
     default:
     break;
@@ -1329,10 +1306,18 @@ get_key_state(unsigned int state, uint32 keysym)
 BOOL ui_open_display()
 
 {
+    
+    extern char errorMsg[511];
+    extern char errorCaption[511];
+    
     g_display = XOpenDisplay((char *)nxDisplay);
     if (g_display == NULL)
     {
         error("Failed to open display\n");
+	snprintf(errorMsg,511,"The display %s could not be opened.\nPlease report this problem to support\npersonnel.",(char *)nxDisplay);
+	snprintf(errorCaption,511,"Error");
+	NXTransDialog(errorCaption, errorMsg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
+	wait(NULL);
         return False;
     }
     return True;
@@ -1489,9 +1474,9 @@ ui_init(void)
 	{	
 	    nxdesktopUseNXTrans = (strncasecmp(XDisplayName(NULL), "nx", 2) == 0);
 	}*/
-		
+	
 	nxdesktopUseNXTrans = NXTransRunning();
-
+	
         XSetErrorHandler(nxdesktopErrorHandler);
 
 	#ifndef NXDESKTOP_USES_RECT_BUF
@@ -1610,6 +1595,9 @@ ui_init_nx(void)
     
     if (nxdesktopUseNXTrans)
     {
+	#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
+	nxdesktopDebug("ui_init","NX transport avaliable.\n");
+	#endif  
         NXGetControlParameters(g_display, &nxdesktopLinkType, &nxdesktopProtocolMajor,
 				&nxdesktopProtocolMinor, &nxdesktopProtocolPatch,
 				&nxdesktopStopKarmaSz, &nxdesktopSplitSize,
@@ -1787,10 +1775,13 @@ ui_init_nx(void)
 	    }
 	}
     }
-    #ifdef NXDESKTOP_XWIN_METHODS_DEBUG
-    nxdesktopDebug ("ui_init", "NX transport unavaliable.\n");
-    #endif
-    rdp_img_cache_nxcompressed = False;
+    else
+    {
+	#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
+	nxdesktopDebug ("ui_init", "NX transport unavaliable.\n");
+	#endif
+	rdp_img_cache_nxcompressed = False;
+    }
     return True;
 }
 	
@@ -2148,7 +2139,7 @@ ui_create_window(void)
 	
 	#endif
 	
-	if (g_fullscreen || ipaq)
+	if (g_fullscreen)
 	{
 		attribs.override_redirect = True;
 	/* Prepare signal handler for SIGUSR1 and SIGUSR2 */
@@ -2161,18 +2152,6 @@ ui_create_window(void)
 		NXTransSignal(SIGUSR1, NX_SIGNAL_FORWARD);
 		NXTransSignal(SIGUSR2, NX_SIGNAL_FORWARD);
 		
-                if (ipaq)
-                {
-                  g_width = WidthOfScreen(g_screen);
-                  g_height = HeightOfScreen(g_screen);
-                }
-
-		/*
-                if(ipaq)
-                {
-                    height = HeightOfScreen(screen)-1;
-                }
-		*/
                 /*
                  * here move the window on -1 -1 to
                  * avoid seeing the border
@@ -2233,7 +2212,7 @@ ui_create_window(void)
 	
 	/* NX */
 	
-        if (!g_embed_wnd && !ipaq)
+        if (!g_embed_wnd)
 	{
 	    if (g_fullscreen)
 	    {
@@ -2396,8 +2375,7 @@ ui_create_window(void)
 		   wmhints.flags = StateHint | IconPixmapHint;
 		}
 		XSetWMHints (g_display, wnd2, &wmhints);
-                if(!ipaq)
-		    XMapWindow( g_display, wnd2 );
+		XMapWindow( g_display, wnd2 );
 	}
 
         if (sizehints)
@@ -2476,14 +2454,6 @@ ui_create_window(void)
 	    XSync(g_display, True);
         }
 	#endif
-        if (ipaq)
-	{
-            XWindowChanges ch;
-            unsigned int ch_mask;
-            ch.stack_mode = Below;
-            ch_mask = CWStackMode;
-            XConfigureWindow(g_display, g_wnd, ch_mask, &ch);
-        }
 
         if (g_fullscreen)
         {
@@ -2681,27 +2651,10 @@ xwin_process_events(void)
 		         	    sigusr_func(SIGUSR2);
 			}
 	  	}
-		/*
-		#ifdef NXDESKTOP_USES_NXKARMA_IN_LOOP
-		if (xevent.xclient.window == 0 &&
-              		xevent.xclient.message_type == 0 &&
-              		xevent.xclient.format == 32 &&
-              		(int) xevent.xclient.data.l[0] == NXSyncNotify)
-          	{
-             		nxdesktopSleep = False;
-			#ifdef NXDESKTOP_NXKARMA_DEBUG
-             		fprintf(stderr," NXKarma wake up arrived!\n");
-			#endif
-          	}
-		#endif
-		*/
-		/* NX */
 			
 		#ifdef NXDESKTOP_XWIN_EVENTS_DEBUG
 		nxdesktopDebug("xwin_process_events","Xevent type %d.\n",xevent.type);
 		#endif
-		
-		
 		
 		switch (xevent.type)
 		{
@@ -2788,14 +2741,6 @@ xwin_process_events(void)
 				/* NX
 				scancode = tr.scancode; */
 
-				if ( (xevent.xkey.keycode == 130) && ipaq )
-				{
-					kill (pidkbd, 1);
-					#ifdef NXDESKTOP_XWIN_EVENTS_DEBUG
-					nxdesktopDebug("xwin_process_events","signal send -HUP\n");
-					#endif
-					break;
-				}
                                 last_Xtime = xevent.xkey.time;
 				/* NX */
 
@@ -3125,8 +3070,6 @@ xwin_process_events(void)
 				     rdp_send_input(last_Xtime, RDP_INPUT_SCANCODE,
 						KBD_FLAG_DOWN | KBD_FLAG_UP, i, 0);
 				}
-                                if(ipaq)
-                                   break;
 				/* NX */				
 
 				XUngrabKeyboard(g_display, CurrentTime);
@@ -3216,7 +3159,7 @@ int nxdesktopSelect(int maxfds, fd_set *readfds, fd_set *writefds, fd_set *excep
 	if (exceptfds != NULL)
 	{
 	    nxdesktopDebug("nxdesktopSelect", "Can't handle exception fds in select. Exiting.\n");
-	    exit(1);
+	    nxdesktopExit(1);
 	}
 	#endif
 	if (readfds == NULL)
@@ -4781,7 +4724,7 @@ ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y,
 				else
 				{
 				    error("this shouldn't be happening\n");
-				    exit(1);
+				    nxdesktopExit(1);
 				}
 				/* this will move pointer from start to first character after FF command */
 				length -= i + 3;
@@ -5182,11 +5125,11 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 	#endif
 	
 	#ifdef NXDESKTOP_ENABLE_MASK_PROCESSING
-	/*if (float_window_mode)
+	if (float_window_mode)
 	{   
 	    fprintf(stderr,"desktop_restore\n"); 
 	    nxdesktopShape(0, 0, x, y, cx, cy, False);
-	}*/
+	}
 	#endif
 }
 
@@ -5417,61 +5360,6 @@ Bool getNXIcon(Display *g_display, Pixmap *nxIcon, Pixmap *nxMask)
   return existXpmIcon;
 }
 
-void RunOrKillNXkbd()
-{
-  info("nxkbd is running\n");
-  if (xkbdRunning)
-  {
-#ifdef NXAGENT_XKBD_DEBUG
-    nxdesktopDebug("RunOrKillNXkbd","nxkbd now is NOT running\n");
-#endif
-    xkbdRunning = False;
-    kill( pidkbd, 9 );
-  }
-  else
-  {
-    char temp_string[256];
-    char kbddisplay[256];
-    char *kbdargs[7];
-    int kbd_i, kbddisplay_len;
-  
-    kbddisplay_len = strlen(DisplayString(g_display));
-    strncpy(temp_string,"",256);
-    strncpy(kbddisplay,"",256);
-    strcpy(kbddisplay,"localhost");
-    strncpy(temp_string, DisplayString(g_display), kbddisplay_len);
-    for (kbd_i=0; kbd_i<7; kbd_i++) kbddisplay[kbd_i+9] = temp_string[kbddisplay_len - 7 + kbd_i];
-  
-    kbdargs[0] = "nxkbd";
-    kbdargs[1] = "-geometry";
-    kbdargs[2] = "240x70+0+250";
-    kbdargs[3] = "-g_display";
-    kbdargs[4] = kbddisplay;
-    kbdargs[5] = "-3";
-    kbdargs[6] = NULL;
-
-    switch ( pidkbd = fork() )
-    {
-      case 0:
-        execvp(kbdargs[0], kbdargs);
-#ifdef NXAGENT_XKBD_DEBUG
-	nxdesktopDebug("RunOrKillNXkbd","execvp of nxkbd failed\n");
-#endif
-        exit(1);
-      case -1:
-#ifdef NXAGENT_XKBD_DEBUG
-        nxdesktopDebug("RunOrKillNXkbd","can't fork to run nxkbd\n");
-#endif
-        break;
-      default:
-        ;
-    }
-#ifdef NXAGENT_XKBD_DEBUG
-    nxdesktopDebug("RunOrKillNXkbd","nxkbd now is running on $DISPLAY %s\n", kbddisplay);
-#endif
-    xkbdRunning = True;
-  }
-}  
 /* Seamless mode V2 */
 /* 
     
@@ -5616,7 +5504,7 @@ add_rdp_windows(NXCLIPPER_WINDOWS c)
     else
     {
 	nxclipper_windows[nxclipper_windows_entries] = c;
-	fprintf(stderr, "Window %d added. ID = %d.\n", nxclipper_windows_entries,c.id);
+	nxdesktopDebug("add_rdp_windows: ","Window %d added. ID = %d.\n", nxclipper_windows_entries,c.id);
     }
 }
 
@@ -5829,7 +5717,6 @@ fwindow_process(STREAM s)
 	    XCopyArea(g_display, pix_move_buffer, g_wnd, g_gc, 0, 0, tmp_win.w, tmp_win.h, tmp_win.x, tmp_win.y);
 	    XShapeCombineRectangles(g_display, g_wnd, ShapeBounding, 0, 0, &rect, 1, ShapeSet, Unsorted);
 	    #endif
-	    fprintf(stderr,"moving %d %d %d %d\n", tmp_win.x, tmp_win.y, tmp_win.w, tmp_win.h);
 	    XMoveWindow(g_display, g_wnd, tmp_win.x, tmp_win.y);
 	    
 	    break;
@@ -6029,6 +5916,199 @@ void nxdesktopMoveViewport(int hShift, int vShift)
 	XMoveWindow(g_display, g_wnd, g_wnd_x, g_wnd_y);
     }
 }
+
+
+int
+nxdesktopDialog(int type, int code)
+{
+    int real_code = -1;
+    char *error_msg = 0;
+    char error_caption[512];
+    
+    #ifdef NXDESKTOP_DIALOG_DEBUG
+    nxdesktopDebug("nxdesktopDialog", "Message type = %d, message code = %d\n", type, code);
+    #endif
+    
+    switch (type)
+    {
+	case TCP_MESSAGE:
+	    switch (code)
+	    {
+		case EADDRINUSE:
+		case EBUSY:
+		case ENOTCONN:
+		case ETIMEDOUT:
+		case ECONNREFUSED:
+		    real_code = REMOTE_SERVER_RDP_REFUSED_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_REFUSED_STRING;
+		    break;
+		    
+		case ENETDOWN:
+		case ENETUNREACH:
+		case ENETRESET:
+		case ECONNRESET:
+		case EHOSTDOWN:
+		    real_code = REMOTE_SERVER_RDP_SHUTDOWN_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_SHUTDOWN_STRING;
+		    break;
+		
+		case REMOTE_SERVER_RDP_NOT_FOUND_ALERT:
+		    real_code = REMOTE_SERVER_RDP_NOT_FOUND_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_NOT_FOUND_STRING;
+		    break;
+		
+		default:
+		    real_code = REMOTE_SERVER_RDP_CONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_CONNECT_STRING;
+		    break;
+	    }
+	    break;
+	case RDP_MESSAGE:
+	    switch (code)
+	    {
+		case exDiscReasonNoInfo:
+		    real_code = REMOTE_SERVER_RDP_TERMINATED_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_TERMINATED_STRING;
+		    break;
+
+		case exDiscReasonAPIInitiatedDisconnect:
+		    real_code = REMOTE_SERVER_RDP_MANDATED_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_MANDATED_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonAPIInitiatedLogoff:
+		    real_code = REMOTE_SERVER_RDP_LOGOFF_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LOGOFF_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonServerIdleTimeout:
+		    real_code = REMOTE_SERVER_RDP_IDLE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_IDLE_DISCONNECT_STRING;	
+		    break;
+
+		case exDiscReasonServerLogonTimeout:
+		    real_code = REMOTE_SERVER_RDP_LOGON_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LOGON_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonReplacedByOtherConnection:
+		    real_code = REMOTE_SERVER_RDP_ADMIN_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_ADMIN_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonOutOfMemory:
+		    real_code = REMOTE_SERVER_RDP_MEMORY_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_MEMORY_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonServerDeniedConnection:
+		    real_code = REMOTE_SERVER_RDP_DENIED_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_DENIED_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonServerDeniedConnectionFips:
+		    real_code = REMOTE_SERVER_RDP_SECURITY_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_SECURITY_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseInternal:
+		    real_code = REMOTE_SERVER_RDP_FORBIDDEN_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_FORBIDDEN_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseNoLicenseServer:
+		    real_code = REMOTE_SERVER_RDP_NETWORK_LICENSE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_NETWORK_LICENSE_DISCONNECT_STRING;
+		    break;    
+		
+		case exDiscReasonLicenseNoLicense:
+		    real_code = REMOTE_SERVER_RDP_NO_LICENSE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_NO_LICENSE_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseErrClientMsg:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_MESSAGE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_MESSAGE_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseHwidDoesntMatchLicense:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_ERROR_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_ERROR_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseErrClientLicense:
+		    real_code = REMOTE_SERVER_RDP_INVALID_LICENSE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_INVALID_LICENSE_DISCONNECT_STRING;
+		    break;
+		    
+		case exDiscReasonLicenseCantFinishProtocol:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_ABORT_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_ABORT_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseClientEndedProtocol:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_PROTO_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_PROTO_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseErrClientEncryption:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_FORMAT_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_FORMAT_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseCantUpgradeLicense:
+		    real_code = REMOTE_SERVER_RDP_LICENSE_UPGRADE_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_LICENSE_UPGRADE_DISCONNECT_STRING;
+		    break;
+
+		case exDiscReasonLicenseNoRemoteConnections:
+		    real_code = REMOTE_SERVER_RDP_FORBIDDEN_DISCONNECT_ALERT;
+		    error_msg = REMOTE_SERVER_RDP_FORBIDDEN_DISCONNECT_STRING;
+		    break;
+		
+		case REMOTE_SERVER_RDP_GEOMETRY_LIMIT_ALERT:
+		    real_code = code;
+		    error_msg = REMOTE_SERVER_RDP_GEOMETRY_LIMIT_STRING;
+		    break;
+		    
+		case REMOTE_SERVER_RDP_COLOR_LIMIT_ALERT:
+		    real_code = code;
+		    error_msg = REMOTE_SERVER_RDP_COLOR_LIMIT_STRING;
+		    break;
+
+		default:
+		    if (code > 0x1000 && code < 0x7fff)
+		    {
+			real_code = REMOTE_SERVER_RDP_PROTOCOL_DISCONNECT_ALERT;
+			error_msg = REMOTE_SERVER_RDP_PROTOCOL_DISCONNECT_STRING;
+		    } else
+		    {
+			real_code = REMOTE_SERVER_RDP_LICENSE_SYSTEM_DISCONNECT_ALERT;
+			error_msg = REMOTE_SERVER_RDP_LICENSE_SYSTEM_DISCONNECT_STRING;
+		    }
+		    break;
+	    }
+	    break;
+    }
+    #ifdef NXDESKTOP_DIALOG_DEBUG
+    nxdesktopDebug("nxdesktopDialog", "real code = %d", real_code);
+    #endif
+    if (nxDisplay[0] != 0)
+    {
+	if (NXTransRunning())
+	{
+	    return (NXTransAlert(real_code, NX_ALERT_REMOTE));
+	} else 
+	{
+	    if (error_caption[0])
+		snprintf(error_caption,511,"Error");
+	    NXTransDialog(error_caption, error_msg, (char *)g_wnd, "ok", 0, (char *)nxDisplay );
+	    wait(NULL);
+	    return 0;
+	}
+    }
+    return 0;
+}		
 
 void
 ui_begin_update(void)

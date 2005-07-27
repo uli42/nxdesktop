@@ -261,7 +261,5 @@ void ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy);
 
 BOOL fwindow_register(void);
 void fwindow_init(void);
-
-
-
-
+void nxdesktopExit(int reason);
+int nxdesktopDialog(int type, int code);
