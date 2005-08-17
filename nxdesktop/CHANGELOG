@@ -1,5 +1,17 @@
 ChangeLog:
 
+nxdesktop-1.5.0-61
+
+- Solved bug that prevented the viewport mode to be activated.
+
+nxdesktop-1.5.0-60
+
+- In case of a network conection error, nxdesktop now continues the
+  rest of the initialization process of X layer but does not complete
+  the session, exiting before that, instead of imediately bail out 
+  after the network error. This avoid nxcomp issues a second error 
+  message that closes nxdesktop's one.
+
 nxdesktop-1.5.0-59
 
 - Removed an extra error message left behind by mistake.

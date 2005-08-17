@@ -2074,6 +2074,9 @@ ui_create_window(void)
 	    wndwidth = g_fullscreen ? WidthOfScreen(g_screen) : g_width;
 	    wndheight = g_fullscreen ? HeightOfScreen(g_screen) : g_height;
         }
+	
+	if ((WidthOfScreen(g_screen) < g_width) || (HeightOfScreen(g_screen) < g_height))
+	    viewport_mode = True;
 
 	attribs.background_pixel = BlackPixelOfScreen(g_screen);
 	attribs.border_pixel = WhitePixelOfScreen(g_screen);
@@ -2249,7 +2252,7 @@ ui_create_window(void)
     	    }
 
 	    attribs.override_redirect = g_fullscreen;
-
+	    
             if (viewport_mode)
 	    {
 		g_viewport_wnd = XCreateWindow (g_display, RootWindowOfScreen(g_screen), xo,yo,

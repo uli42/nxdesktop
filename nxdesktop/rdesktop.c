@@ -872,7 +872,10 @@ main(int argc, char *argv[])
 	}
 	
 	if (!test_rdp_connect(server))
-	    return 1;
+	{
+	    ui_init();
+	    nxdesktopExit(1);
+	}
 	
 	if (!ui_init())
 		return 1;
