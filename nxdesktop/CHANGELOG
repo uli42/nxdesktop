@@ -1,5 +1,146 @@
 ChangeLog:
 
+nxdesktop-1.5.0-75
+
+- Eliminated dialog message shown when the user, connected to a Windows
+  XP with SP2 installed asks for desconection. This solves TR08C00993.
+  
+- Solved problem when the number of colors is limited on the server.
+
+- Small fix in the configure script to make sure that OSS is selected
+  unless explicitely indicated.
+  
+- Enabled display of alerts in case of logon timeout.
+
+nxdesktop-1.5.0-74
+
+- Sound redirection via ESD is working without the excessive hitches
+  and hangs observed before.
+  
+- Remote volume control was disabled for now becasue, for reasons yet 
+  unknown the request for information from the esd server fails to 
+  provide the correct player (esd client) identification. For testing 
+  porpouses only, direct access to the mixer is used.
+  
+- Corrected missing TR reference in CHANGELOG.
+
+nxdesktop-1.5.0-73
+
+- Changed sound initialization sequence to solve hanging on the 
+  initialization sequence.
+
+- Changed esd initialization.
+
+- Returned default compilation options to disable ESD sound so this 
+  release can safelly be tested for other things and used.
+  
+nxdesktop-1.5.0-72
+
+- Removed alerts when the server limits the number of colors or the
+  resolution of the session and the user asks for more than those 
+  limits.
+
+nxdesktop-1.5.0-71
+
+- Sound now plays via esd server. It's not fully working as there's
+  still need to sync the RDP sound buffer and the local sound buffer
+  and also needs to answer the mixer (volume and pan) requestes. 
+
+nxdesktop-1.5.0-70
+
+- Initialization of the sound redirection channel completed. Now 
+  nxdesktop connects itself with the esd server, receives the sound 
+  stream from the server but it's not playing it yet (still under
+  investigation why).
+
+- Added and enabled debug code for the sound redirection.
+
+- Disabled code that cut sound redirection if NX transport is up.
+
+- Forced parameters to enable local sound redirection and use of ESD.
+
+nxdesktop-1.5.0-69
+
+- Started implementation of sound redirection. This is been done cre-
+  ating an interface with ESD. Just the initialization of the socket
+  is done, still needs to interface with the RDP sound channel.
+  
+- Modified configure script to allow compilation of the ESD support. 
+  Currently disabled by default.
+
+nxdesktop-1.5.0-68
+
+- Implemented change in viewport mode in order to activate it if the
+  window is resized to a smaller resolution than the one used when the 
+  session started. This solves the TR08C00980.
+  
+nxdesktop-1.5.0-67
+
+- When connected to a XP Professional nxdesktop was showing a message 
+  when a disconection was asked. This was caused because XP does not 
+  logs off but to actually forces a disconection sending a disconection 
+  error code to the client unlike the others RDP servers. 
+  Now nxdesktop checks if it's the case and does not shows the message.
+  This solves TR08C00993.
+  
+- Added a test code to determinate which is the version of the RDP
+  server.
+  
+- Corrected CHANGELOG.
+
+- Improved login error messages implemented for evaluation. Now, the
+  alert is issued just in case of a login timeout. This was done for 2
+  reasons:
+  
+  1) The RDP server itself shows a message error in case of wrong 
+  authentication is used.
+  
+  2) The RDP server does not signals if the user wasn't able to login
+  or if he/she just gave up to login by pressing ESC or clicking on the
+  Cancel button.
+
+nxdesktop-1.5.0-66
+
+- Disabled one missing debug message related to viewport mode.
+
+- If the login credentials are wrong or the user takes too long to do
+  the login, when the session closes, nxdesktop now shows a message 
+  that informes the reason.
+
+nxdesktop-1.5.0-65
+
+- The window is now aways in the middle of the screen when switched to
+  fullscreen and back.
+  
+- Disabled debug code left to test the viewport mode.
+
+- Fixed bug on viewport mode. When the window was moved on fullscreen
+  mode and returned to window mode, a black stripe was shown.
+  
+- Viewport mode now also starts in the middle of the screen.
+
+nxdesktop-1.5.0-64
+
+- Created fullscreen switch using Ctrl-Alt-F keystroke.
+
+- Fixed problem with combining viewport mode and fullscreen switch.
+
+- Fixed problem with viewport mode if the viewport mode was activated 
+  and the screen was minimized and maximized later.
+
+nxdesktop-1.5.0-63
+
+- Disabled debug code left for testing the viewport mode.
+
+- Changed the detection of the resolution to better handle the view-
+  port mode in windows. This solves the problem of gray areas when
+  the viewport mode is activated on windows.
+
+nxdesktop-1.5.0-62
+
+- Changed alarm handler for the TCP conection so it properly closes 
+  the session after a timeout. This solves TR08C00976.
+
 nxdesktop-1.5.0-61
 
 - Solved bug that prevented the viewport mode to be activated.

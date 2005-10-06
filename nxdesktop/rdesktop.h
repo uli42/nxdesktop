@@ -47,7 +47,7 @@
 #include <unistd.h>
 #endif
 
-#define VERSION "1.3.1"
+#define VERSION "1.4.1"
 
 #undef NXDESKTOP_MCS_DEBUG
 #undef NXDESKTOP_TCP_DEBUG

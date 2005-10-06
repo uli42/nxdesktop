@@ -167,6 +167,8 @@ static int g_x_socket;
 static Screen *g_screen;
 Window g_wnd;
 extern BOOL viewport_mode;
+BOOL viewport_keys_enabled = False;
+BOOL viewport_mode_locked = False;
 Window g_viewport_wnd = 0;
 uint32 g_embed_wnd;
 static Window wnd2;
@@ -196,6 +198,10 @@ int g_saved_wnd_x = 0;
 int g_saved_wnd_y = 0;
 int g_wnd_x;
 int g_wnd_y;
+int viewport_x1;
+int viewport_y1;
+extern int perm_xo;
+extern int perm_yo;
 
 void nxdesktopMoveViewport(int hShift, int vShift);
 
@@ -276,7 +282,7 @@ int nxdesktopImageFrame  = 0;
 
 unsigned int nxdesktopImageSplitMethod  = 0;
 unsigned int nxdesktopImageMaskMethod   = 0;
-
+extern BOOL nxclient_is_windows;
 
 /*#ifdef NXWIN_USES_PACKED_RDP_TEXT*/
 BOOL nxdesktopCanPackRDPText = False;
@@ -1591,9 +1597,20 @@ ui_init_nx(void)
     int i;
     
     nxdesktopDebug("ui_init","Entered NX transport init process.\n");
-    #endif  
+    #endif
     
-    if (nxdesktopUseNXTrans)
+    BOOL use_nx_display;
+    
+    if (nxDisplay[0] != 0)
+    {
+	use_nx_display = (strncasecmp(nxDisplay, "nx", 2) == 0);
+    }
+    else
+    {	
+	use_nx_display = (strncasecmp(XDisplayName(NULL), "nx", 2) == 0);
+    }
+    
+    if (use_nx_display)
     {
 	#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 	nxdesktopDebug("ui_init","NX transport avaliable.\n");
@@ -2040,7 +2057,7 @@ void nxdesktopSetAtoms()
 
 
 BOOL
-ui_create_window(void)
+ui_create_window(BOOL ToggleFullscreen)
 {
 	uint8 null_pointer_mask[1] = { 0x80 };
 	uint8 null_pointer_data[24] = { 0x00 };
@@ -2063,7 +2080,7 @@ ui_create_window(void)
 	#endif
 	
 	/* NX */
-
+	
 	if (!g_embed_wnd)
 	{
 	    wndwidth = g_width;
@@ -2075,9 +2092,7 @@ ui_create_window(void)
 	    wndheight = g_fullscreen ? HeightOfScreen(g_screen) : g_height;
         }
 	
-	if ((WidthOfScreen(g_screen) < g_width) || (HeightOfScreen(g_screen) < g_height))
-	    viewport_mode = True;
-
+	
 	attribs.background_pixel = BlackPixelOfScreen(g_screen);
 	attribs.border_pixel = WhitePixelOfScreen(g_screen);
 	attribs.backing_store = g_ownbackstore ? NotUseful : Always;
@@ -2167,6 +2182,12 @@ ui_create_window(void)
 		attribs.override_redirect = False;
 		sigusr_act.sa_handler = SIG_IGN;
 		g_width = (g_width + 3) & ~3; /* make width a multiple of 32 bits */
+		if (ToggleFullscreen)
+		{
+		    xo = perm_xo;
+		    yo = perm_yo;
+		    
+		}
 	}
 	
 	g_width = g_width  & ~3; /* make width a multiple of 32 bits */
@@ -2213,9 +2234,15 @@ ui_create_window(void)
 
 	}
 	
+	if (((((g_width >= WidthOfScreen(g_screen)*1.05)) || (g_height >= (HeightOfScreen(g_screen)*1.1))) && (nxdesktopUseNXTrans)) || (ToggleFullscreen))
+	{
+	    viewport_mode_locked = True;
+	    viewport_keys_enabled = True;
+	}
+	
 	/* NX */
 	
-        if (!g_embed_wnd)
+        if ((!g_embed_wnd) && (viewport_mode))
 	{
 	    if (g_fullscreen)
 	    {
@@ -2226,10 +2253,12 @@ ui_create_window(void)
 	    }
             else
 	    {
-        	xo = g_saved_viewport_x;
-        	yo = g_saved_viewport_y;
-
-        	if (g_saved_wnd_x == 0 && g_saved_wnd_y == 0)
+		if (!ToggleFullscreen)
+		{
+		    xo = g_saved_viewport_x;
+        	    yo = g_saved_viewport_y;
+		}
+		if (g_saved_wnd_x == 0 && g_saved_wnd_y == 0)
         	{
         	    x1 = y1 = 0;
         	}
@@ -2246,25 +2275,41 @@ ui_create_window(void)
         	}
         	else
         	{
-    		    g_viewport_width = wndwidth < WidthOfScreen(g_screen) ? wndwidth : WidthOfScreen(g_screen)*3/4;
-    		    g_viewport_height= wndheight< HeightOfScreen(g_screen)? wndheight: HeightOfScreen(g_screen)*3/4;
-    		}
+		    
+    		    g_viewport_width = wndwidth < (WidthOfScreen(g_screen)*1.05) ? wndwidth : WidthOfScreen(g_screen)*3/4;
+    		    g_viewport_height= wndheight< (HeightOfScreen(g_screen)*1.1) ? wndheight: HeightOfScreen(g_screen)*3/4;
+		    g_viewport_width = g_viewport_width  & ~3;
+		    if (nxclient_is_windows)
+		    {
+			g_viewport_width = WidthOfScreen(g_screen);
+			g_viewport_height = HeightOfScreen(g_screen);
+		    }
+		}
     	    }
-
+	    
 	    attribs.override_redirect = g_fullscreen;
 	    
-            if (viewport_mode)
+	    #ifdef NXDESKTOP_DEBUG_VIEWPORT
+	    fprintf(stderr, "Geometry data: dw = %d dh = %d ws = %d hs = %d gw = %d gh = %d xo = %d yo = %d\n", DisplayWidth(g_display, DefaultScreen(g_display)), DisplayHeight(g_display, DefaultScreen(g_display)), 
+	    	    WidthOfScreen(g_screen), HeightOfScreen(g_screen), g_width, g_height, xo, yo);
+	    #endif
+            
+	    if (viewport_mode)
 	    {
-		g_viewport_wnd = XCreateWindow (g_display, RootWindowOfScreen(g_screen), xo,yo,
-                                		    g_viewport_width, g_viewport_height, 0, g_depth,
-                                			InputOutput, g_visual, CWBackPixel | CWBackingStore |
-                                        		    CWOverrideRedirect | CWColormap |
-                                            			CWBorderPixel, &attribs);
+		if ((xo == 0) && (yo == 0) && (!nxclient_is_windows))
+		{
+		    xo = (WidthOfScreen(g_screen) - g_viewport_width)/2;
+        	    yo = (HeightOfScreen(g_screen) - g_viewport_height)/2;
+		}
+		g_viewport_wnd = XCreateWindow (g_display, RootWindowOfScreen(g_screen), xo, yo, g_viewport_width, g_viewport_height, 
+						0, g_depth, InputOutput, g_visual, CWBackPixel | CWBackingStore | CWOverrideRedirect | CWColormap | CWBorderPixel, &attribs);
 
     		XSelectInput(g_display, g_viewport_wnd, ButtonPressMask | KeyPressMask |
                 		StructureNotifyMask | (g_fullscreen ? EnterWindowMask : 0) |
                     		    (g_grab_keyboard ? (EnterWindowMask | LeaveWindowMask) : 0));
-		XReparentWindow (g_display, g_wnd, g_viewport_wnd, x1,y1);
+				    
+		/*XReparentWindow (g_display, g_wnd, g_viewport_wnd, (ToggleFullscreen && g_fullscreen) ? perm_xo : viewport_x1, (ToggleFullscreen && g_fullscreen) ? perm_yo : viewport_y1);*/
+		XReparentWindow (g_display, g_wnd, g_viewport_wnd, (ToggleFullscreen && g_fullscreen) ? perm_xo : 0, (ToggleFullscreen && g_fullscreen) ? perm_yo : 0);
 	    }
 	}
 
@@ -2288,14 +2333,32 @@ ui_create_window(void)
 	{
 	    sizehints->flags = USPosition | PMinSize | PMaxSize;
 	    sizehints->min_width = NXDESKTOP_MIN_WIDTH;
-            sizehints->max_width = g_width;
+	    sizehints->max_width = g_width;
 	    sizehints->min_height = NXDESKTOP_MIN_HEIGHT;
-            sizehints->max_height = g_height;
-	    XSetStandardProperties(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd,
+	    sizehints->max_height = g_height;
+	    
+	    /*XSetStandardProperties(g_display, g_viewport_wnd ? g_viewport_wnd : g_wnd,
+				(windowName?windowName:"nxdesktop"),
+				(windowName?windowName:"nxdesktop"),
+				nxIconPixmap, 0, 0, sizehints);*/
+				
+	    XSetStandardProperties(g_display, g_wnd,
 				(windowName?windowName:"nxdesktop"),
 				(windowName?windowName:"nxdesktop"),
 				nxIconPixmap, 0, 0, sizehints);
 
+	    if (viewport_mode)
+	    {
+		sizehints->min_width = NXDESKTOP_MIN_WIDTH;
+		sizehints->max_width = g_width;
+		sizehints->min_height = NXDESKTOP_MIN_HEIGHT;
+		sizehints->max_height = g_height;
+		XSetStandardProperties(g_display, g_viewport_wnd,
+				(windowName?windowName:"nxdesktop"),
+				(windowName?windowName:"nxdesktop"),
+				nxIconPixmap, 0, 0, sizehints);
+	    }
+	    
 	    wmhints.icon_pixmap = nxIconPixmap;
 	    if (useXpmIcon)
 	    {
@@ -2405,14 +2468,17 @@ ui_create_window(void)
 	}
 
 	XSelectInput(g_display, g_wnd, input_mask);
+	
 	if (g_fullscreen)
 		XSelectInput (g_display, wnd2, (input_mask & ~(KeyPressMask | KeyReleaseMask)) | StructureNotifyMask);
 	
-	if (g_viewport_wnd)
+	if (viewport_mode)
 	{
     	    XMapWindow (g_display, g_viewport_wnd);
     	}
-        XMapWindow(g_display, g_wnd); 
+	
+	XMapWindow(g_display, g_wnd); 
+	
 	XGrabKeyboard(g_display, g_wnd, True, GrabModeAsync, GrabModeAsync, CurrentTime);
 
 	/* wait for VisibilityNotify 
@@ -2487,6 +2553,10 @@ ui_create_window(void)
         }
 	 NX */
 	 
+	/*  I don't think this is needed for now 
+	    viewport_mode = !ToggleFullscreen;
+	*/
+	 
 	return True;
 }
 
@@ -2550,7 +2620,14 @@ xwin_toggle_fullscreen(void)
 {
 	Pixmap contents = 0;
         Bool savedShowNXlogo = showNXlogo;
-
+	XSetWindowAttributes attribs;
+	
+	attribs.background_pixel = BlackPixelOfScreen(g_screen);
+	attribs.border_pixel = WhitePixelOfScreen(g_screen);
+	attribs.backing_store = g_ownbackstore ? NotUseful : Always;
+	attribs.override_redirect = False;
+	attribs.colormap = g_xcolmap;
+	
 	if (!g_ownbackstore)
 	{
 		/* need to save contents of window */
@@ -2565,39 +2642,24 @@ xwin_toggle_fullscreen(void)
           g_saved_wnd_x = g_wnd_x;
           g_saved_wnd_y = g_wnd_y;
         }
-
+	
 	ui_destroy_window();
 	g_fullscreen = !g_fullscreen;
-	ui_create_window();
-
+	if (!viewport_mode_locked)
+	    viewport_keys_enabled = !g_fullscreen;
+	ui_create_window(True);
+	
 	showNXlogo = savedShowNXlogo;
 
 	XDefineCursor(g_display, g_wnd, g_current_cursor);
 
 	if (!g_ownbackstore)
 	{
-		XCopyArea(g_display, contents, g_wnd, g_gc, 0, 0, g_width, g_height, 0, 0);
-		XFreePixmap(g_display, contents);
+	    XCopyArea(g_display, contents, g_wnd, g_gc, 0, 0, g_width, g_height, 0, 0);
+	    XFreePixmap(g_display, contents);
 	}
+	
 }
-
-/* NX
- static uint16
- xwin_translate_mouse(unsigned long button)
- {
- 	switch (button)
- 	{
- 		case Button1:	 left
- 			return MOUSE_FLAG_BUTTON1;
- 		case Button2:	 middle 
- 			return MOUSE_FLAG_BUTTON3;
- 		case Button3:	 right
- 			return MOUSE_FLAG_BUTTON2;
- 	}
- 
- 	return 0;
- }
- NX */
 
 /* Process all events in Xlib queue
    Returns 0 after user quit, 1 otherwise */
@@ -2756,7 +2818,7 @@ xwin_process_events(void)
                                  * if ((tr.scancode == 0x01) &&
                                  */
 
-                                if ((keysym == XK_m || keysym == XK_M) &&
+				if ((keysym == XK_m || keysym == XK_M) &&
 					(xevent.xkey.state & (ControlMask | Mod1Mask )) ==
 					(ControlMask|Mod1Mask)  )
 				{
@@ -2874,13 +2936,13 @@ xwin_process_events(void)
 					    break;
 					}
 				}
-                                if ((xevent.xbutton.state & (ControlMask | Mod1Mask)) ==
-                                        (ControlMask | Mod1Mask) && g_viewport_wnd)
+                                if (((xevent.xbutton.state & (ControlMask | Mod1Mask)) ==
+                                        (ControlMask | Mod1Mask) && g_viewport_wnd) && (viewport_keys_enabled))
                                 {
                                   /*
                                    * Start viewport navigation mode.
                                    */
-
+				   
                                   viewportCursor = XCreateFontCursor(g_display, XC_fleur);
 
                                   XGrabPointer(g_display, g_wnd, True,
@@ -3125,6 +3187,14 @@ xwin_process_events(void)
                                     g_viewport_width = g_saved_viewport_width = (xevent.xconfigure.width);
                                     g_viewport_height = g_saved_viewport_height = (xevent.xconfigure.height);
                                     nxdesktopMoveViewport(0, 0);
+				    if ((xevent.xconfigure.width < g_width) || (xevent.xconfigure.height < g_height) || (!viewport_mode_locked))
+				    {
+					viewport_keys_enabled = True;
+				    }
+				    else
+				    {	
+					viewport_keys_enabled = False;
+				    }
                     		}
                                 break;
 		}
@@ -3239,7 +3309,6 @@ ui_select(int rdp_socket)
 	    FD_ZERO(&wfds);
 	    FD_SET(rdp_socket, &rfds);
 	    FD_SET(g_x_socket, &rfds);
-	
 
 	    #ifdef WITH_RDPSND
 	    /* FIXME: there should be an API for registering fds */
@@ -5247,7 +5316,7 @@ void nomachineLogo(Window win, GC gc, int scale)
     #endif
 
 
-/*    XFlush(g_display);*/
+    XFlush(g_display);
     XSync(g_display, True);
 
 #ifdef NXDESKTOP_LOGO_DEBUG
@@ -6077,6 +6146,11 @@ nxdesktopDialog(int type, int code)
 		case REMOTE_SERVER_RDP_COLOR_LIMIT_ALERT:
 		    real_code = code;
 		    error_msg = REMOTE_SERVER_RDP_COLOR_LIMIT_STRING;
+		    break;
+		    
+		case REMOTE_SERVER_RDP_AUTHENTICATION_ALERT:
+		    real_code = code;
+		    error_msg = REMOTE_SERVER_RDP_AUTHENTICATION_STRING;
 		    break;
 
 		default:

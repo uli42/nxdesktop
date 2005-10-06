@@ -38,6 +38,8 @@
 
 #include "rdesktop.h"
 
+#undef RDPSND_DEBUG
+
 #define RDPSND_CLOSE		1
 #define RDPSND_WRITE		2
 #define RDPSND_SET_VOLUME	3
@@ -274,6 +276,10 @@ rdpsnd_process(STREAM s)
 BOOL
 rdpsnd_init(void)
 {
+    #ifdef RDPSND_DEBUG
+    nxdesktopDebug("rdpsnd_init:","Initializing sound channel\n");
+    #endif
+
 	rdpsnd_channel =
 		channel_register("rdpsnd", CHANNEL_OPTION_INITIALIZED | CHANNEL_OPTION_ENCRYPT_RDP,
 				 rdpsnd_process);

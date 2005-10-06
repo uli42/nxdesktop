@@ -458,6 +458,5 @@ AlarmHandler(int signal)
 {
     error("Connection timed out. Session closing\n");
     alarm(0);
-    nxdesktopExit(1);
 }
 /* NX */

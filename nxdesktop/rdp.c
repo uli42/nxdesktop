@@ -63,7 +63,10 @@ extern BOOL nxdesktopUseNXCompressedRdpImages;
 extern unsigned int buf_key_vector;
 extern BOOL rdp_img_cache;
 extern BOOL rdp_img_cache_nxcompressed;
+extern BOOL input_sent_done;
+extern BOOL logon_done;
 BOOL need_init_nx = True;
+extern int guessed_rdp_server;
 /* NX */
 
 uint8 *g_next_packet;
@@ -409,6 +412,18 @@ rdp_send_input(uint32 time, uint16 message_type, uint16 device_flags, uint16 par
 
 	s_mark_end(s);
 	rdp_send_data(s, RDP_DATA_PDU_INPUT);
+	
+	/* NX */
+	/* This tests if any message related to keyboard ou mouse clicks are sent
+	   to the RDP server on logon */
+	if ((((message_type == RDP_INPUT_SCANCODE) || (message_type == RDP_INPUT_MOUSE)) && 
+	   (device_flags != MOUSE_FLAG_MOVE) && (!input_sent_done) && (param2 > 0)) ||
+	   /* Was ESC pressed before logon? */
+	   ((!input_sent_done) && (message_type == RDP_INPUT_SCANCODE) && (device_flags == 0xc000) && (param1 == 0x1)))
+	{
+	    input_sent_done = True;
+	}
+	/* NX */
 }
 
 /* Inform the server on the contents of the persistent bitmap cache */
@@ -799,18 +814,13 @@ rdp_process_bitmap_caps(STREAM s)
 	if (g_server_bpp != bpp)
 	{
 		warning("colour depth changed from %d to %d\n", g_server_bpp, bpp);
-		if (nxdesktopUseNXTrans)
-		    nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_COLOR_LIMIT_ALERT);
 		g_server_bpp = bpp;
 	}
 	if (g_width != width || g_height != height)
 	{
-		warning("screen size changed from %dx%d to %dx%d\n", g_width, g_height,
-			width, height);
+		warning("screen size changed from %dx%d to %dx%d\n", g_width, g_height, width, height);
 		g_width = width;
 		g_height = height;
-		if (nxdesktopUseNXTrans)
-		    nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_GEOMETRY_LIMIT_ALERT);
 		ui_resize_window();
 	}
 }
@@ -837,7 +847,7 @@ rdp_process_server_caps(STREAM s, uint16 length)
 		in_uint16_le(s, capset_length);
 
 		next = s->p + capset_length - 4;
-
+		
 		switch (capset_type)
 		{
 			case RDP_CAPSET_GENERAL:
@@ -1243,11 +1253,14 @@ process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 
 		case RDP_DATA_PDU_LOGON:
 			DEBUG(("Received Logon PDU\n"));
+			logon_done = True;
+			in_uint32_le(s, guessed_rdp_server);
 			/* User logged on */
 			break;
 
 		case RDP_DATA_PDU_DISCONNECT:
 			process_disconnect_pdu(s, ext_disc_reason);
+			
 			return True;
 
 		default:
@@ -1285,16 +1298,19 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 		{
 			case RDP_PDU_DEMAND_ACTIVE:
 				process_demand_active(s);
-				/*if (need_init_nx)
+				if (need_init_nx)
 				{
 				    if (!ui_init_nx())
 					disc = True;
 				    need_init_nx = False;
-				}*/
+				}
 				*deactivated = False;
 				break;
 			case RDP_PDU_DEACTIVATE:
 				DEBUG(("RDP_PDU_DEACTIVATE\n"));
+				#if NXDESKTOP_RDP_DEBUG
+				    nxdesktopDebug("rdp_loop: ","Deactivate PDU received\n");
+				#endif
 				*deactivated = True;
 				break;
 			case RDP_PDU_DATA:

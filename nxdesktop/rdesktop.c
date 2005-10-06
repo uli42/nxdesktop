@@ -98,7 +98,19 @@ BOOL rdp_img_cache_nxcompressed = True;
 BOOL username_option = False;
 BOOL prompt_password = False;
 BOOL float_window_mode = False;
-BOOL viewport_mode = False;
+BOOL viewport_mode = True;
+BOOL input_sent_done = False;
+BOOL logon_done = False;
+/* This is an experimental feature. I'm trying to figure out the version of the RDP server
+   0 - Windows NT TS or 2000
+   1 - Unknown
+   2 - Windows XP
+   3 - WIndows 2003
+*/
+uint32 guessed_rdp_server = 1;
+
+/* FIXME - the line bellow is a test */
+BOOL nxclient_is_windows = True;
 /* NX */
 BOOL g_console_session = False;
 BOOL g_numlock_sync = False;
@@ -147,6 +159,8 @@ BOOL magickey = True;
 extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
 int xo = 0;
 int yo = 0;
+int perm_xo = 0;
+int perm_yo = 0;
 char windowName[255];
 char passwordFile[255];
 int  rdp_bufsize = NXDESKTOP_RDP_BUFSIZE;
@@ -863,8 +877,6 @@ main(int argc, char *argv[])
 	rdp2vnc_connect(server, flags, domain, password, shell, directory);
 	return 0;
 #else
-	if (!ui_init_nx())
-	    nxdesktopExit(1);
 	
 	if (!ui_open_display())
 	{
@@ -879,10 +891,10 @@ main(int argc, char *argv[])
 	
 	if (!ui_init())
 		return 1;
-
+		
 #ifdef WITH_RDPSND
-	if (g_rdpsnd && (!nxdesktopUseNXTrans))
-		rdpsnd_init();
+	if (g_rdpsnd)
+	    rdpsnd_init();
 #endif
 	rdpdr_init();
 	
@@ -926,25 +938,35 @@ main(int argc, char *argv[])
 	/* NX */
 
 	DEBUG(("Connection successful.\n"));
+	
 	memset(password, 0, sizeof(password));
 	
-	if (ui_create_window())
+	if (ui_create_window(False))
 	{
 	    rdp_main_loop(&deactivated, &ext_disc_reason);
-	    if ((ext_disc_reason > 0) && (nxdesktopUseNXTrans))
+	    if ((ext_disc_reason >= 2) && (nxdesktopUseNXTrans))
 	    {	
 		nxdesktopDialog(RDP_MESSAGE, ext_disc_reason);
 	    }
 	    ui_destroy_window();
 	}
-
+	
 	DEBUG(("Disconnecting...\n"));
 	rdp_disconnect();
 	cache_save_state();	
 	info("Disconnecting from RDP server '%s'.\n",server);
 	ui_deinit();
 	
-	if (ext_disc_reason >= 2)
+	if (!logon_done)
+	{
+	    if (!input_sent_done)
+		nxdesktopDialog(RDP_MESSAGE, exDiscReasonServerLogonTimeout);
+	    /* Currently deativated. Let windows take care of it
+	       else
+		nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_AUTHENTICATION_ALERT); */
+	}
+	
+	if (ext_disc_reason >= 1)
 		print_disconnect_reason(ext_disc_reason);
 		
 	if (nxdesktopUseNXTrans)
@@ -953,22 +975,22 @@ main(int argc, char *argv[])
 	if (deactivated)
 	{
 		/* clean disconnect */
-		    return 0;
+		return 0;
 		
 	}
 	else
 	{
-		if (ext_disc_reason == exDiscReasonAPIInitiatedDisconnect
-		    || ext_disc_reason == exDiscReasonAPIInitiatedLogoff)
-		{
-		    /* not so clean disconnect, but nothing to worry about */
-		    return 0;
-		}
-		else
-		{
-		    /* return error */
-		    return 2;
-		}
+	    if (ext_disc_reason == exDiscReasonAPIInitiatedDisconnect
+	        || ext_disc_reason == exDiscReasonAPIInitiatedLogoff)
+	    {
+	        /* not so clean disconnect, but nothing to worry about */
+	        return 0;
+	    }
+	    else
+	    {
+		/* return error */
+		return 2;
+	    }
 	}
 
 #endif
@@ -1540,10 +1562,16 @@ char *argv[];
 	{
 	    int j = 0;
 	    XParseGeometry(argv[i+1], &xo, &yo, &g_width, &g_height);
+	    perm_xo = xo;
+	    perm_yo = yo;
 	    while(argv[i+1][j])
 	    {
 		if(argv[i+1][j] == '+')
 		{
+		    /* NX - FIXME */
+		    /* This HAS to change, later */
+		    nxclient_is_windows = False;
+		    /* NX */
 		    argv[i+1][j] = 'x';
                 }
                 j++;
@@ -2130,3 +2158,4 @@ void ShowHeaderInfo(void)
     fprintf(stderr,"See http://www.rdesktop.org/ for more information.\n\n");
     info("Agent running with pid '%d'.\n", getpid());
 }
+

@@ -86,6 +86,9 @@ case $arg in
   --with-sound=sun)
     withsound=$optarg
     ;;
+  --with-sound=esd)
+    withsound=$optarg
+    ;;
   *)
     echo "Target directories:"
     echo " --prefix=PREFIX         location for architecture-independent files"
@@ -317,6 +320,12 @@ elif [ -f /usr/include/sys/audioio.h -a \( "$withsound" = "yes" -o "$withsound" 
     echo
     echo "SOUNDOBJ    = rdpsnd.o rdpsnd_sun.o" >>Makeconf
     cflags="$cflags -DWITH_RDPSND"
+elif [ -f /usr/include/esd.h -a \( "$withsound" = "yes" -o "$withsound" = "esd" \) ]; then
+    echo Sound support enabled: ESD
+    echo
+    echo "SOUNDOBJ    = rdpsnd.o rdpsnd_esd.o" >>Makeconf
+    cflags="$cflags -DWITH_RDPSND"
+    ldflags="$ldflags -lesd"
 else
     echo "WARNING: sound support disabled (no /usr/include/sys/soundcard.h or /usr/include/sys/audioio.h)"
     echo "Currently supported systems are Open Sound System (oss) and Sun/BSD (sun)"

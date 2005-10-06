@@ -84,6 +84,7 @@ extern int g_win_button_size;
 extern BOOL g_enable_compose;
 extern BOOL g_use_rdp5;
 extern BOOL g_numlock_sync;
+extern BOOL viewport_keys_enabled;
 /* NX */
 static BOOL first_time_read_keyboard = True;
 static unsigned int initial_keyboard_state;
@@ -348,7 +349,7 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 			    && (get_key_state(state, XK_Control_L)
 				|| get_key_state(state, XK_Control_R)))
 			{
-				/* Ctrl-Alt-Enter: toggle full screen */
+				/* Ctrl-Alt-F: toggle full screen */
 				if (pressed)
 					xwin_toggle_fullscreen();
 				return True;
@@ -436,7 +437,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
                 		    viewportKeystate = up_key;
                     		    viewportInc = 1;
                         	}
-                		nxdesktopMoveViewport (0, -nextinc(viewportInc));
+                		if (viewport_keys_enabled)
+				    nxdesktopMoveViewport (0, -nextinc(viewportInc));
                 		return True; 
                 	    }
             		}
@@ -456,7 +458,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
                               viewportKeystate = down_key;
                               viewportInc = 1;
                             }
-                            nxdesktopMoveViewport (0, +nextinc(viewportInc));
+			    if (viewport_keys_enabled)
+                        	nxdesktopMoveViewport (0, +nextinc(viewportInc));
                             return True;
                           }
                         }
@@ -476,7 +479,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
                               viewportKeystate = left_key;
                               viewportInc = 1;
                             }
-                            nxdesktopMoveViewport (-nextinc(viewportInc), 0);
+                            if (viewport_keys_enabled)
+				nxdesktopMoveViewport (-nextinc(viewportInc), 0);
                             return True;
                           }
                         }
@@ -496,7 +500,8 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
                               viewportKeystate = right_key;
                               viewportInc = 1;
                             }
-                            nxdesktopMoveViewport (+nextinc(viewportInc), 0);
+                    	    if (viewport_keys_enabled)
+				nxdesktopMoveViewport (+nextinc(viewportInc), 0);
                             return True;
                           }
                         }

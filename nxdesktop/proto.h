@@ -202,7 +202,7 @@ BOOL get_key_state(unsigned int state, uint32 keysym);
 BOOL ui_init(void);
 BOOL ui_init_nx(void);
 void ui_deinit(void);
-BOOL ui_create_window(void);
+BOOL ui_create_window(BOOL ToggleFullscreen);
 void ui_resize_window(void);
 void ui_destroy_window(void);
 BOOL ui_open_display(void);

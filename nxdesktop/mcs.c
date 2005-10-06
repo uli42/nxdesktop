@@ -173,6 +173,7 @@ mcs_recv_connect_response(STREAM mcs_data)
 	STREAM s;
 
 	s = iso_recv(NULL);
+	
 	if (s == NULL)
 		return False;
 
