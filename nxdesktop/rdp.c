@@ -1084,7 +1084,6 @@ process_bitmap_updates(STREAM s)
 		}
 		#else /*NXDESKTOP_XWIN_USES_COMPRESSED_PACKED_IMAGES*/
 
-		//bmpdata = xmalloc(width * height);
 		bmpdata = (uint8 *) xmalloc(width * height * Bpp);
 		if (bitmap_decompress(bmpdata, width, height, data, size, Bpp))
 		{

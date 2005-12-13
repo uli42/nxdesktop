@@ -1,5 +1,24 @@
 ChangeLog:
 
+nxdesktop-1.5.0-78
+
+- Fixed problem with size calculation of uncompressed RDP images in
+  high and full color modes which caused the wrong patterns in the
+  OpenOffice's scroll bar. This solves TR10C01127.
+
+- Corrected typo in CHANGELOG.
+
+nxdesktop-1.5.0-77
+
+- Changed RDP initialization process to correctly handle the request
+  for FIPS compliant encryption, not supported by anything but the MS 
+  RDP client.
+
+nxdesktop-1.5.0-76
+
+- Eliminated logo flicking when RDP session is started using windows 
+  client. This solves TR10C01126.
+  
 nxdesktop-1.5.0-75
 
 - Eliminated dialog message shown when the user, connected to a Windows
@@ -281,7 +300,7 @@ nxdesktop-1.5.0-45
 
 nxdesktop-1.5.0-44
 
-- Changed selction pack method to make use of the 15 bpp compression.
+- Changed selection pack method to make use of the 15 bpp compression.
 
 - Added debug points in the orders loop.
 

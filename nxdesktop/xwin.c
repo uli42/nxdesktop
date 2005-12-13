@@ -419,17 +419,17 @@ unsigned int buf_key_vector;
 { \
 	switch (m) \
 	{ \
-	    case 0:/* Outline */ \
-		XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
-		if (g_ownbackstore) \
-			XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
-	    break; \
-	    case 1: /* Filled */ \
-		XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
-			 cx, cy, 0, 360*64); \
-		if (g_ownbackstore) \
-			XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
-	    break; \
+		case 0:	/* Outline */ \
+			XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
+			if (g_ownbackstore) \
+				XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
+			break; \
+		case 1: /* Filled */ \
+			XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
+				 cx, cy, 0, 360*64); \
+			if (g_ownbackstore) \
+				XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
+			break; \
 	} \
 }
 
@@ -1537,7 +1537,7 @@ ui_init(void)
 	/*
 	 * Determine desktop size
 	 */
-	if (g_fullscreen) 
+	if (g_fullscreen)
 	{
 		g_width = WidthOfScreen(g_screen);
 		g_height = HeightOfScreen(g_screen);
@@ -1548,7 +1548,7 @@ ui_init(void)
 		g_height = HeightOfScreen(g_screen) * (-g_width) / 100;
 		g_width = WidthOfScreen(g_screen) * (-g_width) / 100;
 	}
-	else if (g_width == 0) 
+	else if (g_width == 0)
 	{
 		/* Fetch geometry from _NET_WORKAREA */
 		uint32 x, y, cx, cy;
@@ -2091,8 +2091,7 @@ ui_create_window(BOOL ToggleFullscreen)
 	    wndwidth = g_fullscreen ? WidthOfScreen(g_screen) : g_width;
 	    wndheight = g_fullscreen ? HeightOfScreen(g_screen) : g_height;
         }
-	
-	
+
 	attribs.background_pixel = BlackPixelOfScreen(g_screen);
 	attribs.border_pixel = WhitePixelOfScreen(g_screen);
 	attribs.backing_store = g_ownbackstore ? NotUseful : Always;
@@ -2302,8 +2301,8 @@ ui_create_window(BOOL ToggleFullscreen)
         	    yo = (HeightOfScreen(g_screen) - g_viewport_height)/2;
 		}
 		g_viewport_wnd = XCreateWindow (g_display, RootWindowOfScreen(g_screen), xo, yo, g_viewport_width, g_viewport_height, 
-						0, g_depth, InputOutput, g_visual, CWBackPixel | CWBackingStore | CWOverrideRedirect | CWColormap | CWBorderPixel, &attribs);
-
+						0, g_depth, InputOutput, g_visual, (nxclient_is_windows ? 0 : CWBackPixel) | CWBackingStore | CWOverrideRedirect | CWColormap | CWBorderPixel, &attribs);
+						
     		XSelectInput(g_display, g_viewport_wnd, ButtonPressMask | KeyPressMask |
                 		StructureNotifyMask | (g_fullscreen ? EnterWindowMask : 0) |
                     		    (g_grab_keyboard ? (EnterWindowMask | LeaveWindowMask) : 0));
@@ -2619,7 +2618,9 @@ void
 xwin_toggle_fullscreen(void)
 {
 	Pixmap contents = 0;
+	#ifdef NXDESKTOP_LOGO
         Bool savedShowNXlogo = showNXlogo;
+	#endif
 	XSetWindowAttributes attribs;
 	
 	attribs.background_pixel = BlackPixelOfScreen(g_screen);
@@ -2634,9 +2635,9 @@ xwin_toggle_fullscreen(void)
 		contents = XCreatePixmap(g_display, g_wnd, g_width, g_height, g_depth);
 		XCopyArea(g_display, g_wnd, contents, g_gc, 0, 0, g_width, g_height, 0, 0);
 	}
-
+	#ifdef NXDESKTOP_LOGO
 	showNXlogo = False;
-        
+        #endif
         if (!g_fullscreen)
         {
           g_saved_wnd_x = g_wnd_x;
@@ -2648,9 +2649,9 @@ xwin_toggle_fullscreen(void)
 	if (!viewport_mode_locked)
 	    viewport_keys_enabled = !g_fullscreen;
 	ui_create_window(True);
-	
+	#ifdef NXDESKTOP_LOGO
 	showNXlogo = savedShowNXlogo;
-
+	#endif
 	XDefineCursor(g_display, g_wnd, g_current_cursor);
 
 	if (!g_ownbackstore)
@@ -3489,7 +3490,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	{
 		int data_length;
 		tdata = data;
-		data_length = width * height;
+		data_length = width * height * g_server_bpp;
 
 		#ifdef NXDESKTOP_XWIN_GRAPHICS_DEBUG
 		nxdesktopDebug("ui_paint_bitmap","NXCreatePackedImage with g_owncolmap %d and g_depth %d.\n",
@@ -3497,8 +3498,8 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		#endif
 
 		image = NXCreatePackedImage(g_display, g_visual, PACK_RDP_PLAIN,
-					    g_depth, ZPixmap, tdata, data_length,
-					    width, height, BitmapPad(g_display), 0);
+					    g_depth, ZPixmap, data, data_length,
+					    width, height, bitmap_pad, 0);
 					    
 		if (g_ownbackstore)
 		{
@@ -4162,7 +4163,7 @@ ui_patblt(uint8 opcode,
 {
 	Pixmap fill;
 	uint8 i, ipattern[8];
-
+	
 	SET_FUNCTION(opcode);
 
 	switch (brush->style)
@@ -5329,7 +5330,9 @@ void nomachineLogo(Window win, GC gc, int scale)
 void setOwnerNX_WM(Window win)
 {
   XSetSelectionOwner(g_display, nxdesktopAtoms[3], win, CurrentTime);
+  #ifdef NXDESKTOP_LOGO
   showNXlogo = False;
+  #endif
 }
 #endif
 
