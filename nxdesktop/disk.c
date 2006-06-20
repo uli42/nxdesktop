@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -35,7 +35,6 @@
 /*                                                                        */
 /**************************************************************************/
 
-#include "rdesktop.h"
 #include "disk.h"
 
 #include <sys/types.h>
@@ -45,6 +44,7 @@
 #include <dirent.h>		/* opendir, closedir, readdir */
 #include <fnmatch.h>
 #include <errno.h>		/* errno */
+#include <stdio.h>
 
 #include <utime.h>
 #include <time.h>		/* ctime */
@@ -55,49 +55,103 @@
 #define DIRFD(a) ((a)->DIR_FD_MEMBER_NAME)
 #endif
 
-/* TODO: let autoconf figure out everything below... */
-#if (defined(sun) && (defined(__svr4__) || defined(__SVR4)))
-#define SOLARIS
+/* TODO: Fix mntent-handling for solaris
+ * #include <sys/mntent.h> */
+#if (defined(HAVE_MNTENT_H) && defined(HAVE_SETMNTENT))
+#include <mntent.h>
+#define MNTENT_PATH "/etc/mtab"
+#define USE_SETMNTENT
 #endif
 
-#if (defined(SOLARIS) || defined (__hpux) || defined(__BEOS__))
-#include <sys/statvfs.h>	/* solaris statvfs */
-/* TODO: Fix mntent-handling for solaris/hpux
- * #include <sys/mntent.h> */
-#undef HAVE_MNTENT_H
-#define MNTENT_PATH "/etc/mnttab"
-#define STATFS_FN(path, buf) (statvfs(path,buf))
-#define STATFS_T statvfs
-#define F_NAMELEN(buf) ((buf).f_namemax)
+#ifdef HAVE_SYS_VFS_H
+#include <sys/vfs.h>
+#endif
 
-#elif (defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(__APPLE__))
-#include <sys/param.h>
-#include <sys/mount.h>
-#define STATFS_FN(path, buf) (statfs(path,buf))
-#define STATFS_T statfs
-#define F_NAMELEN(buf) (NAME_MAX)
-
-#elif (defined(__SGI_IRIX__))
-#include <sys/types.h>
+#ifdef HAVE_SYS_STATVFS_H
 #include <sys/statvfs.h>
-#define STATFS_FN(path, buf) (statvfs(path,buf))
-#define STATFS_T statvfs
-#define F_NAMELEN(buf) ((buf).f_namemax)
+#endif
 
-#elif (defined(__alpha) && !defined(linux))
-#include <sys/mount.h>		/* osf1 statfs */
+#ifdef HAVE_SYS_STATFS_H
+#include <sys/statfs.h>
+#endif
+
+#ifdef HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#endif
+
+#ifdef HAVE_SYS_MOUNT_H
+#include <sys/mount.h>
+#endif
+
+#include "rdesktop.h"
+
+#ifdef STAT_STATFS3_OSF1
 #define STATFS_FN(path, buf) (statfs(path,buf,sizeof(buf)))
 #define STATFS_T statfs
-#define F_NAMELEN(buf) (255)
+#define USE_STATFS
+#endif
 
-#else
-#include <sys/vfs.h>		/* linux statfs */
-#include <mntent.h>
-#define HAVE_MNTENT_H
-#define MNTENT_PATH "/etc/mtab"
+#ifdef STAT_STATVFS
+#define STATFS_FN(path, buf) (statvfs(path,buf))
+#define STATFS_T statvfs
+#define USE_STATVFS
+#endif
+
+#ifdef STAT_STATVFS64
+#define STATFS_FN(path, buf) (statvfs64(path,buf))
+#define STATFS_T statvfs64
+#define USE_STATVFS
+#endif
+
+#if (defined(STAT_STATFS2_FS_DATA) || defined(STAT_STATFS2_BSIZE) || defined(STAT_STATFS2_FSIZE))
 #define STATFS_FN(path, buf) (statfs(path,buf))
 #define STATFS_T statfs
+#define USE_STATFS
+#endif
+
+#ifdef STAT_STATFS4
+#define STATFS_FN(path, buf) (statfs(path,buf,sizeof(buf),0))
+#define STATFS_T statfs
+#define USE_STATFS
+#endif
+
+#if ((defined(USE_STATFS) && defined(HAVE_STRUCT_STATFS_F_NAMEMAX)) || (defined(USE_STATVFS) && defined(HAVE_STRUCT_STATVFS_F_NAMEMAX)))
+#define F_NAMELEN(buf) ((buf).f_namemax)
+#endif
+
+#if ((defined(USE_STATFS) && defined(HAVE_STRUCT_STATFS_F_NAMELEN)) || (defined(USE_STATVFS) && defined(HAVE_STRUCT_STATVFS_F_NAMELEN)))
 #define F_NAMELEN(buf) ((buf).f_namelen)
+#endif
+
+#ifndef F_NAMELEN
+#define F_NAMELEN(buf) (255)
+#endif
+
+/* Dummy statfs fallback */
+#ifndef STATFS_T
+struct dummy_statfs_t
+{
+	long f_bfree;
+	long f_bsize;
+	long f_blocks;
+	int f_namelen;
+	int f_namemax;
+};
+
+static int
+dummy_statfs(struct dummy_statfs_t *buf)
+{
+	buf->f_blocks = 262144;
+	buf->f_bfree = 131072;
+	buf->f_bsize = 512;
+	buf->f_namelen = 255;
+	buf->f_namemax = 255;
+
+	return 0;
+}
+
+#define STATFS_T dummy_statfs_t
+#define STATFS_FN(path,buf) (dummy_statfs(buf))
 #endif
 
 extern RDPDR_DEVICE g_rdpdr_device[];
@@ -107,10 +161,10 @@ BOOL g_notify_stamp = False;
 
 typedef struct
 {
-	char name[256];
-	char label[256];
+	char name[PATH_MAX];
+	char label[PATH_MAX];
 	unsigned long serial;
-	char type[256];
+	char type[PATH_MAX];
 } FsInfoType;
 
 static NTSTATUS NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p);
@@ -164,7 +218,7 @@ ftruncate_growable(int fd, off_t length)
 {
 	int ret;
 	off_t pos;
-	static const char zero;
+	static const char zero = 0;
 
 	/* Try the simple method first */
 	if ((ret = ftruncate(fd, length)) != -1)
@@ -172,7 +226,7 @@ ftruncate_growable(int fd, off_t length)
 		return ret;
 	}
 
-	/* 
+	/*
 	 * Some kind of error. Perhaps we were trying to grow. Retry
 	 * in a safe way.
 	 */
@@ -277,7 +331,7 @@ disk_enum_devices(uint32 * id, char *optarg)
 	char *pos2;
 	int count = 0;
 
-	// skip the first colon
+	/* skip the first colon */
 	optarg++;
 	while ((pos = next_arg(optarg, ',')) && *id < RDPDR_MAX_DEVICES)
 	{
@@ -288,7 +342,7 @@ disk_enum_devices(uint32 * id, char *optarg)
 			fprintf(stderr, "share name %s truncated to %s\n", optarg,
 				g_rdpdr_device[*id].name);
 
-		g_rdpdr_device[*id].local_path = xmalloc(strlen(pos2) + 1);
+		g_rdpdr_device[*id].local_path = (char *) xmalloc(strlen(pos2) + 1);
 		strcpy(g_rdpdr_device[*id].local_path, pos2);
 		g_rdpdr_device[*id].device_type = DEVICE_TYPE_DISK;
 		count++;
@@ -307,7 +361,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	NTHANDLE handle;
 	DIR *dirp;
 	int flags, mode;
-	char path[256];
+	char path[PATH_MAX];
 	struct stat filestat;
 
 	handle = 0;
@@ -323,38 +377,38 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	{
 		case CREATE_ALWAYS:
 
-			// Delete existing file/link.
+			/* Delete existing file/link. */
 			unlink(path);
 			flags |= O_CREAT;
 			break;
 
 		case CREATE_NEW:
 
-			// If the file already exists, then fail.
+			/* If the file already exists, then fail. */
 			flags |= O_CREAT | O_EXCL;
 			break;
 
 		case OPEN_ALWAYS:
 
-			// Create if not already exists.
+			/* Create if not already exists. */
 			flags |= O_CREAT;
 			break;
 
 		case OPEN_EXISTING:
 
-			// Default behaviour
+			/* Default behaviour */
 			break;
 
 		case TRUNCATE_EXISTING:
 
-			// If the file does not exist, then fail.
+			/* If the file does not exist, then fail. */
 			flags |= O_TRUNC;
 			break;
 	}
 
-	//printf("Open: \"%s\"  flags: %X, accessmask: %X sharemode: %X create disp: %X\n", path, flags_and_attributes, accessmask, sharemode, create_disposition);
+	/*printf("Open: \"%s\"  flags: %X, accessmask: %X sharemode: %X create disp: %X\n", path, flags_and_attributes, accessmask, sharemode, create_disposition); */
 
-	// Get information about file and set that flag ourselfs
+	/* Get information about file and set that flag ourselfs */
 	if ((stat(path, &filestat) == 0) && (S_ISDIR(filestat.st_mode)))
 	{
 		if (flags_and_attributes & FILE_NON_DIRECTORY_FILE)
@@ -385,7 +439,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 
 				default:
 
-					error("Opendir\n");
+					perror("opendir");
 					return STATUS_NO_SUCH_FILE;
 			}
 		}
@@ -429,14 +483,14 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 					return STATUS_OBJECT_NAME_COLLISION;
 				default:
 
-					error("Open\n");
+					perror("open");
 					return STATUS_NO_SUCH_FILE;
 			}
 		}
 
 		/* all read and writes of files should be non blocking */
 		if (fcntl(handle, F_SETFL, O_NONBLOCK) == -1)
-			error("FCNTL\n");
+			perror("fcntl");
 	}
 
 	if (handle >= MAX_OPEN_FILES)
@@ -454,7 +508,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	g_fileinfo[handle].device_id = device_id;
 	g_fileinfo[handle].flags_and_attributes = flags_and_attributes;
 	g_fileinfo[handle].accessmask = accessmask;
-	strncpy(g_fileinfo[handle].path, path, 255);
+	strncpy(g_fileinfo[handle].path, path, PATH_MAX - 1);
 	g_fileinfo[handle].delete_on_close = False;
 	g_notify_stamp = True;
 
@@ -585,7 +639,7 @@ disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out)
 
 	path = g_fileinfo[handle].path;
 
-	// Get information about file
+	/* Get information about file */
 	if (fstat(handle, &filestat) != 0)
 	{
 		perror("Stat");
@@ -593,7 +647,7 @@ disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out)
 		return STATUS_ACCESS_DENIED;
 	}
 
-	// Set file attributes
+	/* Set file attributes */
 	file_attributes = 0;
 	if (S_ISDIR(filestat.st_mode))
 		file_attributes |= FILE_ATTRIBUTE_DIRECTORY;
@@ -608,25 +662,25 @@ disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out)
 	if (!(filestat.st_mode & S_IWUSR))
 		file_attributes |= FILE_ATTRIBUTE_READONLY;
 
-	// Return requested data
+	/* Return requested data */
 	switch (info_class)
 	{
 		case FileBasicInformation:
 			seconds_since_1970_to_filetime(get_create_time(&filestat), &ft_high,
 						       &ft_low);
-			out_uint32_le(out, ft_low);	//create_access_time
+			out_uint32_le(out, ft_low);	/* create_access_time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(filestat.st_atime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//last_access_time
+			out_uint32_le(out, ft_low);	/* last_access_time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(filestat.st_mtime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//last_write_time
+			out_uint32_le(out, ft_low);	/* last_write_time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(filestat.st_ctime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//last_change_time
+			out_uint32_le(out, ft_low);	/* last_change_time */
 			out_uint32_le(out, ft_high);
 
 			out_uint32_le(out, file_attributes);
@@ -634,13 +688,13 @@ disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out)
 
 		case FileStandardInformation:
 
-			out_uint32_le(out, filestat.st_size);	//Allocation size
+			out_uint32_le(out, filestat.st_size);	/* Allocation size */
 			out_uint32_le(out, 0);
-			out_uint32_le(out, filestat.st_size);	//End of file
+			out_uint32_le(out, filestat.st_size);	/* End of file */
 			out_uint32_le(out, 0);
-			out_uint32_le(out, filestat.st_nlink);	//Number of links
-			out_uint8(out, 0);	//Delete pending
-			out_uint8(out, S_ISDIR(filestat.st_mode) ? 1 : 0);	//Directory
+			out_uint32_le(out, filestat.st_nlink);	/* Number of links */
+			out_uint8(out, 0);	/* Delete pending */
+			out_uint8(out, S_ISDIR(filestat.st_mode) ? 1 : 0);	/* Directory */
 			break;
 
 		case FileObjectIdInformation:
@@ -661,7 +715,7 @@ NTSTATUS
 disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out)
 {
 	uint32 length, file_attributes, ft_high, ft_low, delete_on_close;
-	char newname[256], fullpath[256];
+	char newname[PATH_MAX], fullpath[PATH_MAX];
 	struct fileinfo *pfinfo;
 	int mode;
 	struct stat filestat;
@@ -680,23 +734,23 @@ disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out)
 			in_uint8s(in, 4);	/* Handle of root dir? */
 			in_uint8s(in, 24);	/* unknown */
 
-			// CreationTime
+			/* CreationTime */
 			in_uint32_le(in, ft_low);
 			in_uint32_le(in, ft_high);
 
-			// AccessTime
+			/* AccessTime */
 			in_uint32_le(in, ft_low);
 			in_uint32_le(in, ft_high);
 			if (ft_low || ft_high)
 				access_time = convert_1970_to_filetime(ft_high, ft_low);
 
-			// WriteTime
+			/* WriteTime */
 			in_uint32_le(in, ft_low);
 			in_uint32_le(in, ft_high);
 			if (ft_low || ft_high)
 				write_time = convert_1970_to_filetime(ft_high, ft_low);
 
-			// ChangeTime
+			/* ChangeTime */
 			in_uint32_le(in, ft_low);
 			in_uint32_le(in, ft_high);
 			if (ft_low || ft_high)
@@ -735,7 +789,7 @@ disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out)
 			}
 
 			if (!file_attributes)
-				break;	// not valid
+				break;	/* not valid */
 
 			mode = filestat.st_mode;
 
@@ -852,7 +906,7 @@ disk_check_notify(NTHANDLE handle)
 
 	if (memcmp(&pfinfo->notify, &notify, sizeof(NOTIFY)))
 	{
-		//printf("disk_check_notify found changed event\n");
+		/*printf("disk_check_notify found changed event\n"); */
 		memcpy(&pfinfo->notify, &notify, sizeof(NOTIFY));
 		status = STATUS_NOTIFY_ENUM_DIR;
 	}
@@ -923,7 +977,7 @@ NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p)
 		if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
 			continue;
 		p->num_entries++;
-		fullname = xmalloc(strlen(pfinfo->path) + strlen(dp->d_name) + 2);
+		fullname = (char *) xmalloc(strlen(pfinfo->path) + strlen(dp->d_name) + 2);
 		sprintf(fullname, "%s/%s", pfinfo->path, dp->d_name);
 
 		if (!stat(fullname, &buf))
@@ -942,9 +996,9 @@ static FsInfoType *
 FsVolumeInfo(char *fpath)
 {
 
-	FILE *fdfs;
 	static FsInfoType info;
-#ifdef HAVE_MNTENT_H
+#ifdef USE_SETMNTENT
+	FILE *fdfs;
 	struct mntent *e;
 #endif
 
@@ -953,14 +1007,14 @@ FsVolumeInfo(char *fpath)
 	strcpy(info.label, "NXDESKTOP");
 	strcpy(info.type, "RDPFS");
 
-#ifdef HAVE_MNTENT_H
+#ifdef USE_SETMNTENT
 	fdfs = setmntent(MNTENT_PATH, "r");
 	if (!fdfs)
 		return &info;
 
 	while ((e = getmntent(fdfs)))
 	{
-		if (strncmp(fpath, e->mnt_dir, strlen(fpath)) == 0)
+		if (str_startswith(e->mnt_dir, fpath))
 		{
 			strcpy(info.type, e->mnt_type);
 			strcpy(info.name, e->mnt_fsname);
@@ -987,7 +1041,7 @@ FsVolumeInfo(char *fpath)
 						read(fd, buf, sizeof(buf));
 						strncpy(info.label, buf + 41, 32);
 						info.label[32] = '\0';
-						//info.Serial = (buf[128]<<24)+(buf[127]<<16)+(buf[126]<<8)+buf[125];
+						/* info.Serial = (buf[128]<<24)+(buf[127]<<16)+(buf[126]<<8)+buf[125]; */
 					}
 					close(fd);
 				}
@@ -1075,7 +1129,7 @@ NTSTATUS
 disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM out)
 {
 	uint32 file_attributes, ft_low, ft_high;
-	char *dirname, fullpath[256];
+	char *dirname, fullpath[PATH_MAX];
 	DIR *pdir;
 	struct dirent *pdirent;
 	struct stat fstat;
@@ -1090,14 +1144,14 @@ disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM o
 	{
 		case FileBothDirectoryInformation:
 
-			// If a search pattern is received, remember this pattern, and restart search
+			/* If a search pattern is received, remember this pattern, and restart search */
 			if (pattern[0] != 0)
 			{
-				strncpy(pfinfo->pattern, 1 + strrchr(pattern, '/'), 64);
+				strncpy(pfinfo->pattern, 1 + strrchr(pattern, '/'), PATH_MAX - 1);
 				rewinddir(pdir);
 			}
 
-			// find next dirent matching pattern
+			/* find next dirent matching pattern */
 			pdirent = readdir(pdir);
 			while (pdirent && fnmatch(pfinfo->pattern, pdirent->d_name, 0) != 0)
 				pdirent = readdir(pdir);
@@ -1105,7 +1159,7 @@ disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM o
 			if (pdirent == NULL)
 				return STATUS_NO_MORE_FILES;
 
-			// Get information for directory entry
+			/* Get information for directory entry */
 			sprintf(fullpath, "%s/%s", dirname, pdirent->d_name);
 
 			if (stat(fullpath, &fstat))
@@ -1136,34 +1190,34 @@ disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM o
 			if (!(fstat.st_mode & S_IWUSR))
 				file_attributes |= FILE_ATTRIBUTE_READONLY;
 
-			// Return requested information
-			out_uint8s(out, 8);	//unknown zero
+			/* Return requested information */
+			out_uint8s(out, 8);	/* unknown zero */
 
 			seconds_since_1970_to_filetime(get_create_time(&fstat), &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	// create time
+			out_uint32_le(out, ft_low);	/* create time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(fstat.st_atime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//last_access_time
+			out_uint32_le(out, ft_low);	/* last_access_time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(fstat.st_mtime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//last_write_time
+			out_uint32_le(out, ft_low);	/* last_write_time */
 			out_uint32_le(out, ft_high);
 
 			seconds_since_1970_to_filetime(fstat.st_ctime, &ft_high, &ft_low);
-			out_uint32_le(out, ft_low);	//change_write_time
+			out_uint32_le(out, ft_low);	/* change_write_time */
 			out_uint32_le(out, ft_high);
 
-			out_uint32_le(out, fstat.st_size);	//filesize low
-			out_uint32_le(out, 0);	//filesize high
-			out_uint32_le(out, fstat.st_size);	//filesize low
-			out_uint32_le(out, 0);	//filesize high
+			out_uint32_le(out, fstat.st_size);	/* filesize low */
+			out_uint32_le(out, 0);	/* filesize high */
+			out_uint32_le(out, fstat.st_size);	/* filesize low */
+			out_uint32_le(out, 0);	/* filesize high */
 			out_uint32_le(out, file_attributes);
-			out_uint8(out, 2 * strlen(pdirent->d_name) + 2);	//unicode length
-			out_uint8s(out, 7);	//pad?
-			out_uint8(out, 0);	//8.3 file length
-			out_uint8s(out, 2 * 12);	//8.3 unicode length
+			out_uint8(out, 2 * strlen(pdirent->d_name) + 2);	/* unicode length */
+			out_uint8s(out, 7);	/* pad? */
+			out_uint8(out, 0);	/* 8.3 file length */
+			out_uint8s(out, 2 * 12);	/* 8.3 unicode length */
 			rdp_out_unistr(out, pdirent->d_name, 2 * strlen(pdirent->d_name));
 			break;
 
@@ -1195,8 +1249,8 @@ disk_device_control(NTHANDLE handle, uint32 request, STREAM in, STREAM out)
 
 	switch (request)
 	{
-		case 25:	// ?
-		case 42:	// ?
+		case 25:	/* ? */
+		case 42:	/* ? */
 		default:
 			unimpl("disk_device_control","DISK IOCTL %d\n", request);
 			return STATUS_INVALID_PARAMETER;

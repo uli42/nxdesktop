@@ -1,6 +1,6 @@
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -18,8 +18,11 @@
 /* bitmap.c */
 BOOL bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int Bpp);
 /* cache.c */
-HBITMAP cache_get_bitmap(uint8 cache_id, uint16 cache_idx);
-void cache_put_bitmap(uint8 cache_id, uint16 cache_idx, HBITMAP bitmap, uint32 stamp);
+void cache_rebuild_bmpcache_linked_list(uint8 id, sint16 * idx, int count);
+void cache_bump_bitmap(uint8 id, uint16 idx, int bump);
+void cache_evict_bitmap(uint8 id);
+HBITMAP cache_get_bitmap(uint8 id, uint16 idx);
+void cache_put_bitmap(uint8 id, uint16 idx, HBITMAP bitmap);
 void cache_save_state(void);
 FONTGLYPH *cache_get_font(uint8 font, uint16 character);
 void cache_put_font(uint8 font, uint16 character, uint16 offset, uint16 baseline, uint16 width,
@@ -37,9 +40,8 @@ STREAM channel_init(VCHANNEL * channel, uint32 length);
 void channel_send(STREAM s, VCHANNEL * channel);
 void channel_process(STREAM s, uint16 mcs_channel);
 /* cliprdr.c */
-void cliprdr_send_text_format_announce(void);
-void cliprdr_send_blah_format_announce(void);
-void cliprdr_send_native_format_announce(uint8 * data, uint32 length);
+void cliprdr_send_simple_native_format_announce(uint32 format);
+void cliprdr_send_native_format_announce(uint8 * formats_data, uint32 formats_data_length);
 void cliprdr_send_data_request(uint32 format);
 void cliprdr_send_data(uint8 * data, uint32 length);
 BOOL cliprdr_init(void);
@@ -47,10 +49,10 @@ BOOL cliprdr_init(void);
 int disk_enum_devices(uint32 * id, char *optarg);
 NTSTATUS disk_query_information(NTHANDLE handle, uint32 info_class, STREAM out);
 NTSTATUS disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out);
+NTSTATUS disk_check_notify(NTHANDLE handle);
+NTSTATUS disk_create_notify(NTHANDLE handle, uint32 info_class);
 NTSTATUS disk_query_volume_information(NTHANDLE handle, uint32 info_class, STREAM out);
 NTSTATUS disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM out);
-NTSTATUS disk_create_notify(NTHANDLE handle, uint32 info_class);
-NTSTATUS disk_check_notify(NTHANDLE handle);
 /* mppc.c */
 int mppc_expand(uint8 * data, uint32 clen, uint8 ctype, uint32 * roff, uint32 * rlen);
 /* ewmhints.c */
@@ -81,12 +83,12 @@ int printer_enum_devices(uint32 * id, char *optarg);
 int printercache_load_blob(char *printer_name, uint8 ** data);
 void printercache_process(STREAM s);
 /* pstcache.c */
-void pstcache_touch_bitmap(uint8 id, uint16 idx, uint32 stamp);
-BOOL pstcache_load_bitmap(uint8 id, uint16 idx);
-BOOL pstcache_put_bitmap(uint8 id, uint16 idx, uint8 * bmp_id, uint16 wd,
-			 uint16 ht, uint16 len, uint8 * data);
-int pstcache_enumerate(uint8 id, uint8 * list);
-BOOL pstcache_init(uint8 id);
+void pstcache_touch_bitmap(uint8 cache_id, uint16 cache_idx, uint32 stamp);
+BOOL pstcache_load_bitmap(uint8 cache_id, uint16 cache_idx);
+BOOL pstcache_save_bitmap(uint8 cache_id, uint16 cache_idx, uint8 * key, uint16 width,
+			  uint16 height, uint16 length, uint8 * data);
+int pstcache_enumerate(uint8 id, HASH_KEY * keylist);
+BOOL pstcache_init(uint8 cache_id);
 /* rdesktop.c */
 int main(int argc, char *argv[]);
 void generate_random(uint8 * random);
@@ -103,6 +105,9 @@ void nxdesktopDebug(char *function_name, char *format, ...);
 void hexdump(unsigned char *p, unsigned int len);
 char *next_arg(char *src, char needle);
 void toupper_str(char *p);
+BOOL str_startswith(const char *s, const char *prefix);
+BOOL str_handle_lines(const char *input, char **rest, str_handle_lines_t linehandler, void *data);
+BOOL subprocess(char *const argv[], str_handle_lines_t linehandler, void *data);
 char *l_to_a(long N, int base);
 int load_licence(unsigned char **data);
 void save_licence(unsigned char *data, int length);
@@ -209,6 +214,7 @@ BOOL ui_open_display(void);
 void ui_get_display_size(int *width, int *height); 
 void xwin_toggle_fullscreen(void);
 int ui_select(int rdp_socket);
+int nxdesktopSelect(int maxfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
 void ui_move_pointer(int x, int y);
 HBITMAP ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed);
 void ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * data);
@@ -253,13 +259,45 @@ void put_mask(HBITMAP bitmap, int srcx, int srcy, int x, int y, int w, int h);
 /* NX */
 void ui_draw_glyph(int mixmode, int x, int y, int cx, int cy, HGLYPH glyph, int srcx, int srcy,
 		   int bgcolour, int fgcolour);
-void ui_draw_text(uint8 font, uint8 flags, int mixmode, int x, int y, int clipx, int clipy,
-		  int clipcx, int clipcy, int boxx, int boxy, int boxcx, int boxcy, int bgcolour,
-		  int fgcolour, uint8 * text, uint8 length);
+void ui_draw_text(uint8 font, uint8 flags, uint8 opcode, int mixmode, int x, int y, int clipx,
+		  int clipy, int clipcx, int clipcy, int boxx, int boxy, int boxcx, int boxcy,
+		  BRUSH * brush, int bgcolour, int fgcolour, uint8 * text, uint8 length);
 void ui_desktop_save(uint32 offset, int x, int y, int cx, int cy);
 void ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy);
+void ui_begin_update(void);
+void ui_end_update(void);
+void ui_seamless_begin(BOOL hidden);
+void ui_seamless_hide_desktop(void);
+void ui_seamless_unhide_desktop(void);
+void ui_seamless_toggle(void);
+void ui_seamless_create_window(unsigned long id, unsigned long group, unsigned long parent,
+			       unsigned long flags);
+void ui_seamless_destroy_window(unsigned long id, unsigned long flags);
+void ui_seamless_move_window(unsigned long id, int x, int y, int width, int height,
+			     unsigned long flags);
+void ui_seamless_restack_window(unsigned long id, unsigned long behind, unsigned long flags);
+void ui_seamless_settitle(unsigned long id, const char *title, unsigned long flags);
+void ui_seamless_setstate(unsigned long id, unsigned int state, unsigned long flags);
+void ui_seamless_syncbegin(unsigned long flags);
+void ui_seamless_ack(unsigned int serial);
+/* lspci.c */
+BOOL lspci_init(void);
+/* seamless.c */
+BOOL seamless_init(void);
+unsigned int seamless_send_sync(void);
+unsigned int seamless_send_state(unsigned long id, unsigned int state, unsigned long flags);
+unsigned int seamless_send_position(unsigned long id, int x, int y, int width, int height,
+				    unsigned long flags);
+void seamless_select_timeout(struct timeval *tv);
+unsigned int seamless_send_zchange(unsigned long id, unsigned long below, unsigned long flags);
+unsigned int seamless_send_focus(unsigned long id, unsigned long flags);
 
-BOOL fwindow_register(void);
-void fwindow_init(void);
+/* *INDENT-OFF* */
+#ifdef __cplusplus
+}
+#endif
+/* *INDENT-ON* */
+
 void nxdesktopExit(int reason);
 int nxdesktopDialog(int type, int code);
+void flush_sound();

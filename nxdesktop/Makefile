@@ -6,7 +6,7 @@
 
 #**************************************************************************
 #*                                                                        *
-#* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           *
+#* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           *
 #*                                                                        *
 #* NXDESKTOP, NX protocol compression and NX extensions to this software  *
 #* are copyright of NoMachine. Redistribution and use of the present      *
@@ -30,12 +30,12 @@ bindir      = $(exec_prefix)/bin
 mandir      = $(prefix)/man
 datadir     = $(prefix)/share
 
-INCLUDES = -I../nxcomp -I../nxcompext
-LDLIBS   = -lXpm -L../nxcompext -lXcompext -L../nxcomp -lXcomp -lX11 -lXext
+INCLUDES = -I../nxcomp -I../nxcompext -I../nxesd
+LDLIBS   = -lXpm -L../nxcompext -lXcompext -L../nxcomp -L../nxesd/.libs -lXcomp -lX11 -lXext
 VERSION     = 1.5.0-2
 KEYMAP_PATH = $(datadir)/keymaps-windows/
 
-RDPOBJ   = tcp.o iso.o mcs.o secure.o licence.o rdp.o orders.o bitmap.o cache.o rdp5.o channels.o rdpdr.o serial.o printer.o disk.o parallel.o printercache.o mppc.o pstcache.o
+RDPOBJ   = tcp.o iso.o mcs.o secure.o licence.o rdp.o orders.o bitmap.o cache.o rdp5.o channels.o rdpdr.o serial.o printer.o disk.o parallel.o printercache.o mppc.o pstcache.o lspci.o seamless.o
 X11OBJ   = rdesktop.o xwin.o xkeymap.o ewmhints.o xclip.o cliprdr.o
 VNCOBJ   = vnc/rdp2vnc.o vnc/vnc.o vnc/xkeymap.o vnc/x11stubs.o
 

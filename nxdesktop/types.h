@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -131,8 +131,12 @@ DATABLOB;
 
 typedef struct _key_translation
 {
+	/* For normal scancode translations */
 	uint8 scancode;
 	uint16 modifiers;
+	/* For sequences. If keysym is nonzero, the fields above are not used. */
+	uint32 seq_keysym;	/* Really KeySym */
+	struct _key_translation *next;
 }
 key_translation;
 
@@ -146,22 +150,13 @@ typedef struct _VCHANNEL
 }
 VCHANNEL;
 
-typedef struct _BMPCACHEENTRY
-{
-	HBITMAP bitmap;
-	uint32 usage;
-
-}
-BMPCACHEENTRY;
-
 /* PSTCACHE */
-
-typedef uint8 BITMAP_ID[8];
+typedef uint8 HASH_KEY[8];
 
 /* Header for an entry in the persistent bitmap cache file */
 typedef struct _PSTCACHE_CELLHEADER
 {
-	BITMAP_ID bitmap_id;
+	HASH_KEY key;
 	uint8 width, height;
 	uint16 length;
 	uint32 stamp;
@@ -274,15 +269,21 @@ typedef struct notify_data
 }
 NOTIFY;
 
+#ifndef PATH_MAX
+#define PATH_MAX 256
+#endif
+
 typedef struct fileinfo
 {
 	uint32 device_id, flags_and_attributes, accessmask;
-	char path[256];
+	char path[PATH_MAX];
 	DIR *pdir;
 	struct dirent *pdirent;
-	char pattern[64];
+	char pattern[PATH_MAX];
 	BOOL delete_on_close;
 	NOTIFY notify;
 	uint32 info_class;
 }
 FILEINFO;
+
+typedef BOOL(*str_handle_lines_t) (const char *line, void *data);

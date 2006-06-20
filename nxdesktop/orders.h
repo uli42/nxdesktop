@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */

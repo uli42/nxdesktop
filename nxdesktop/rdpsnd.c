@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -45,7 +45,7 @@
 #define RDPSND_SET_VOLUME	3
 #define RDPSND_UNKNOWN4		4
 #define RDPSND_COMPLETION	5
-#define RDPSND_UNKNOWN6		6
+#define RDPSND_SERVERTICK	6
 #define RDPSND_NEGOTIATE	7
 
 #define MAX_FORMATS		10
@@ -176,18 +176,18 @@ rdpsnd_process_negotiate(STREAM in)
 }
 
 static void
-rdpsnd_process_unknown6(STREAM in)
+rdpsnd_process_servertick(STREAM in)
 {
-	uint16 unknown1, unknown2;
+	uint16 tick1, tick2;
 	STREAM out;
 
 	/* in_uint8s(in, 4); unknown */
-	in_uint16_le(in, unknown1);
-	in_uint16_le(in, unknown2);
+	in_uint16_le(in, tick1);
+	in_uint16_le(in, tick2);
 
-	out = rdpsnd_init_packet(RDPSND_UNKNOWN6 | 0x2300, 4);
-	out_uint16_le(out, unknown1);
-	out_uint16_le(out, unknown2);
+	out = rdpsnd_init_packet(RDPSND_SERVERTICK | 0x2300, 4);
+	out_uint16_le(out, tick1);
+	out_uint16_le(out, tick2);
 	s_mark_end(out);
 	rdpsnd_send(out);
 }
@@ -257,8 +257,8 @@ rdpsnd_process(STREAM s)
 		case RDPSND_NEGOTIATE:
 			rdpsnd_process_negotiate(s);
 			break;
-		case RDPSND_UNKNOWN6:
-			rdpsnd_process_unknown6(s);
+		case RDPSND_SERVERTICK:
+			rdpsnd_process_servertick(s);
 			break;
 		case RDPSND_SET_VOLUME:
 			in_uint32(s, volume);
@@ -268,7 +268,7 @@ rdpsnd_process(STREAM s)
 			}
 			break;
 		default:
-			unimpl("rdpsnd_process","RDPSND packet type %d\n", type);
+			unimpl("rdp_snd process","RDPSND packet type %d\n", type);
 			break;
 	}
 }

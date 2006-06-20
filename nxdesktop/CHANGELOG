@@ -1,5 +1,418 @@
 ChangeLog:
 
+nxdesktop-2.0.0-50
+
+- Updated to reflect the changes to NXSetUnpackColormap(). Colormap
+  data is sent compressed when connected to a 2.0.0 proxy which sup-
+  ports the colormap encoding. When connected to an older proxy the
+  code will use the NXSetUnpackColormapCompat() call.
+
+- Updated to comply with the changes to NXGetControlParameters().
+
+nxdesktop-2.0.0-49
+
+- Updated messages in connecting and disconnecting phases to comply
+  with standard message format.
+
+nxdesktop-2.0.0-48
+
+- Updated messages in connecting and disconnecting phases to comply
+  with standard message format.
+
+- Adjusted compliance with nxcompext-2.0.0-28.
+
+nxdesktop-2.0.0-47-TOR1-CHL1
+
+- Updated messages in connecting and disconnecting phases to comply
+  with standard message format.
+
+nxdesktop-2.0.0-47-TOR1
+
+- Adjusted compliance with nxcompext-2.0.0-28.
+
+nxdesktop-2.0.0-47
+
+- Adjusted compliance with nxcompext-2.0.0-26.
+
+nxdesktop-2.0.0-46
+
+- The text cache handler was chanegd in order to not drop the session
+  in case a bad request arrives. The request is just ignored, printing
+  a warn in the logs.
+
+nxdesktop-2.0.0-45
+
+- Better congestion handler. This solves bug causing conections being
+  dropped in situations of high congestion.
+
+nxdesktop-2.0.0-44
+
+- Updated SEC layer to match solved bugs in rdesktop regarding wrong
+  certificates.
+
+- Updated cache routines to RDP 5.2 style with persistent cache. This
+  persistent cache is currently disabled pending further performance
+  tests.
+
+nxdesktop-2.0.0-43
+
+- Corrected wrong #ifdef that would block clipboard operations with
+  debug mode enabled.
+
+- Removed obsolete and unused NX transport detection code.
+
+- Removed unused include of shape extension headers.
+
+- Removed references to float window mode.
+
+- Disabled references to yet unused functions related to seamless mode
+  to avoid compiler warnings.
+
+nxdesktop-2.0.0-42
+
+- Fixed bug in the RDP packet filter.
+
+- Added call to NXTransFlush() with type parameter NX_FLUSH_IDLE when
+  the RDP read loop is exausted.
+
+- Updated to comply with the changes in the NX function prototypes in
+  nxcomp-2.0.0-48.
+
+nxdesktop-2.0.0-41
+
+- Removed unused code related to old seamless mode.
+
+- Added RDP filters to improve data traffic caused by OpenOffice when
+  it's performing operations like paging extensive files.
+
+- Added congestion handling debug routines.
+
+nxdesktop-2.0.0-40
+
+- Fixed compilation problem with flush_sound() function in case of
+  sound redirection is disabled.
+
+nxdesktop-2.0.0-39
+
+- Sequence of sound redirection re-worked to follow the RDP requests
+  sequence that requires the device to be oppened, set, written to and
+  closed at each sound sequence emmited.
+
+- Added flush function to the sound buffer to allow clean it when the
+  conection is requered to be closed by then RDP server.
+
+- Created debug code to dump the raw sound packages used to compare
+  the result with the other methods.
+
+nxdesktop-2.0.0-38
+
+- Solved bug that wasn't correctly computing the size of the sound
+  buffer.
+
+- Added volume control based on esd mixer routines.
+
+- Added stream id for better control of stream pan (left and right
+  channels volume).
+
+nxdesktop-2.0.0-37
+
+- Audio format adjusts to be compatible with esd are done.
+
+- The right tokens to adjust the remote server audio format, buffers
+  size, bitrate, et,c are sent and accepted by the remote esd, based
+  on libesd code.
+
+- The audio stream seens to be correctly written to the socket but no
+  audio is actually heard. This can be related to the volume control
+  as the windows server acts as if the sound is been played.
+
+- Some code clean up.
+
+nxdesktop-2.0.0-36
+
+- Audio formats negotiation with the RDP server is functional. Still
+  need to make esd_play_stream compatible to effectively play audio.
+
+- Included seamless functions. They are not integrated yet but just
+  added to the branch and compilation process.
+
+nxdesktop-2.0.0-35
+
+- Reading and writting to the channel created using NXTransChannel()
+  works. The remote esd server accepts and correctly responds to the
+  authentication and audio format requests.
+
+nxdesktop-2.0.0-34
+
+- Updated to comply with the changes in the NX function prototypes in
+  nxcomp-2.0.0-41.
+
+nxdesktop-2.0.0-33
+
+- Corrected wrong parameter in warning routine of sound channel which
+  removes a compiler warning.
+
+nxdesktop-2.0.0-32
+
+- The parameters parser now accepts "kbtype" or "keyboard" from the
+  options file. This implements FR03D01341.
+
+nxdesktop-2.0.0-31
+
+- Added handler for NXSetDisplayFlushHandler();
+
+- Simplified initialization of the media channel.
+
+- Added internal function to send authentication token to the remote
+  esd.
+
+nxdesktop-2.0.0-30
+
+- Changed the configure script to correctly support the changes in the
+  sound support.
+
+- Added lenght test in clipboard buffer which could cause nxdesktop to
+  crash if the clipboard was empty.
+
+- Fixed debug flag that was making the whole RDP packet to be dumped
+  instead of just it's type as intended.
+
+- Removed compilation warning in mcs.c.
+
+nxdesktop-2.0.0-29
+
+- Updated to comply with the changes in the NX function prototypes in
+  nxcompext-2.0.0-13.
+
+nxdesktop-2.0.0-28
+
+- Changed configure script to disable sound by default. This change is
+  temporary to avoid conflicts in Solaris.
+
+- Fixed a wrong #ifdef in rdesktop.c that was causing a compilation
+  error if sound redirection is disabled.
+
+- Fixed typo in debug messages for the RDP layer.
+
+- Added DUMP option to sound data to evaluate the commands been sent
+  to the remote esd server.
+
+nxdesktop-2.0.0-27
+
+- Configure script changed to add support to nxesd. Temporarelly, this
+  script should be executed requesting the sound redirection this way
+  before compilation: ./configure --with-sound=esd.
+
+nxdesktop-2.0.0-26
+
+- Reversed changes made to support modified nxesd.
+
+- Succesfully connected to the remote esd using NXTransChannel() but
+  no sound is actually heard yet.
+
+nxdesktop-2.0.0-25
+
+- Corrected wrong #ifdef in rdp.c.
+
+- Solved problem on handling congestion state that was making the RDP
+  sessions hang.
+
+nxdesktop-2.0.0-24
+
+- Updated to comply with the new NX function prototypes introduced
+  in nxcomp-2.0.0-31.
+
+nxdesktop-2.0.0-23
+
+- Improved options parser to ensure that an invalid kbtype parameter
+  will not be accepted thus, falling back to "us" keymap.
+
+- Added missing reference to TR01D01288 in ChangeLog.
+
+nxdesktop-2.0.0-22
+
+- Disabled DEBUG messages of parameters parser.
+
+- Removed unused variables in xwin.c.
+
+- Exit code from RDP loop initialized to avoid a wrong disconection
+  message in case of a severed conection to the RDP server.
+
+nxdesktop-2.0.0-21
+
+- Removed calls to NXGetCleanupParameters() and NXGetImageParameters()
+  from xwin.c. Those functions were removed in nxcomp-2.0.0-26.
+
+nxdesktop-2.0.0-20
+
+- Removed the unused screen parameter from NXSetUnpackGeometry().
+
+- Disabled extra DEBUG messages.
+
+nxdesktop-2.0.0-19
+
+- Started implementation of then new sound redirection process using
+  the new NXTransChannel(). Right now just the first changes in the
+  structure were done.
+
+nxdesktop-2.0.0-18
+
+- Fixed bug that could cause nxdesktop to segfault if the clipboard
+  was selected but not transfered.
+
+nxdesktop-2.0.0-17
+
+- Removed unused coordinate offset variables related to old viewport
+  mode code.
+
+- Fixed CHANGELOG.
+
+- Updated bitmap creation to work with the changes on the new bitmap
+  cache. This solves TR01D01288.
+
+- Enabled several DEBUG options to help check performance and caching
+  issues.
+
+nxdesktop-2.0.0-16
+
+- Fixed bug that was forcing experience mode type "modem" even if the
+  NX transport wasn't enabled.
+
+- Disabled floating window mode from the options menu and help.
+
+nxdesktop-2.0.0-15
+
+- Fixed bug in INCR clipboard transfers.
+
+- Removed some compiler warnings from secure.c.
+
+- More code clean-up in xwin.c.
+
+- Improved session disconection in the SEC layer. If an error on it
+  caused the session to terminate, nxdesktop was exiting suddenly,
+  without handling correctly the disconection.
+
+- Added trap for Session Directory mode in Windows 2003 Enterprize
+  Edition. This trap currently does nothing, just avoid issuing a
+  log message about unhandled or unknown PDU.
+
+nxdesktop-2.0.0-14
+
+- Fixed bitmap cache implementation.
+
+- Updated RDP5 upcodes.
+
+- If NX transport is active, "experience" mode is set to "modem" in
+  order to avoid unnecessary eye candy like menu animations and fading
+  effects.
+
+nxdesktop-2.0.0-13
+
+- Added missing break into switch clause in patblt mask processing.
+
+- Solved memory leak in create glyph function.
+
+- Removed masking and shape unused code.
+
+- Bitmap processing updated to the be fully compatible with RDP 5.2.
+
+- If the rectangles buffer weren't used, the solid rectangles did not
+  change their foregroung colors correctly due to a wrong #ifdef.
+  Fixed.
+
+- Removed compiler warnings regarding translate colors variables not
+  being initialized.
+
+nxdesktop-2.0.0-12
+
+- Improved error handling of TCP layer. If the conection with the RDP
+  server is interrupted, the exception is handled, NXTransDestroy() is
+  called and nxdesktop exits with an error. As RDP does not constantly
+  checks the state of the conection, the network error can only be
+  detected when there's actual communication between nxdesktop and
+  the RDP server. This solves TR02D01290.
+
+- Added secondary check on the exit code of the RDP layer to avoid a
+  false RDP error in case of a TCP read failure.
+
+nxdesktop-2.0.0-11
+
+- Corrected error message issued in case the RDP is replaced by the
+  same user in the same RDP server. This happens when the RDP server
+  does not support more than one session per user like Windows XP Pro.
+
+nxdesktop-2.0.0-10
+
+- Code clean-up. Some test routines and debug code removed or adjusted
+  to the same standard.
+
+nxdesktop-2.0.0-9
+
+- Communication with esd now works but the sound playing itself is
+  still unstable.
+
+- Change on the sound redirection initialization so if the sound
+  device does not answer, the redirection is disabled.
+
+- Small change in the processing of the activation request packet.
+
+- Corrected typo in CHANGELOG.
+
+- Corrected typo in xin.c debug message.
+
+- Addeed hot-key Shift+F12 to test the communciation with esd. It's
+  used for debugging only and will be deactivated later.
+
+nxdesktop-2.0.0-8
+
+- Some low-level esd function were imported into nxdesktop to make
+  easier to control the communication between nxdesktop and the esd
+  running on the client side. This solves the problem that prevented
+  the authentication process with esd.
+
+nxdesktop-2.0.0-7
+
+- The configure script was changed to enable ESD sound redirection.
+
+- Sound redirection via ESD is now the default sound option.
+
+nxdesktop-2.0.0-6
+
+- Changed option file parser to accept the parameter "media".
+
+- Added debug information for sound redirection.
+
+- Sound volume control temporarily disabled and volume fixed.
+  This was done to help find and lock the data id and thus, making
+  the mixer work in sync with the remote one.
+
+nxdesktop-2.0.0-5
+
+- Enabled sound redirection.
+
+- Changed the option file parser to detect request from the client
+  for sound redirection.
+
+- Changed ESD initialization sequence to be compatible with the OSS
+  implementation.
+
+nxdesktop-2.0.0-4
+
+- Updated NoMachine copyright notices to the current year.
+
+nxdesktop-2.0.0-3
+
+- Changed call to function NXSetExposeEvents to NXSetExposeParameters
+  to match the changes in nxcompext-2.0.0-3.
+
+nxdesktop-2.0.0-2
+
+- Imported changes from nxdesktop-1.5.0-79.
+
+nxdesktop-2.0.0-1
+
+- Opened the 2.0.0 branch based on the 1.5.0-78.
+
 nxdesktop-1.5.0-78
 
 - Fixed problem with size calculation of uncompressed RDP images in
@@ -11,32 +424,32 @@ nxdesktop-1.5.0-78
 nxdesktop-1.5.0-77
 
 - Changed RDP initialization process to correctly handle the request
-  for FIPS compliant encryption, not supported by anything but the MS 
+  for FIPS compliant encryption, not supported by anything but the MS
   RDP client.
 
 nxdesktop-1.5.0-76
 
-- Eliminated logo flicking when RDP session is started using windows 
+- Eliminated logo flicking when RDP session is started using windows
   client. This solves TR10C01126.
-  
+
 nxdesktop-1.5.0-75
 
 - Eliminated dialog message shown when the user, connected to a Windows
   XP with SP2 installed asks for desconection. This solves TR08C00993.
-  
+
 - Solved problem when the number of colors is limited on the server.
 
 - Small fix in the configure script to make sure that OSS is selected
   unless explicitely indicated.
-  
+
 - Enabled display of alerts in case of logon timeout.
 
 nxdesktop-1.5.0-74
 
 - Sound redirection via ESD is working without the excessive hitches
   and hangs observed before.
-  
-- Remote volume control was disabled for now becasue, for reasons yet 
+
+- Remote volume control was disabled for now becasue, for reasons yet
   unknown the request for information from the esd server fails to 
   provide the correct player (esd client) identification. For testing 
   porpouses only, direct access to the mixer is used.

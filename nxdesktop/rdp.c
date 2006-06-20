@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -39,6 +39,7 @@
 #include "rdesktop.h"
 #include "proto.h"
 #include "NXalert.h"
+#include "NX.h"
 
 extern uint16 g_mcs_userid;
 extern char g_username[16];
@@ -86,7 +87,7 @@ rdp_recv(uint8 * type)
 	uint16 length, pdu_type;
 	uint8 rdpver;
 
-	if ((rdp_s == NULL) || (g_next_packet >= rdp_s->end))
+	if ((rdp_s == NULL) || (g_next_packet >= rdp_s->end) || (g_next_packet == NULL))
 	{
 		rdp_s = sec_recv(&rdpver);
 		if (rdp_s == NULL)
@@ -173,17 +174,71 @@ rdp_send_data(STREAM s, uint8 data_pdu_type)
 void
 rdp_out_unistr(STREAM s, char *string, int len)
 {
-	int i = 0, j = 0;
+#ifdef HAVE_ICONV
+	size_t ibl = strlen(string), obl = len + 2;
+	static iconv_t iconv_h = (iconv_t) - 1;
+	char *pin = string, *pout = (char *) s->p;
 
-	len += 2;
+	memset(pout, 0, len + 4);
 
-	while (i < len)
+	if (g_iconv_works)
 	{
-		s->p[i++] = string[j++];
-		s->p[i++] = 0;
-	}
+		if (iconv_h == (iconv_t) - 1)
+		{
+			size_t i = 1, o = 4;
+			if ((iconv_h = iconv_open(WINDOWS_CODEPAGE, g_codepage)) == (iconv_t) - 1)
+			{
+				warning("rdp_out_unistr: iconv_open[%s -> %s] fail %d\n",
+					g_codepage, WINDOWS_CODEPAGE, (int) iconv_h);
 
-	s->p += len;
+				g_iconv_works = False;
+				rdp_out_unistr(s, string, len);
+				return;
+			}
+			if (iconv(iconv_h, (ICONV_CONST char **) &pin, &i, &pout, &o) ==
+			    (size_t) - 1)
+			{
+				iconv_close(iconv_h);
+				iconv_h = (iconv_t) - 1;
+				warning("rdp_out_unistr: iconv(1) fail, errno %d\n", errno);
+
+				g_iconv_works = False;
+				rdp_out_unistr(s, string, len);
+				return;
+			}
+			pin = string;
+			pout = (char *) s->p;
+		}
+
+		if (iconv(iconv_h, (ICONV_CONST char **) &pin, &ibl, &pout, &obl) == (size_t) - 1)
+		{
+			iconv_close(iconv_h);
+			iconv_h = (iconv_t) - 1;
+			warning("rdp_out_unistr: iconv(2) fail, errno %d\n", errno);
+
+			g_iconv_works = False;
+			rdp_out_unistr(s, string, len);
+			return;
+		}
+
+		s->p += len + 2;
+
+	}
+	else
+#endif
+	{
+		int i = 0, j = 0;
+
+		len += 2;
+
+		while (i < len)
+		{
+			s->p[i++] = string[j++];
+			s->p[i++] = 0;
+		}
+
+		s->p += len;
+	}
 }
 
 /* Input a string in Unicode
@@ -193,15 +248,53 @@ rdp_out_unistr(STREAM s, char *string, int len)
 int
 rdp_in_unistr(STREAM s, char *string, int uni_len)
 {
-	int i = 0;
+#ifdef HAVE_ICONV
+	size_t ibl = uni_len, obl = uni_len;
+	char *pin = (char *) s->p, *pout = string;
+	static iconv_t iconv_h = (iconv_t) - 1;
 
-	while (i < uni_len / 2)
+	if (g_iconv_works)
 	{
-		in_uint8a(s, &string[i++], 1);
-		in_uint8s(s, 1);
-	}
+		if (iconv_h == (iconv_t) - 1)
+		{
+			if ((iconv_h = iconv_open(g_codepage, WINDOWS_CODEPAGE)) == (iconv_t) - 1)
+			{
+				warning("rdp_in_unistr: iconv_open[%s -> %s] fail %d\n",
+					WINDOWS_CODEPAGE, g_codepage, (int) iconv_h);
 
-	return i - 1;
+				g_iconv_works = False;
+				return rdp_in_unistr(s, string, uni_len);
+			}
+		}
+
+		if (iconv(iconv_h, (ICONV_CONST char **) &pin, &ibl, &pout, &obl) == (size_t) - 1)
+		{
+			iconv_close(iconv_h);
+			iconv_h = (iconv_t) - 1;
+			warning("rdp_in_unistr: iconv fail, errno %d\n", errno);
+
+			g_iconv_works = False;
+			return rdp_in_unistr(s, string, uni_len);
+		}
+
+		/* we must update the location of the current STREAM for future reads of s->p */
+		s->p += uni_len;
+
+		return pout - string;
+	}
+	else
+#endif
+	{
+		int i = 0;
+
+		while (i < uni_len / 2)
+		{
+			in_uint8a(s, &string[i++], 1);
+			in_uint8s(s, 1);
+		}
+
+		return i - 1;
+	}
 }
 
 
@@ -223,12 +316,6 @@ rdp_send_logon_info(uint32 flags, char *domain, char *user,
 	STREAM s;
 	time_t t = time(NULL);
 	time_t tzone;
-
-#if 0
-	/* enable rdp compression */
-	/* some problems still exist with rdp5 */
-	flags |= RDP_COMPRESSION;
-#endif
 
 	if (!g_use_rdp5 || 1 == g_server_rdp_version)
 	{
@@ -426,27 +513,27 @@ rdp_send_input(uint32 time, uint16 message_type, uint16 device_flags, uint16 par
 	/* NX */
 }
 
-/* Inform the server on the contents of the persistent bitmap cache */
+/* Send persistent bitmap cache enumeration PDU's */
 static void
 rdp_enum_bmpcache2(void)
 {
 	STREAM s;
-	uint8 idlist[BMPCACHE2_NUM_PSTCELLS * sizeof(BITMAP_ID)];
-	uint32 nids, offset, count, flags;
+	HASH_KEY keylist[BMPCACHE2_NUM_PSTCELLS];
+	uint32 num_keys, offset, count, flags;
 
 	offset = 0;
-	nids = pstcache_enumerate(2, idlist);
+	num_keys = pstcache_enumerate(2, keylist);
 
-	while (offset < nids)
+	while (offset < num_keys)
 	{
-		count = MIN(nids - offset, 169);
+		count = MIN(num_keys - offset, 169);
 
-		s = rdp_init_data(24 + count * sizeof(BITMAP_ID));
+		s = rdp_init_data(24 + count * sizeof(HASH_KEY));
 
 		flags = 0;
 		if (offset == 0)
 			flags |= PDU_FLAG_FIRST;
-		if (nids - offset <= 169)
+		if (num_keys - offset <= 169)
 			flags |= PDU_FLAG_LAST;
 
 		/* header */
@@ -456,12 +543,12 @@ rdp_enum_bmpcache2(void)
 		out_uint16_le(s, 0);
 		out_uint16_le(s, 0);
 		out_uint16_le(s, 0);
-		out_uint16_le(s, nids);
+		out_uint16_le(s, num_keys);
 		out_uint32_le(s, 0);
 		out_uint32_le(s, flags);
 
 		/* list */
-		out_uint8a(s, idlist + offset * sizeof(BITMAP_ID), count * sizeof(BITMAP_ID));
+		out_uint8a(s, keylist[offset], count * sizeof(HASH_KEY));
 
 		s_mark_end(s);
 		rdp_send_data(s, 0x2b);
@@ -545,24 +632,12 @@ rdp_out_order_caps(STREAM s)
 	order_caps[0] = 1;	/* dest blt */
 	order_caps[1] = 1;	/* pat blt */
 	order_caps[2] = 1;	/* screen blt */
-	/* NX */
-	if (!g_use_rdp5)
-	{
-	    rdp_img_cache = False;
-	    rdp_img_cache_nxcompressed = False;
-	}
-	order_caps[3] = (rdp_img_cache == True ? 1 : 0);	/* required for memblt */
-	/* char *p;
-	*(p = NULL) = 0;*/
-	#ifdef NXDESKTOP_RDP_DEBUG
-	nxdesktopDebug("img_cache","%d %d\n",rdp_img_cache == True ? 1 : 0,g_use_rdp5 == True ? 1 : 0);
-	#endif
-	/* NX */
+	order_caps[3] = (g_bitmap_cache ? 1 : 0);	/* memblt */
 	order_caps[4] = 0;	/* triblt */
 	order_caps[8] = 1;	/* line */
 	order_caps[9] = 1;	/* line */
 	order_caps[10] = 1;	/* rect */
-	order_caps[11] = (g_desktop_save == False ? 0 : 1);	/* desksave */
+	order_caps[11] = (g_desktop_save ? 1 : 0);	/* desksave */
 	order_caps[13] = 1;	/* memblt */
 	order_caps[14] = 1;	/* triblt */
 	order_caps[20] = (g_polygon_ellipse_orders ? 1 : 0);	/* polygon */
@@ -616,8 +691,9 @@ rdp_out_bmpcache2_caps(STREAM s)
 
 	out_uint16_le(s, g_bitmap_cache_persist_enable ? 2 : 0);	/* version */
 
-	out_uint16_le(s, 0x0300);	/* flags? number of caches? */
+	out_uint16_be(s, 3);	/* number of caches in this set */
 
+	/* max cell size for cache 0 is 16x16, 1 = 32x32, 2 = 64x64, etc */
 	out_uint32_le(s, BMPCACHE2_C0_CELLS);
 	out_uint32_le(s, BMPCACHE2_C1_CELLS);
 	if (pstcache_init(2))
@@ -760,11 +836,7 @@ rdp_send_confirm_active(void)
 	rdp_out_general_caps(s);
 	rdp_out_bitmap_caps(s);
 	rdp_out_order_caps(s);
-	if (False)
-	    g_use_rdp5 ? rdp_out_bmpcache2_caps(s) : rdp_out_bmpcache_caps(s);
-	
-	rdp_out_bmpcache_caps(s);
-	
+	g_use_rdp5 ? rdp_out_bmpcache2_caps(s) : rdp_out_bmpcache_caps(s);
 	rdp_out_colcache_caps(s);
 	rdp_out_activate_caps(s);
 	rdp_out_control_caps(s);
@@ -797,28 +869,30 @@ rdp_process_general_caps(STREAM s)
 static void
 rdp_process_bitmap_caps(STREAM s)
 {
-	uint16 width, height, bpp;
+	uint16 width, height, depth;
 
-	in_uint16_le(s, bpp);
+	in_uint16_le(s, depth);
 	in_uint8s(s, 6);
 
 	in_uint16_le(s, width);
 	in_uint16_le(s, height);
 
-	DEBUG(("setting desktop size and bpp to: %dx%dx%d\n", width, height, bpp));
+	DEBUG(("setting desktop size and depth to: %dx%dx%d\n", width, height, depth));
 
 	/*
-	 * The server may limit bpp and change the size of the desktop (for
+	 * The server may limit depth and change the size of the desktop (for
 	 * example when shadowing another session).
 	 */
-	if (g_server_bpp != bpp)
+	if (g_server_bpp != depth)
 	{
-		warning("colour depth changed from %d to %d\n", g_server_bpp, bpp);
-		g_server_bpp = bpp;
+		warning("Remote desktop does not support colour depth %d; falling back to %d\n",
+			g_server_bpp, depth);
+		g_server_bpp = depth;
 	}
 	if (g_width != width || g_height != height)
 	{
-		warning("screen size changed from %dx%d to %dx%d\n", g_width, g_height, width, height);
+		warning("Remote desktop changed from %dx%d to %dx%d.\n", g_width, g_height,
+			width, height);
 		g_width = width;
 		g_height = height;
 		ui_resize_window();
@@ -826,7 +900,7 @@ rdp_process_bitmap_caps(STREAM s)
 }
 
 /* Process server capabilities */
-void
+static void
 rdp_process_server_caps(STREAM s, uint16 length)
 {
 	int n;
@@ -847,7 +921,7 @@ rdp_process_server_caps(STREAM s, uint16 length)
 		in_uint16_le(s, capset_length);
 
 		next = s->p + capset_length - 4;
-		
+
 		switch (capset_type)
 		{
 			case RDP_CAPSET_GENERAL:
@@ -1213,7 +1287,7 @@ process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 		if (mppc_expand(s->p, clen, ctype, &roff, &rlen) == -1)
 			error("error while decompressing packet\n");
 
-		//len -= 18;
+		/* len -= 18; */
 
 		/* allocate memory and copy the uncompressed data into the temporary stream */
 		ns->data = (uint8 *) xrealloc(ns->data, rlen);
@@ -1252,14 +1326,11 @@ process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 
 		case RDP_DATA_PDU_LOGON:
 			DEBUG(("Received Logon PDU\n"));
-			logon_done = True;
-			in_uint32_le(s, guessed_rdp_server);
 			/* User logged on */
 			break;
 
 		case RDP_DATA_PDU_DISCONNECT:
 			process_disconnect_pdu(s, ext_disc_reason);
-			
 			return True;
 
 		default:
@@ -1289,10 +1360,11 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 	while (cont)
 	{
 		s = rdp_recv(&type);
+		#ifdef NXDESKTOP_RDP_DUMP_DEBUG
+		hexdump(s->data, s->end - s->p);
+		#endif
 		if (s == NULL)
-		{
-		    return False;
-		}
+			return False;
 		switch (type)
 		{
 			case RDP_PDU_DEMAND_ACTIVE:
@@ -1307,7 +1379,7 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 				break;
 			case RDP_PDU_DEACTIVATE:
 				DEBUG(("RDP_PDU_DEACTIVATE\n"));
-				#if NXDESKTOP_RDP_DEBUG
+				#ifdef NXDESKTOP_RDP_DEBUG
 				    nxdesktopDebug("rdp_loop: ","Deactivate PDU received\n");
 				#endif
 				*deactivated = True;
@@ -1316,6 +1388,9 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 				disc = process_data_pdu(s, ext_disc_reason);
 				break;
 			case 0:
+				/* disabled for now 
+				NXTransIdle(NX_FD_ANY, NX_IDLE_READ);
+				*/
 				break;
 			default:
 				unimpl("rdp_loop","PDU %d\n", type);
@@ -1324,6 +1399,7 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 			return False;
 		cont = g_next_packet < s->end;
 	}
+	NXTransFlush(NX_FD_ANY, NX_FLUSH_IDLE);
 	return True;
 	
 }

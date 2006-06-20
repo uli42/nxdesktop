@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -268,6 +268,8 @@ wave_out_play(void)
 		}
 
 		len = out->end - out->p;
+		
+		fprintf(stderr,"size = %d\n",out->end - out->p);
 
 		if (!g_driver_broken)
 		{

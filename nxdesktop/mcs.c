@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -173,7 +173,6 @@ mcs_recv_connect_response(STREAM mcs_data)
 	STREAM s;
 
 	s = iso_recv(NULL);
-	
 	if (s == NULL)
 		return False;
 

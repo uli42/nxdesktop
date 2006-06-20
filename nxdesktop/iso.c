@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -146,11 +146,6 @@ iso_init(int length)
 	STREAM s;
 
 	s = tcp_init(length + 7);
-	/*if (s == NULL)
-	{
-	    error("NULL stream received from tcp_init - ISO layer.\n");
-	    return NULL;
-	}*/
 	s_push_layer(s, iso_hdr, 7);
 
 	return s;
@@ -215,9 +210,13 @@ iso_connect(char *server, char *username)
 	iso_send_connection_request(username);
 
 	if (iso_recv_msg(&code, NULL) == NULL)
+		return False;
+
+	if (code != ISO_PDU_CC)
 	{
-	    error("NULL stream received from iso_recv_msg on ISO layer.\n");
-	    return False;
+		error("expected CC, got 0x%x\n", code);
+		tcp_disconnect();
+		return False;
 	}
 
 	if (code != ISO_PDU_CC)

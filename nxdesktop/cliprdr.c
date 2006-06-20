@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -67,30 +67,30 @@ cliprdr_send_packet(uint16 type, uint16 status, uint8 * data, uint32 length)
 	channel_send(s, cliprdr_channel);
 }
 
+/* Helper which announces our readiness to supply clipboard data
+   in a single format (such as CF_TEXT) to the RDP side.
+   To announce more than one format at a time, use
+   cliprdr_send_native_format_announce.
+ */
 void
-cliprdr_send_text_format_announce(void)
+cliprdr_send_simple_native_format_announce(uint32 format)
 {
 	uint8 buffer[36];
 
-	buf_out_uint32(buffer, CF_TEXT);
+	buf_out_uint32(buffer, format);
 	memset(buffer + 4, 0, sizeof(buffer) - 4);	/* description */
-	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, buffer, sizeof(buffer));
+	cliprdr_send_native_format_announce(buffer, sizeof(buffer));
 }
 
+/* Announces our readiness to supply clipboard data in multiple
+   formats, each denoted by a 36-byte format descriptor of
+   [ uint32 format + 32-byte description ].
+ */
 void
-cliprdr_send_blah_format_announce(void)
+cliprdr_send_native_format_announce(uint8 * formats_data, uint32 formats_data_length)
 {
-	uint8 buffer[36];
-
-	buf_out_uint32(buffer, CF_OEMTEXT);
-	memset(buffer + 4, 0, sizeof(buffer) - 4);	/* description */
-	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, buffer, sizeof(buffer));
-}
-
-void
-cliprdr_send_native_format_announce(uint8 * data, uint32 length)
-{
-	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, data, length);
+	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, formats_data,
+			    formats_data_length);
 }
 
 void
@@ -128,7 +128,7 @@ cliprdr_process(STREAM s)
 		{
 			/* FIXME: We seem to get this when we send an announce while the server is
 			   still processing a paste. Try sending another announce. */
-			cliprdr_send_text_format_announce();
+			cliprdr_send_simple_native_format_announce(CF_TEXT);
 			return;
 		}
 
@@ -154,7 +154,7 @@ cliprdr_process(STREAM s)
 		case CLIPRDR_DATA_RESPONSE:
 			ui_clip_handle_data(data, length);
 			break;
-		case 7: /* Caused by SP1 on windows 2003. Unused for now. */
+		case 7:	/* TODO: W2K3 SP1 sends this on connect with a value of 1 */
 			break;
 		default:
 			unimpl("cliprdr_process","CLIPRDR packet type %d\n", type);

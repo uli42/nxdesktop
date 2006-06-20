@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -74,6 +74,7 @@ static struct stream in;
 static struct stream out;
 int g_tcp_port_rdp = TCP_PORT_RDP;
 extern BOOL nxdesktopUseNXTrans;
+extern BOOL nxdesktopCongestion;
 /* NX */
 char errorMsg[512];
 char errorCaption[512];
@@ -124,7 +125,7 @@ tcp_send(STREAM s)
 
 	while (total < length)
 	{
-		alarm(30);
+		alarm(10);
 		sent = send(sock, s->data + total, length - total, 0);
 		alarm(0);
 		
@@ -199,8 +200,7 @@ tcp_recv(STREAM s, uint32 length)
 	    /* User quit */
 	    return NULL;
 	}
-	
-	if ((nxdesktopUseNXTrans) && (NXTransCongestion()))
+	if ((nxdesktopUseNXTrans) && (nxdesktopCongestion))
     	{
 	    struct timeval timeout;
 	    
@@ -213,9 +213,8 @@ tcp_recv(STREAM s, uint32 length)
 	    NXTransContinue(&timeout);
 	    goto go_ui_select;
 	} 
-	   
 	read_again:
-	alarm(30);
+	alarm(10);
 	rcvd = recv(sock, s->end, length, 0);
 	alarm(0);
 	if (rcvd < 0)
@@ -360,7 +359,7 @@ tcp_connect(char *server)
 	sigact.sa_flags &= ~SA_RESTART;
 	sigaction(SIGALRM, &sigact, NULL); 
 
-	alarm(30);
+	alarm(10);
 	/* NX */
 
 	if (connect(sock, (struct sockaddr *) &servaddr, sizeof(struct sockaddr)) < 0)
@@ -458,5 +457,8 @@ AlarmHandler(int signal)
 {
     error("Connection timed out. Session closing\n");
     alarm(0);
+    tcp_disconnect();
+    nxdesktopDialog(TCP_MESSAGE, ENETDOWN);
+    nxdesktopExit(1);
 }
 /* NX */

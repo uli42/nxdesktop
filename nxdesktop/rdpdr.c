@@ -19,7 +19,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -172,7 +172,7 @@ add_async_iorequest(uint32 device, uint32 file, uint32 id, uint32 major, uint32 
 
 	while (iorq->fd != 0)
 	{
-		// create new element if needed
+		/* create new element if needed */
 		if (iorq->next == NULL)
 		{
 			iorq->next =
@@ -245,7 +245,7 @@ announcedata_size()
 	int size, i;
 	PRINTER *printerinfo;
 
-	size = 8;		//static announce size
+	size = 8;		/* static announce size */
 	size += g_num_devices * 0x14;
 
 	for (i = 0; i < g_num_devices; i++)
@@ -344,7 +344,7 @@ rdpdr_send_completion(uint32 device, uint32 id, uint32 status, uint32 result, ui
 	/* JIF */
 #ifdef WITH_DEBUG_RDP5
 	printf("--> rdpdr_send_completion\n");
-	//hexdump(s->channel_hdr + 8, s->end - s->channel_hdr - 8);
+	/* hexdump(s->channel_hdr + 8, s->end - s->channel_hdr - 8); */
 #endif
 	channel_send(s, rdpdr_channel);
 }
@@ -369,7 +369,7 @@ rdpdr_process_irp(STREAM s)
 		error_mode,
 		share_mode, disposition, total_timeout, interval_timeout, flags_and_attributes = 0;
 
-	char filename[256];
+	char filename[PATH_MAX];
 	uint8 *buffer, *pst_buf;
 	struct stream out;
 	DEVICE_FNS *fns;
@@ -423,7 +423,7 @@ rdpdr_process_irp(STREAM s)
 		case IRP_MJ_CREATE:
 
 			in_uint32_be(s, desired_access);
-			in_uint8s(s, 0x08);	// unknown
+			in_uint8s(s, 0x08);	/* unknown */
 			in_uint32_le(s, error_mode);
 			in_uint32_le(s, share_mode);
 			in_uint32_le(s, disposition);
@@ -480,7 +480,7 @@ rdpdr_process_irp(STREAM s)
 				break;
 			}
 
-			if (rw_blocking)	// Complete read immediately
+			if (rw_blocking)	/* Complete read immediately */
 			{
 				buffer = (uint8 *) xrealloc((void *) buffer, length);
 				if (!buffer)
@@ -493,7 +493,7 @@ rdpdr_process_irp(STREAM s)
 				break;
 			}
 
-			// Add request to table
+			/* Add request to table */
 			pst_buf = (uint8 *) xmalloc(length);
 			if (!pst_buf)
 			{
@@ -533,13 +533,13 @@ rdpdr_process_irp(STREAM s)
 				break;
 			}
 
-			if (rw_blocking)	// Complete immediately
+			if (rw_blocking)	/* Complete immediately */
 			{
 				status = fns->write(file, s->p, length, offset, &result);
 				break;
 			}
 
-			// Add to table
+			/* Add to table */
 			pst_buf = (uint8 *) xmalloc(length);
 			if (!pst_buf)
 			{
@@ -646,7 +646,7 @@ rdpdr_process_irp(STREAM s)
 					/* JIF
 					   unimpl("IRP major=0x%x minor=0x%x: IRP_MN_NOTIFY_CHANGE_DIRECTORY\n", major, minor);  */
 
-					in_uint32_le(s, info_level);	// notify mask
+					in_uint32_le(s, info_level);	/* notify mask */
 
 					g_notify_stamp = True;
 
@@ -831,7 +831,7 @@ rdpdr_process(STREAM s)
 			return;
 		}
 	}
-	unimpl("rdpdr_process","RDPDR packet type %c%c%c%c\n", magic[0], magic[1], magic[2], magic[3]);
+	unimpl("rdp_process","RDPDR packet type %c%c%c%c\n", magic[0], magic[1], magic[2], magic[3]);
 }
 
 BOOL
@@ -852,7 +852,7 @@ rdpdr_init()
 void
 rdpdr_add_fds(int *n, fd_set * rfds, fd_set * wfds, struct timeval *tv, BOOL * timeout)
 {
-	uint32 select_timeout = 0;	// Timeout value to be used for select() (in millisecons).
+	uint32 select_timeout = 0;	/* Timeout value to be used for select() (in millisecons). */
 	struct async_iorequest *iorq;
 	char c;
 
@@ -937,7 +937,7 @@ rdpdr_remove_iorequest(struct async_iorequest *prev, struct async_iorequest *ior
 	}
 	else
 	{
-		// Even if NULL
+		/* Even if NULL */
 		g_iorequest = iorq->next;
 		xfree(iorq);
 		iorq = NULL;
@@ -946,7 +946,7 @@ rdpdr_remove_iorequest(struct async_iorequest *prev, struct async_iorequest *ior
 }
 
 /* Check if select() returned with one of the rdpdr file descriptors, and complete io if it did */
-void
+static void
 _rdpdr_check_fds(fd_set * rfds, fd_set * wfds, BOOL timed_out)
 {
 	NTSTATUS status;
@@ -976,7 +976,7 @@ _rdpdr_check_fds(fd_set * rfds, fd_set * wfds, BOOL timed_out)
 				{
 
 					/* iv_timeout between 2 chars, send partial_len */
-					//printf("RDPDR: IVT total %u bytes read of %u\n", iorq->partial_len, iorq->length);
+					/*printf("RDPDR: IVT total %u bytes read of %u\n", iorq->partial_len, iorq->length); */
 					rdpdr_send_completion(iorq->device,
 							      iorq->id, STATUS_SUCCESS,
 							      iorq->partial_len,
@@ -1197,8 +1197,8 @@ rdpdr_abort_io(uint32 fd, uint32 major, NTSTATUS status)
 	prev = NULL;
 	while (iorq != NULL)
 	{
-		// Only remove from table when major is not set, or when correct major is supplied.
-		// Abort read should not abort a write io request.
+		/* Only remove from table when major is not set, or when correct major is supplied.
+		   Abort read should not abort a write io request. */
 		if ((iorq->fd == fd) && (major == 0 || iorq->major == major))
 		{
 			result = 0;

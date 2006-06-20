@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -38,7 +38,7 @@
 
 #include "rdesktop.h"
 
-#define MAX_CHANNELS			5
+#define MAX_CHANNELS			4
 #define CHANNEL_CHUNK_LENGTH		1600
 #define CHANNEL_FLAG_FIRST		0x01
 #define CHANNEL_FLAG_LAST		0x02

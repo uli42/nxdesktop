@@ -1,6 +1,6 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
-   Protocol services - Multipoint Communications Service
+   Protocol services - RDP5 short form PDU processing
    Copyright (C) Matthew Chapman 1999-2005
    Copyright (C) Erik Forsberg 2003
 
@@ -21,7 +21,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -62,11 +62,11 @@ rdp5_process(STREAM s)
 	while (s->p < s->end)
 	{
 		in_uint8(s, type);
-		if (type & RDP_COMPRESSION)
+		if (type & RDP5_COMPRESSED)
 		{
 			in_uint8(s, ctype);
 			in_uint16_le(s, length);
-			type ^= RDP_COMPRESSION;
+			type ^= RDP5_COMPRESSED;
 		}
 		else
 		{
@@ -77,8 +77,6 @@ rdp5_process(STREAM s)
 
 		if (ctype & RDP_MPPC_COMPRESSED)
 		{
-			if (length > RDP_MPPC_DICT_SIZE)
-				error("error decompressed packet size exceeds max\n");
 			if (mppc_expand(s->p, length, ctype, &roff, &rlen) == -1)
 				error("error while decompressing packet\n");
 
@@ -99,39 +97,35 @@ rdp5_process(STREAM s)
 
 		switch (type)
 		{
-				/* Thanks to Jeroen Meijer <jdmeijer at yahoo
-				   dot com> for finding out the meaning of
-				   most of the opcodes here. Especially opcode
-				   8! :) */
-			case 0:	/* orders */
+			case 0:	/* update orders */
 				in_uint16_le(ts, count);
 				process_orders(ts, count);
 				break;
-			case 1:	/* bitmap update (???) */
+			case 1:	/* update bitmap */
 				in_uint8s(ts, 2);	/* part length */
 				process_bitmap_updates(ts);
 				break;
-			case 2:	/* palette */
+			case 2:	/* update palette */
 				in_uint8s(ts, 2);	/* uint16 = 2 */
 				process_palette(ts);
 				break;
-			case 3:	/* probably an palette with offset 3. Weird */
+			case 3:	/* update synchronize */
 				break;
-			case 5:
+			case 5:	/* null pointer */
 				ui_set_null_cursor();
 				break;
-			case 6: /* Created by SP1 on Windows 2003. Unused at this time */
+			case 6:	/* default pointer */
 				break;
-			case 8:
+			case 8:	/* pointer position */
 				in_uint16_le(ts, x);
 				in_uint16_le(ts, y);
 				if (s_check(ts))
 					ui_move_pointer(x, y);
 				break;
-			case 9:
+			case 9:	/* color pointer */
 				process_colour_pointer_pdu(ts);
 				break;
-			case 10:
+			case 10:	/* cached pointer */
 				process_cached_pointer_pdu(ts);
 				break;
 			default:

@@ -1,7 +1,7 @@
 /* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Entrypoint and utility functions
-   Copyright (C) Matthew Chapman 1999-2003
+   Copyright (C) Matthew Chapman 1999-2005
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -50,8 +50,10 @@
 #include "proto.h"
 #include "NXalert.h"
 #include "NX.h"
+#include "X11/Xos.h"
 
 #ifdef EGD_SOCKET
+#include <sys/types.h>
 #include <sys/socket.h>		/* socket connect */
 #include <sys/un.h>		/* sockaddr_un */
 #endif
@@ -114,10 +116,12 @@ BOOL nxclient_is_windows = True;
 /* NX */
 BOOL g_console_session = False;
 BOOL g_numlock_sync = False;
+BOOL lspci_enabled = False;
 BOOL g_owncolmap = False;
 BOOL g_ownbackstore = True;	/* We can't rely on external BackingStore */
 uint32 g_embed_wnd;
-uint32 g_rdp5_performanceflags =
+BOOL g_seamless_rdp = False;
+uint32 g_rdp5_performanceflags = 
 	RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
 
 #ifdef WITH_RDPSND
@@ -157,6 +161,7 @@ static char *nxdesktopReadPasswdFromFile(char *fname);
 char nxDisplay[255];
 BOOL magickey = True;
 extern int XParseGeometry(char *, int *, int *, unsigned int *, unsigned int *);
+const char *GetTimeAsString();
 int xo = 0;
 int yo = 0;
 int perm_xo = 0;
@@ -228,11 +233,13 @@ usage(char *program)
 	fprintf(stderr, "   -5: use RDP version 5 (default)\n");
 	fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
 	fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n", rdp_bufsize);
+	/*
 	fprintf(stderr, "   -kbtype: inform the local keyboard type\n");
 	fprintf(stderr, "   -F: Activate floating-window mode\n");
+	*/
 }
 
-void
+static void
 print_disconnect_reason(uint16 reason)
 {
 	char *text;
@@ -667,21 +674,21 @@ main(int argc, char *argv[])
 
 			case 'z':
 				DEBUG(("rdp compression enabled\n"));
-				flags |= RDP_COMPRESSION;
+				flags |= (RDP_LOGON_COMPRESSION | RDP_LOGON_COMPRESSION2);
 				break;
 
 			case 'x':
-				if (strncmp("modem", optarg, 1) == 0)
+				if (str_startswith(optarg, "m"))	/* modem */
 				{
 					g_rdp5_performanceflags =
 						RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG |
 						RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
 				}
-				else if (strncmp("broadband", optarg, 1) == 0)
+				else if (str_startswith(optarg, "b"))	/* broadband */
 				{
 					g_rdp5_performanceflags = RDP5_NO_WALLPAPER;
 				}
-				else if (strncmp("lan", optarg, 1) == 0)
+				else if (str_startswith(optarg, "l"))	/* lan */
 				{
 					g_rdp5_performanceflags = RDP5_DISABLE_NOTHING;
 				}
@@ -791,13 +798,13 @@ main(int argc, char *argv[])
 					rdp_bufsize = 1024;
 				}
 				break;
+			/* Floating mode is disabled
 			case 'F':
-				/* Force float window mode to be disabled */
-				break;
 				float_window_mode = True;
-				g_rdp5_performanceflags = 0x6D; /* Disable all eye candy but the full window drag */
+				g_rdp5_performanceflags = 0x6D; Disable all eye candy but the full window drag 
 				g_hide_decorations = True;
-				/*break;*/
+				break;
+			*/
 			/* End NX options */
 			case 'h':
 			case '?':
@@ -871,6 +878,7 @@ main(int argc, char *argv[])
 
 	/* NX */
 	info("Connecting to RDP server '%s'\n",server);
+        fprintf(stderr, "Session: Starting session at '%s'.\n", GetTimeAsString());
 	/* NX */
 		
 #ifdef RDP2VNC
@@ -883,6 +891,15 @@ main(int argc, char *argv[])
 	    return 1;
 	}
 	
+	if (nxDisplay[0] != 0)
+	{
+	    /* NX - force "modem" experience mode */
+	    g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
+	    /* experimental RDP compression */
+	    flags |= (RDP_LOGON_COMPRESSION | RDP_LOGON_COMPRESSION2);
+	    /* NX */
+	};
+	
 	if (!test_rdp_connect(server))
 	{
 	    ui_init();
@@ -894,22 +911,16 @@ main(int argc, char *argv[])
 		
 #ifdef WITH_RDPSND
 	if (g_rdpsnd)
-	    rdpsnd_init();
-#endif
-	rdpdr_init();
-	
-	#ifdef NXDESKTOP_FWINDOW_MODE
-	if (float_window_mode)
 	{
-	    if (fwindow_register())
-		#ifdef NXDESKTOP_FWINDOW_DEBUG    
-		nxdesktopDebug("main loop:","CLIPPER channel registered.\n");
-		#endif
-	    else
-		error("main loop: ","CLIPPER channel not registered.\n");
-	    fwindow_init();
+	    fprintf(stderr,"Sound redirection activated\n");
+	    rdpsnd_init();
 	}
-	#endif
+#endif
+
+	if (lspci_enabled)
+		lspci_init();
+
+	rdpdr_init();
 	
 	if (!rdp_connect(server, flags, domain, password, shell, directory))
 	{
@@ -933,7 +944,7 @@ main(int argc, char *argv[])
 	
 	/* NX */
 	info("Connected to RDP server '%s'.\n",server);
-	
+        fprintf(stderr,"Session: Session started at '%s'.\n", GetTimeAsString());
 	info("Color depth %d.\n",g_server_bpp);
 	/* NX */
 
@@ -955,22 +966,25 @@ main(int argc, char *argv[])
 	rdp_disconnect();
 	cache_save_state();	
 	info("Disconnecting from RDP server '%s'.\n",server);
+        fprintf(stderr, "Session: Terminating session at '%s'.\n", GetTimeAsString());
 	ui_deinit();
 	
 	if (!logon_done)
 	{
 	    if (!input_sent_done)
 		nxdesktopDialog(RDP_MESSAGE, exDiscReasonServerLogonTimeout);
-	    /* Currently deativated. Let windows take care of it
-	       else
-		nxdesktopDialog(RDP_MESSAGE, REMOTE_SERVER_RDP_AUTHENTICATION_ALERT); */
 	}
 	
-	if (ext_disc_reason >= 1)
+	if (ext_disc_reason >= 2)
 		print_disconnect_reason(ext_disc_reason);
 		
 	if (nxdesktopUseNXTrans)
-	    nxdesktopExit(0);
+	{
+	    if (ext_disc_reason >= 2)
+		nxdesktopExit(1);
+	    else
+		nxdesktopExit(0);
+	}
 
 	if (deactivated)
 	{
@@ -1291,6 +1305,124 @@ toupper_str(char *p)
 }
 
 
+BOOL
+str_startswith(const char *s, const char *prefix)
+{
+	return (strncmp(s, prefix, strlen(prefix)) == 0);
+}
+
+
+/* Split input into lines, and call linehandler for each
+   line. Incomplete lines are saved in the rest variable, which should
+   initially point to NULL. When linehandler returns False, stop and
+   return False. Otherwise, return True.  */
+BOOL
+str_handle_lines(const char *input, char **rest, str_handle_lines_t linehandler, void *data)
+{
+	char *buf, *p;
+	char *oldrest;
+	size_t inputlen;
+	size_t buflen;
+	size_t restlen = 0;
+	BOOL ret = True;
+
+	/* Copy data to buffer */
+	inputlen = strlen(input);
+	if (*rest)
+		restlen = strlen(*rest);
+	buflen = restlen + inputlen + 1;
+	buf = (char *) xmalloc(buflen);
+	buf[0] = '\0';
+	if (*rest)
+		STRNCPY(buf, *rest, buflen);
+	strncat(buf, input, inputlen);
+	p = buf;
+
+	while (1)
+	{
+		char *newline = strchr(p, '\n');
+		if (newline)
+		{
+			*newline = '\0';
+			if (!linehandler(p, data))
+			{
+				p = newline + 1;
+				ret = False;
+				break;
+			}
+			p = newline + 1;
+		}
+		else
+		{
+			break;
+
+		}
+	}
+
+	/* Save in rest */
+	oldrest = *rest;
+	restlen = buf + buflen - p;
+	*rest = (char *) xmalloc(restlen);
+	STRNCPY((*rest), p, restlen);
+	xfree(oldrest);
+
+	xfree(buf);
+	return ret;
+}
+
+/* Execute the program specified by argv. For each line in
+   stdout/stderr output, call linehandler. Returns false on failure. */
+BOOL
+subprocess(char *const argv[], str_handle_lines_t linehandler, void *data)
+{
+	pid_t child;
+	int fd[2];
+	int n = 1;
+	char output[256];
+	char *rest = NULL;
+
+	if (pipe(fd) < 0)
+	{
+		perror("pipe");
+		return False;
+	}
+
+	if ((child = fork()) < 0)
+	{
+		perror("fork");
+		return False;
+	}
+
+	/* Child */
+	if (child == 0)
+	{
+		/* Close read end */
+		close(fd[0]);
+
+		/* Redirect stdout and stderr to pipe */
+		dup2(fd[1], 1);
+		dup2(fd[1], 2);
+
+		/* Execute */
+		execvp(argv[0], argv);
+		perror("Error executing child");
+		_exit(128);
+	}
+
+	/* Parent. Close write end. */
+	close(fd[1]);
+	while (n > 0)
+	{
+		n = read(fd[0], output, 255);
+		output[n] = '\0';
+		str_handle_lines(output, &rest, linehandler, data);
+	}
+	xfree(rest);
+
+	return True;
+}
+
+
 /* not all clibs got ltoa */
 #define LTOA_BUFSIZE (sizeof(long) * 8 + 1)
 
@@ -1509,6 +1641,7 @@ int i;
 char *argv[];
 
 {
+    unsigned int aux_w, aux_h;
     
     if (!strcmp(argv[i], "-sync"))
     {
@@ -1561,7 +1694,9 @@ char *argv[];
 	else
 	{
 	    int j = 0;
-	    XParseGeometry(argv[i+1], &xo, &yo, &g_width, &g_height);
+	    XParseGeometry(argv[i+1], &xo, &yo, &aux_w, &aux_h);
+	    g_width = aux_w;
+	    g_height = aux_h;
 	    perm_xo = xo;
 	    perm_yo = yo;
 	    while(argv[i+1][j])
@@ -1800,7 +1935,7 @@ char *argv[];
 		strncpy(command,aux,strlen(aux)-strlen(value)-1);
 		command[strlen(aux)-strlen(value)-1]='\0';
 		
-		if (!strcmp(command, "kbtype"))
+		if ((!strcmp(command, "kbtype")) || (!strcmp(command, "keyboard")))
 		{
 		    value=strchr(value,'/');
 		    value++;
@@ -1814,8 +1949,10 @@ char *argv[];
 				break;
 			    }
 		    }
-		    if (!F) 
+		    if (!F)
+		    {
 			warning("Can't load keyboard map for %s. Using en_US [English (United States)]\n",value);
+		    }
 		    #ifdef NXDESKTOP_PARAM_DEBUG
 		    nxdesktopDebug("kbtype ","%s\n",value);
 		    nxdesktopDebug("keymapname ","%s\n",keymapname);
@@ -1832,11 +1969,26 @@ char *argv[];
     			    g_fullscreen = True;
 			}
     		}
+		
+		#ifdef WITH_RDPSND
+		if (!strcmp(command,"media"))
+		{
+		    #ifdef NXDESKTOP_PARAM_DEBUG
+		    nxdesktopDebug("media ","%s\n",value);
+		    #endif
+		    if (!strcmp(value,"1"))
+    			{
+    			    g_rdpsnd = True;
+			}
+    		}
+		#endif
 
 		if (!strcmp(command, "geometry"))
 		{
 		    j = 0;
-		    XParseGeometry(value, &xo, &yo, &g_width, &g_height);
+		    XParseGeometry(value, &xo, &yo, &aux_w, &aux_h);
+		    g_width = aux_w;
+		    g_height = aux_h;
 		    while(value[j])
 		    {
 			if(value[j] == '+')
@@ -1959,7 +2111,12 @@ void nxdesktopExit(int reason)
     nxdesktopDebug("nxdesktopExit: ","nxdesktop ended. Exit code %d.\n", reason);
     #endif
     if (nxdesktopUseNXTrans)
-	NXTransDestroy();
+    {
+      NXTransDestroy(NX_FD_ANY);
+    }
+
+    fprintf(stderr, "Session: Session terminated at '%s'.\n", GetTimeAsString());
+
     exit(reason);
 }
     
@@ -2151,7 +2308,7 @@ void ShowHeaderInfo(void)
 {
     fprintf(stderr,"\nNXDESKTOP - Version %i.%i.%i\n\n",NXDESKTOP_MAJOR_VERSION,NXDESKTOP_MINOR_VERSION,NXDESKTOP_RELEASE);
     fprintf(stderr,"Remote Desktop Protocol client for NX.\n");
-    fprintf(stderr,"Copyright (C) 2001, 2005 NoMachine.\n");
+    fprintf(stderr,"Copyright (C) 2001, 2006 NoMachine.\n");
     fprintf(stderr,"See http://www.nomachine.com/ for more information.\n\n");
     fprintf(stderr,"Based on rdesktop version "VERSION"\n");
     fprintf(stderr,"Copyright (C) 1999-2003 Matt Chapman.\n");
@@ -2159,3 +2316,17 @@ void ShowHeaderInfo(void)
     info("Agent running with pid '%d'.\n", getpid());
 }
 
+const char *GetTimeAsString()
+{
+  char *value;
+
+  struct timeval ts;
+
+  X_GETTIMEOFDAY(&ts);
+
+  value = ctime((time_t *) &ts.tv_sec);
+
+  *(value + strlen(value) - 1) = '\0';
+
+  return value;
+}

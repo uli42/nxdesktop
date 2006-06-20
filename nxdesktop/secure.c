@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -69,6 +69,10 @@ static uint8 sec_encrypt_update_key[16];
 static uint8 sec_crypted_random[SEC_MODULUS_SIZE];
 
 uint16 g_server_rdp_version = 0;
+
+/* These values must be available to reset state - Session Directory */
+static int sec_encrypt_use_count = 0;
+static int sec_decrypt_use_count = 0;
 
 /*
  * I believe this is based on SSLv3 with the following differences:
@@ -265,34 +269,30 @@ sec_update(uint8 * key, uint8 * update_key)
 static void
 sec_encrypt(uint8 * data, int length)
 {
-	static int use_count;
-
-	if (use_count == 4096)
+	if (sec_encrypt_use_count == 4096)
 	{
 		sec_update(sec_encrypt_key, sec_encrypt_update_key);
 		RC4_set_key(&rc4_encrypt_key, rc4_key_len, sec_encrypt_key);
-		use_count = 0;
+		sec_encrypt_use_count = 0;
 	}
 
 	RC4(&rc4_encrypt_key, length, data, data);
-	use_count++;
+	sec_encrypt_use_count++;
 }
 
 /* Decrypt data using RC4 */
 void
 sec_decrypt(uint8 * data, int length)
 {
-	static int use_count;
-
-	if (use_count == 4096)
+	if (sec_decrypt_use_count == 4096)
 	{
 		sec_update(sec_decrypt_key, sec_decrypt_update_key);
 		RC4_set_key(&rc4_decrypt_key, rc4_key_len, sec_decrypt_key);
-		use_count = 0;
+		sec_decrypt_use_count = 0;
 	}
 
 	RC4(&rc4_decrypt_key, length, data, data);
-	use_count++;
+	sec_decrypt_use_count++;
 }
 
 static void
@@ -545,6 +545,7 @@ sec_parse_x509_key(X509 * cert)
 	if (OBJ_obj2nid(cert->cert_info->key->algor->algorithm) == NID_md5WithRSAEncryption)
 	{
 		DEBUG_RDP5(("Re-setting algorithm type to RSA in server certificate\n"));
+		ASN1_OBJECT_free(cert->cert_info->key->algor->algorithm);
 		cert->cert_info->key->algor->algorithm = OBJ_nid2obj(NID_rsaEncryption);
 	}
 	epk = X509_get_pubkey(cert);
@@ -554,7 +555,9 @@ sec_parse_x509_key(X509 * cert)
 		return False;
 	}
 
-	server_public_key = (RSA *) epk->pkey.ptr;
+	server_public_key = RSAPublicKey_dup((RSA *) epk->pkey.ptr);
+
+	EVP_PKEY_free(epk);
 
 	return True;
 }
@@ -696,6 +699,8 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 		   MITM-attacks.
 		 */
 
+		X509_free(cacert);
+
 		in_uint32_le(s, cert_len);
 		DEBUG_RDP5(("Certificate length is %d\n", cert_len));
 		server_cert = d2i_X509(NULL, &(s->p), cert_len);
@@ -714,9 +719,10 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 		if (!sec_parse_x509_key(server_cert))
 		{
 			DEBUG_RDP5(("Didn't parse X509 correctly\n"));
-			error("Didn't parse X509 correctly\n");
+			X509_free(server_cert);
 			return False;
 		}
+		X509_free(server_cert);
 		return True;	/* There's some garbage here we don't care about */
 	}
 	return s_check_end(s);
@@ -726,7 +732,7 @@ sec_parse_crypt_info(STREAM s, uint32 * rc4_key_size,
 static void
 sec_process_crypt_info(STREAM s)
 {
-	uint8 *server_random, *modulus, *exponent;
+	uint8 *server_random = 0, *modulus = 0, *exponent = 0;
 	uint8 client_random[SEC_RANDOM_SIZE];
 	uint32 rc4_key_size;
 	uint8 inr[SEC_MODULUS_SIZE];
@@ -763,6 +769,8 @@ sec_process_crypt_info(STREAM s)
 
 		reverse(sec_crypted_random, SEC_MODULUS_SIZE);
 
+		RSA_free(server_public_key);
+		server_public_key = NULL;
 	}
 	else
 	{			/* RDP4-style encryption */

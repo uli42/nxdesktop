@@ -20,7 +20,7 @@
 
 /**************************************************************************/
 /*                                                                        */
-/* Copyright (c) 2001,2005 NoMachine, http://www.nomachine.com.           */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
 /*                                                                        */
 /* NXDESKTOP, NX protocol compression and NX extensions to this software  */
 /* are copyright of NoMachine. Redistribution and use of the present      */
@@ -46,6 +46,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #endif
+#include <limits.h>		/* PATH_MAX */
 
 #define VERSION "1.4.1"
 
@@ -59,9 +60,6 @@
 #undef NXDESKTOP_ORDERS_DEBUG
 #undef NXDESKTOP_PARAM_DEBUG
 #undef NXDESKTOP_CONGESTION_DEBUG
-
-#undef NXDESKTOP_ENABLE_MASK_PROCESSING
-#define NXDESKTOP_FWINDOW_DEBUG
 
 #ifdef WITH_DEBUG
 #define DEBUG(args)	printf args;
@@ -109,10 +107,13 @@
 #endif
 #endif /* B_ENDIAN, L_ENDIAN from configure */
 
-/* Temporary NEED_ALIGN for alpha, should be properly detected
-   by configure in the future */
-#if defined(__alpha__)
+/* No need for alignment on x86 and amd64 */
+#if !defined(NEED_ALIGN)
+#if !(defined(__x86__) || defined(__x86_64__) || \
+      defined(__AMD64__) || defined(_M_IX86) || \
+      defined(__i386__))
 #define NEED_ALIGN
+#endif
 #endif
 
 #include "parse.h"
@@ -140,7 +141,6 @@
 #define NXDESKTOP_ONSTART
 #define NXDESKTOP_SPLASH
 #define NXWIN_USES_PACKED_RDP_TEXT
-
 #define	NXDESKTOP_USES_RECT_BUF
 
 #define NXDESKTOP_NUM_ATOMS 10
@@ -168,5 +168,4 @@
 
 #endif
 
-#include "NX.h"
 #include <sys/wait.h>
