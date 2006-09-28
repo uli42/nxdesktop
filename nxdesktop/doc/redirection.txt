@@ -1,6 +1,6 @@
 
-Future syntax for configuring RDP redirection modules
-=====================================================
+Syntax for configuring RDP redirection modules
+==============================================
 
 General
 -------
@@ -22,8 +22,8 @@ disk mapping
 -------------
 Multiple mappings possible: yes
 Default: no disk redirected
-Syntax: -r disk:<driveletter>=<path>
-Example: -r disk:H=/home/johndoe
+Syntax: -r disk:<sharename>=<path>
+Example: -r disk:home=/home/johndoe
 
 
 printer mapping
@@ -63,8 +63,7 @@ sound mapping
 -------------
 Multiple mappings possible: no
 Default: off
-Planned syntax: -r sound:[local|off|remote]
-Current syntax: -r sound
+Syntax: -r sound:[local|off|remote]
 
 "local" means "Bring to this computer"
 "off" means "Do not play"

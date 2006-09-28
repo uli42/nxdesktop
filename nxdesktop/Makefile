@@ -32,7 +32,7 @@ datadir     = $(prefix)/share
 
 INCLUDES = -I../nxcomp -I../nxcompext -I../nxesd
 LDLIBS   = -lXpm -L../nxcompext -lXcompext -L../nxcomp -L../nxesd/.libs -lXcomp -lX11 -lXext
-VERSION     = 1.5.0-2
+VERSION     = 2.1.0
 KEYMAP_PATH = $(datadir)/keymaps-windows/
 
 RDPOBJ   = tcp.o iso.o mcs.o secure.o licence.o rdp.o orders.o bitmap.o cache.o rdp5.o channels.o rdpdr.o serial.o printer.o disk.o parallel.o printercache.o mppc.o pstcache.o lspci.o seamless.o

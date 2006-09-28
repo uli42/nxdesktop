@@ -1,5 +1,24 @@
 ChangeLog:
 
+nxdesktop-2.1.0-3
+
+- Fixed TR08D01490. Now cut&paste operations between RDP session and
+  local desktop works.
+
+- Changed position to some variables declaration.
+
+
+nxdesktop-2.1.0-2
+
+- Merged code with rdesktop 1.4.1.
+
+- Separated original and modified files into '.DESKTOP.original' and
+  '.NX.original'.
+
+nxdesktop-2.1.0-1
+
+- Opened the 2.1.0 branch based on nxdesktop-2.0.0-50.
+
 nxdesktop-2.0.0-50
 
 - Updated to reflect the changes to NXSetUnpackColormap(). Colormap
@@ -18,15 +37,6 @@ nxdesktop-2.0.0-48
 
 - Updated messages in connecting and disconnecting phases to comply
   with standard message format.
-
-- Adjusted compliance with nxcompext-2.0.0-28.
-
-nxdesktop-2.0.0-47-TOR1-CHL1
-
-- Updated messages in connecting and disconnecting phases to comply
-  with standard message format.
-
-nxdesktop-2.0.0-47-TOR1
 
 - Adjusted compliance with nxcompext-2.0.0-28.
 

@@ -2,7 +2,7 @@
 #
 # rdesktop: A Remote Desktop Protocol client
 # configure script
-# Copyright (C) Matthew Chapman 1999-2002
+# Copyright (C) Matthew Chapman 1999-2005
 #
 
 echo "nxdesktop build configuration script"
