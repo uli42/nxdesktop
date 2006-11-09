@@ -1,3 +1,22 @@
+/* -*- c-basic-offset: 8 -*-
+   rdesktop: A Remote Desktop Protocol client.
+   Copyright (C) Matthew Chapman 1999-2005
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
+
 /**************************************************************************/
 /*                                                                        */
 /* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
@@ -14,6 +33,15 @@
 /* All rights reserved.                                                   */
 /*                                                                        */
 /**************************************************************************/
+
+#ifndef RDESKTOP_PROTO_H
+#define RDESKTOP_PROTO_H
+
+/* *INDENT-OFF* */
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* *INDENT-ON* */
 
 /* bitmap.c */
 BOOL bitmap_decompress(uint8 * output, int width, int height, uint8 * input, int size, int Bpp);
@@ -40,12 +68,11 @@ STREAM channel_init(VCHANNEL * channel, uint32 length);
 void channel_send(STREAM s, VCHANNEL * channel);
 void channel_process(STREAM s, uint16 mcs_channel);
 /* cliprdr.c */
-void cliprdr_send_text_format_announce(void);
-void cliprdr_send_blah_format_announce(void);
 void cliprdr_send_simple_native_format_announce(uint32 format);
 void cliprdr_send_native_format_announce(uint8 * formats_data, uint32 formats_data_length);
 void cliprdr_send_data_request(uint32 format);
 void cliprdr_send_data(uint8 * data, uint32 length);
+void cliprdr_set_mode(const char *optarg);
 BOOL cliprdr_init(void);
 /* disk.c */
 int disk_enum_devices(uint32 * id, char *optarg);
@@ -59,12 +86,15 @@ NTSTATUS disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern,
 int mppc_expand(uint8 * data, uint32 clen, uint8 ctype, uint32 * roff, uint32 * rlen);
 /* ewmhints.c */
 int get_current_workarea(uint32 * x, uint32 * y, uint32 * width, uint32 * height);
+void ewmh_init(void);
 /* iso.c */
 STREAM iso_init(int length);
 void iso_send(STREAM s);
 STREAM iso_recv(uint8 * rdpver);
 BOOL iso_connect(char *server, char *username);
+BOOL iso_reconnect(char *server);
 void iso_disconnect(void);
+void iso_reset_state(void);
 /* licence.c */
 void licence_process(STREAM s);
 /* mcs.c */
@@ -73,7 +103,9 @@ void mcs_send_to_channel(STREAM s, uint16 channel);
 void mcs_send(STREAM s);
 STREAM mcs_recv(uint16 * channel, uint8 * rdpver);
 BOOL mcs_connect(char *server, STREAM mcs_data, char *username);
+BOOL mcs_reconnect(char *server, STREAM mcs_data);
 void mcs_disconnect(void);
+void mcs_reset_state(void);
 /* orders.c */
 void process_orders(STREAM s, uint16 num_orders);
 void reset_order_state(void);
@@ -95,6 +127,7 @@ BOOL pstcache_init(uint8 cache_id);
 int main(int argc, char *argv[]);
 void generate_random(uint8 * random);
 void *xmalloc(int size);
+char *xstrdup(const char *s);
 void *xrealloc(void *oldmem, int size);
 void xfree(void *mem);
 void error(char *format, ...);
@@ -127,16 +160,20 @@ void rdp_out_unistr(STREAM s, char *string, int len);
 int rdp_in_unistr(STREAM s, char *string, int uni_len);
 void rdp_send_input(uint32 time, uint16 message_type, uint16 device_flags, uint16 param1,
 		    uint16 param2);
+void rdp_send_client_window_status(int status);
 void process_colour_pointer_pdu(STREAM s);
 void process_cached_pointer_pdu(STREAM s);
 void process_system_pointer_pdu(STREAM s);
 void process_bitmap_updates(STREAM s);
 void process_palette(STREAM s);
-BOOL rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason);
+void process_disconnect_pdu(STREAM s, uint32 * ext_disc_reason);
 void rdp_main_loop(BOOL * deactivated, uint32 * ext_disc_reason);
+BOOL rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason);
 BOOL rdp_connect(char *server, uint32 flags, char *domain, char *password, char *command,
 		 char *directory);
-BOOL test_rdp_connect(char *server);
+BOOL rdp_reconnect(char *server, uint32 flags, char *domain, char *password, char *command,
+		   char *directory, char *cookie);
+void rdp_reset_state(void);
 void rdp_disconnect(void);
 /* rdpdr.c */
 int get_device_index(NTHANDLE handle);
@@ -171,11 +208,13 @@ void sec_send(STREAM s, uint32 flags);
 void sec_process_mcs_data(STREAM s);
 STREAM sec_recv(uint8 * rdpver);
 BOOL sec_connect(char *server, char *username);
+BOOL sec_reconnect(char *server);
 void sec_disconnect(void);
+void sec_reset_state(void);
 /* serial.c */
 int serial_enum_devices(uint32 * id, char *optarg);
-BOOL serial_get_timeout(NTHANDLE handle, uint32 length, uint32 * timeout, uint32 * itv_timeout);
 BOOL serial_get_event(NTHANDLE handle, uint32 * result);
+BOOL serial_get_timeout(NTHANDLE handle, uint32 length, uint32 * timeout, uint32 * itv_timeout);
 /* tcp.c */
 STREAM tcp_init(uint32 maxlen);
 void tcp_send(STREAM s);
@@ -183,16 +222,24 @@ STREAM tcp_recv(STREAM s, uint32 length);
 BOOL tcp_connect(char *server);
 void tcp_disconnect(void);
 char *tcp_get_address(void);
+void tcp_reset_state(void);
 /* xclip.c */
 void ui_clip_format_announce(uint8 * data, uint32 length);
 void ui_clip_handle_data(uint8 * data, uint32 length);
+void ui_clip_request_failed(void);
 void ui_clip_request_data(uint32 format);
 void ui_clip_sync(void);
+void ui_clip_set_mode(const char *optarg);
 void xclip_init(void);
+void xclip_deinit(void);
 /* xkeymap.c */
+BOOL xkeymap_from_locale(const char *locale);
+FILE *xkeymap_open(const char *filename);
 void xkeymap_init(void);
 BOOL handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pressed);
 key_translation xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state);
+void xkeymap_send_keys(uint32 keysym, unsigned int keycode, unsigned int state, uint32 ev_time,
+		       BOOL pressed, uint8 nesting);
 uint16 xkeymap_translate_button(unsigned int button);
 char *get_ksname(uint32 keysym);
 void save_remote_modifiers(uint8 scancode);
@@ -203,8 +250,6 @@ uint16 ui_get_numlock_state(unsigned int state);
 void reset_modifier_keys(void);
 void rdp_send_scancode(uint32 time, uint16 flags, uint8 scancode);
 /* xwin.c */
-void ui_begin_update(void);
-void ui_end_update(void);
 BOOL get_key_state(unsigned int state, uint32 keysym);
 BOOL ui_init(void);
 BOOL ui_init_nx(void);
@@ -247,11 +292,10 @@ void ui_memblt(uint8 opcode, int x, int y, int cx, int cy, HBITMAP src, int srcx
 void ui_triblt(uint8 opcode, int x, int y, int cx, int cy, HBITMAP src, int srcx, int srcy,
 	       BRUSH * brush, int bgcolour, int fgcolour);
 void ui_line(uint8 opcode, int startx, int starty, int endx, int endy, PEN * pen);
-void ui_poly_line(uint8 opcode, short *points, int count, PEN *pen);
 void ui_rect(int x, int y, int cx, int cy, int colour);
 void ui_polygon(uint8 opcode, uint8 fillmode, POINT * point, int npoints, BRUSH * brush,
 		int bgcolour, int fgcolour);
-void ui_polyline(uint8 opcode, POINT * point, int npoints, PEN * pen);
+void ui_polyline(uint8 opcode, POINT * points, int npoints, PEN * pen);
 void ui_ellipse(uint8 opcode, uint8 fillmode, int x, int y, int cx, int cy, BRUSH * brush,
  		int bgcolour, int fgcolour);
 /* NX */
@@ -275,6 +319,7 @@ void ui_seamless_toggle(void);
 void ui_seamless_create_window(unsigned long id, unsigned long group, unsigned long parent,
 			       unsigned long flags);
 void ui_seamless_destroy_window(unsigned long id, unsigned long flags);
+void ui_seamless_destroy_group(unsigned long id, unsigned long flags);
 void ui_seamless_move_window(unsigned long id, int x, int y, int width, int height,
 			     unsigned long flags);
 void ui_seamless_restack_window(unsigned long id, unsigned long behind, unsigned long flags);
@@ -303,3 +348,5 @@ unsigned int seamless_send_focus(unsigned long id, unsigned long flags);
 void nxdesktopExit(int reason);
 int nxdesktopDialog(int type, int code);
 void flush_sound();
+
+#endif

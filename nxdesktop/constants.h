@@ -79,6 +79,7 @@ enum MCS_PDU_TYPE
 /* RDP secure transport constants */
 #define SEC_RANDOM_SIZE		32
 #define SEC_MODULUS_SIZE	64
+#define SEC_MAX_MODULUS_SIZE	256
 #define SEC_PADDING_SIZE	8
 #define SEC_EXPONENT_SIZE	4
 
@@ -86,6 +87,7 @@ enum MCS_PDU_TYPE
 #define SEC_ENCRYPT		0x0008
 #define SEC_LOGON_INFO		0x0040
 #define SEC_LICENCE_NEG		0x0080
+#define SEC_REDIRECT_ENCRYPT	0x0C00
 
 #define SEC_TAG_SRV_INFO	0x0c01
 #define SEC_TAG_SRV_CRYPT	0x0c02
@@ -123,6 +125,7 @@ enum RDP_PDU_TYPE
 {
 	RDP_PDU_DEMAND_ACTIVE = 1,
 	RDP_PDU_CONFIRM_ACTIVE = 3,
+       	RDP_PDU_REDIRECT = 4,	/* MS Server 2003 Session Redirect */
 	RDP_PDU_DEACTIVATE = 6,
 	RDP_PDU_DATA = 7
 };
@@ -135,6 +138,7 @@ enum RDP_DATA_PDU_TYPE
 	RDP_DATA_PDU_INPUT = 28,
 	RDP_DATA_PDU_SYNCHRONISE = 31,
 	RDP_DATA_PDU_BELL = 34,
+	RDP_DATA_PDU_CLIENT_WINDOW_STATUS = 35,
 	RDP_DATA_PDU_LOGON = 38,
 	RDP_DATA_PDU_FONT2 = 39,
 	RDP_DATA_PDU_KEYBOARD_INDICATORS = 41,
@@ -425,88 +429,6 @@ enum RDP_INPUT_DEVICE
 #define exDiscReasonLicenseErrClientEncryption		0x0108
 #define exDiscReasonLicenseCantUpgradeLicense		0x0109
 #define exDiscReasonLicenseNoRemoteConnections		0x010a
-
-
-
-#define VIRTUAL_CHANNEL_VERSION_WIN2000         1
-
-// Events passed to VirtualChannelInitEvent
-
-// Client initialized (no data)
-#define CHANNEL_EVENT_INITIALIZED               0
-
-// Connection established (data = name of Server)
-#define CHANNEL_EVENT_CONNECTED                 1
-
-// Connection established with old Server, so no channel support
-#define CHANNEL_EVENT_V1_CONNECTED              2
-
-// Connection ended (no data)
-#define CHANNEL_EVENT_DISCONNECTED              3
-
-// Client terminated (no data)
-#define CHANNEL_EVENT_TERMINATED                4
-
-// NOTE - 5 through 9 not listed in cchannel.h
-// Data received from Server
-// (data = incoming data)
-#define CHANNEL_EVENT_DATA_RECEIVED             10
-
-// VirtualChannelWrite completed
-// (pData - pUserData passed on VirtualChannelWrite)
-#define CHANNEL_EVENT_WRITE_COMPLETE            11
-
-// VirtualChannelWrite cancelled
-// (pData - pUserData passed on VirtualChannelWrite)
-#define CHANNEL_EVENT_WRITE_CANCELLED           12
-
-// Return codes from VirtualChannelXxx functions
-#define CHANNEL_RC_OK                           0
-#define CHANNEL_RC_ALREADY_INITIALIZED          1
-#define CHANNEL_RC_NOT_INITIALIZED              2
-#define CHANNEL_RC_ALREADY_CONNECTED            3
-#define CHANNEL_RC_NOT_CONNECTED                4
-#define CHANNEL_RC_TOO_MANY_CHANNELS            5
-#define CHANNEL_RC_BAD_CHANNEL                  6
-#define CHANNEL_RC_BAD_CHANNEL_HANDLE           7
-#define CHANNEL_RC_NO_BUFFER                    8
-#define CHANNEL_RC_BAD_INIT_HANDLE              9
-#define CHANNEL_RC_NOT_OPEN                     10
-#define CHANNEL_RC_BAD_PROC                     11
-#define CHANNEL_RC_NO_MEMORY                    12
-#define CHANNEL_RC_UNKNOWN_CHANNEL_NAME         13
-#define CHANNEL_RC_ALREADY_OPEN                 14
-#define CHANNEL_RC_NOT_IN_VIRTUALCHANNELENTRY   15
-#define CHANNEL_RC_NULL_DATA                    16
-#define CHANNEL_RC_ZERO_LENGTH                  17
-/*'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-'
-' Constants from Pchannel.h included in Platform SDK
-' Virtual Channel protocol header
-' VC stuff common to Client & Server
-' 2001-04-11 version, 8603 bytes
-'
-'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''*/
-#define CHANNEL_CHUNK_LENGTH                    1600
-//#define CHANNEL_FLAG_FIRST                    1
-//#define CHANNEL_FLAG_LAST                     2
-#define CHANNEL_FLAG_MIDDLE                     0
-#define CHANNEL_FLAG_FAIL                       256
-//#define CHANNEL_FLAG_SHOW_PROTOCOL            16
-#define CHANNEL_FLAG_SUSPEND                    32
-#define CHANNEL_FLAG_RESUME                     64
-//#define CHANNEL_OPTION_INITIALIZED            0x80000000
-//#define CHANNEL_OPTION_ENCRYPT_RDP            1073741824
-#define CHANNEL_OPTION_ENCRYPT_SC               536870912
-#define CHANNEL_OPTION_ENCRYPT_CS               268435456
-#define CHANNEL_OPTION_PRI_HIGH                 134217728
-#define CHANNEL_OPTION_PRI_MED                  67108864
-#define CHANNEL_OPTION_PRI_LOW                  33554432
-//#define CHANNEL_OPTION_COMPRESS_RDP           8388608
-#define CHANNEL_OPTION_COMPRESS                 4194304
-//#define CHANNEL_OPTION_SHOW_PROTOCOL          2097152
-#define CHANNEL_MAX_COUNT                       30
-#define CHANNEL_NAME_LEN                        7
 
 /* SeamlessRDP constants */
 #define SEAMLESSRDP_NOTYETMAPPED -1

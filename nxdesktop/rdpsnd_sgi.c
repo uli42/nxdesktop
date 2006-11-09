@@ -1,9 +1,9 @@
-/* 
+/* -*- c-basic-offset: 8 -*- 
    rdesktop: A Remote Desktop Protocol client.
    Sound Channel Process Functions - SGI/IRIX
    Copyright (C) Matthew Chapman 2003
    Copyright (C) GuoJunBo guojunbo@ict.ac.cn 2003
-   Copyright (C) Jeremy Meng voidfoo@cwazy.co.uk 2004
+   Copyright (C) Jeremy Meng void.foo@gmail.com 2004, 2005
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,11 +20,28 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include "rdesktop.h"
 #include <errno.h>
 #include <dmedia/audio.h>
 
-#define IRIX_DEBUG 1
+/* #define IRIX_DEBUG 1 */
 
 #define IRIX_MAX_VOL     65535
 
@@ -77,7 +94,7 @@ wave_out_open(void)
 	queue_lo = queue_hi = 0;
 
 	audioconfig = alNewConfig();
-	if (audioconfig < 0)
+	if (audioconfig == (ALconfig) 0)
 	{
 		fprintf(stderr, "wave_out_open: alNewConfig failed: %s\n",
 			alGetErrorString(oserror()));
@@ -159,10 +176,10 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 #endif
 	}
 
-	/* Limited support to configure an opened audio port in IRIX The
+	/* Limited support to configure an opened audio port in IRIX. The
 	 number of channels is a static setting and can not be changed after
 	 a port is opened. So if the number of channels remains the same, we
-	 can configure other settings Otherwise we have to reopen the audio
+	 can configure other settings; otherwise we have to reopen the audio
 	 port, using same config. */
 
 	channels = pwfx->nChannels;
@@ -332,6 +349,7 @@ wave_out_play(void)
 /*  				fprintf(stderr,"Busy playing...\n"); */
 #endif
 				g_dsp_busy = True;
+				usleep(10);
 				return;
 			}
 		}

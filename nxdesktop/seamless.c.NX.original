@@ -18,6 +18,23 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include "rdesktop.h"
 #include <stdarg.h>
 #include <assert.h>
@@ -66,7 +83,7 @@ seamless_process_line(const char *line, void *data)
 	unsigned long id, flags;
 	char *endptr;
 
-	l = strdup(line); /* FIXME Should be xstrdup */
+	l = xstrdup(line);
 	p = l;
 
 	DEBUG_SEAMLESS(("seamlessrdp got:%s\n", p));
@@ -120,9 +137,24 @@ seamless_process_line(const char *line, void *data)
 		ui_seamless_destroy_window(id, flags);
 
 	}
+	else if (!strcmp("DESTROYGRP", tok1))
+	{
+		if (!tok4)
+			return False;
+
+		id = strtoul(tok3, &endptr, 0);
+		if (*endptr)
+			return False;
+
+		flags = strtoul(tok4, &endptr, 0);
+		if (*endptr)
+			return False;
+
+		ui_seamless_destroy_group(id, flags);
+	}
 	else if (!strcmp("SETICON", tok1))
 	{
-		unimpl("seamless_process_line","SeamlessRDP SETICON1\n");
+		unimpl("seamless_process_line", "SeamlessRDP SETICON1\n");
 	}
 	else if (!strcmp("POSITION", tok1))
 	{
@@ -211,7 +243,7 @@ seamless_process_line(const char *line, void *data)
 	}
 	else if (!strcmp("DEBUG", tok1))
 	{
-		printf("SeamlessRDP:%s\n", line);
+		DEBUG_SEAMLESS(("SeamlessRDP:%s\n", line));
 	}
 	else if (!strcmp("SYNCBEGIN", tok1))
 	{

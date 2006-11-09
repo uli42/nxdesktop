@@ -69,6 +69,9 @@ case $arg in
   --with-debug-clipboard)
     cflags="$cflags -g -DWITH_DEBUG_CLIPBOARD"
     ;;
+  --with-debug-channel)
+    cflags="$cflags -g -DWITH_DEBUG_CHANNEL"
+    ;;
   --without-debug*)
     ;;
   --with-ipv6)
@@ -109,6 +112,7 @@ case $arg in
     echo " --with-debug-kbd        enable debugging of keyboard handling"
     echo " --with-debug-rdp5       enable debugging of RDP5 code"
     echo " --with-debug-clipboard  enable debugging of clipboard code"
+    echo " --with-debug-channel    enable debugging of channel code"
     echo " --with-ipv6             enable support for IPv6"
     echo " --without-sound         disable support for sound redirection"
     echo " --with-sound=ARG        only detect sound-support for \"oss\" or \"esd\" or \"sun\" (and BSD)"

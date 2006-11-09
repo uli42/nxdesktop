@@ -1,4 +1,4 @@
-/*
+/*  -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    Persistent Bitmap Cache routines
    Copyright (C) Jeroen Meijer 2004-2005
@@ -41,8 +41,8 @@
 
 #define IS_PERSISTENT(id) (id < 8 && g_pstcache_fd[id] > 0)
 
-extern int g_server_bpp;
-extern uint32 g_stamp;
+extern int g_server_depth;
+
 extern BOOL g_bitmap_cache;
 extern BOOL g_bitmap_cache_persist_enable;
 extern BOOL g_bitmap_cache_precache;
@@ -90,8 +90,6 @@ pstcache_load_bitmap(uint8 cache_id, uint16 cache_idx)
 	celldata = (uint8 *) xmalloc(cellhdr.length);
 	rd_read_file(fd, celldata, cellhdr.length);
 	
-	DEBUG(("Loading bitmap from disk (%d:%d)\n", cache_id, cache_idx));
-
 	if (rdp_img_cache_nxcompressed)
 	{
 	    bitmap = ui_create_bitmap(cellhdr.width, cellhdr.height, celldata, cellhdr.length, True);
@@ -100,8 +98,10 @@ pstcache_load_bitmap(uint8 cache_id, uint16 cache_idx)
 	{
 	    bitmap = ui_create_bitmap(cellhdr.width, cellhdr.height, celldata, cellhdr.length, False);
 	}
-	cache_put_bitmap(cache_id, cache_idx, bitmap);
 
+        DEBUG(("Load bitmap from disk: id=%d, idx=%d, bmp=0x%x)\n", cache_id, cache_idx, bitmap));
+
+	cache_put_bitmap(cache_id, cache_idx, bitmap);
 	xfree(celldata);
 	return True;
 }
@@ -135,7 +135,8 @@ pstcache_save_bitmap(uint8 cache_id, uint16 cache_idx, uint8 * key,
 int
 pstcache_enumerate(uint8 id, HASH_KEY * keylist)
 {
-	int fd, idx, n;
+	int fd, n;
+        uint16 idx;
 	sint16 mru_idx[0xa00];
 	uint32 mru_stamp[0xa00];
 	CELLHEADER cellhdr;
@@ -160,7 +161,7 @@ pstcache_enumerate(uint8 id, HASH_KEY * keylist)
 			memcpy(keylist[idx], cellhdr.key, sizeof(HASH_KEY));
 
 			/* Pre-cache (not possible for 8 bit colour depth cause it needs a colourmap) */
-			if (g_bitmap_cache_precache && cellhdr.stamp && g_server_bpp > 8)
+			if (g_bitmap_cache_precache && cellhdr.stamp && g_server_depth > 8)
 				pstcache_load_bitmap(id, idx);
 
 			/* Sort by stamp */
@@ -207,7 +208,7 @@ pstcache_init(uint8 cache_id)
 		return False;
 	}
 
-	g_pstcache_Bpp = (g_server_bpp + 7) / 8;
+	g_pstcache_Bpp = (g_server_depth + 7) / 8;
 	sprintf(filename, "cache/pstcache_%d_%d", cache_id, g_pstcache_Bpp);
 	DEBUG(("persistent bitmap cache file: %s\n", filename));
 

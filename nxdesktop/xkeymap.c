@@ -1,4 +1,4 @@
-/*
+/* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    User interface services - X keyboard mapping
 
@@ -47,6 +47,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include <time.h>
+#include <string.h>
 #include "rdesktop.h"
 #include "scancodes.h"
 
@@ -78,8 +79,12 @@ extern void nxdesktopMoveViewport(int hShift, int vShift);
 
 extern Display *g_display;
 extern Window g_wnd;
-extern char keymapname[16];
-extern int g_keylayout;
+
+extern char g_keymapname[16];
+extern unsigned int g_keylayout;
+extern int g_keyboard_type;
+extern int g_keyboard_subtype;
+extern int g_keyboard_functionkeys;
 extern int g_win_button_size;
 extern BOOL g_enable_compose;
 extern BOOL g_use_rdp5;
@@ -90,17 +95,32 @@ static BOOL first_time_read_keyboard = True;
 static unsigned int initial_keyboard_state;
 /* NX */
 static BOOL keymap_loaded;
-static key_translation keymap[KEYMAP_SIZE];
+static key_translation *keymap[KEYMAP_SIZE];
 static int min_keycode;
 static uint16 remote_modifier_state = 0;
 static uint16 saved_remote_modifier_state = 0;
 
 static void update_modifier_state(uint8 scancode, BOOL pressed);
 
+/* Free key_translation structure, including linked list */
+static void
+free_key_translation(key_translation * ptr)
+{
+	key_translation *next;
+
+	while (ptr)
+	{
+		next = ptr->next;
+		xfree(ptr);
+		ptr = next;
+	}
+}
+
 static void
 add_to_keymap(char *keyname, uint8 scancode, uint16 modifiers, char *mapname)
 {
 	KeySym keysym;
+	key_translation *tr;
 
 	keysym = XStringToKeysym(keyname);
 	if (keysym == NoSymbol)
@@ -109,22 +129,210 @@ add_to_keymap(char *keyname, uint8 scancode, uint16 modifiers, char *mapname)
 		return;
 	}
 
-	DEBUG_KBD(("Adding translation, keysym=0x%x, scancode=0x%x, "
-		   "modifiers=0x%x\n", (unsigned int) keysym, scancode, modifiers));
+        DEBUG_KBD(("Adding translation, keysym=0x%x, scancode=0x%x, "
+                      "modifiers=0x%x\n", (unsigned int) keysym, scancode, modifiers));
 
-	keymap[keysym & KEYMAP_MASK].scancode = scancode;
-	keymap[keysym & KEYMAP_MASK].modifiers = modifiers;
+	tr = (key_translation *) xmalloc(sizeof(key_translation));
+	memset(tr, 0, sizeof(key_translation));
+	tr->scancode = scancode;
+	tr->modifiers = modifiers;
 
+        if (! keymap[keysym & KEYMAP_MASK])       
+        {
+          free_key_translation(keymap[keysym & KEYMAP_MASK]);
+          keymap[keysym & KEYMAP_MASK] = tr;
+        }
+        else
+        {
+          tr -> next = keymap[keysym & KEYMAP_MASK];
+          keymap[keysym & KEYMAP_MASK] = tr; 
+        }
+        
 	return;
 }
 
+static void
+add_sequence(char *rest, char *mapname)
+{
+	KeySym keysym;
+	key_translation *tr, **prev_next;
+	size_t chars;
+	char keyname[KEYMAP_MAX_LINE_LENGTH];
+
+	/* Skip over whitespace after the sequence keyword */
+	chars = strspn(rest, " \t");
+	rest += chars;
+
+	/* Fetch the keysym name */
+	chars = strcspn(rest, " \t\0");
+	STRNCPY(keyname, rest, chars + 1);
+	rest += chars;
+
+	keysym = XStringToKeysym(keyname);
+	if (keysym == NoSymbol)
+	{
+		DEBUG_KBD(("Bad keysym \"%s\" in keymap %s (ignoring line)\n", keyname, mapname));
+		return;
+	}
+
+
+	DEBUG_KBD(("Adding sequence for keysym (0x%lx, %s) -> ", keysym, keyname));
+
+	free_key_translation(keymap[keysym & KEYMAP_MASK]);
+	prev_next = &keymap[keysym & KEYMAP_MASK];
+
+	while (*rest)
+	{
+		/* Skip whitespace */
+		chars = strspn(rest, " \t");
+		rest += chars;
+
+		/* Fetch the keysym name */
+		chars = strcspn(rest, " \t\0");
+		STRNCPY(keyname, rest, chars + 1);
+		rest += chars;
+
+		keysym = XStringToKeysym(keyname);
+		if (keysym == NoSymbol)
+		{
+			DEBUG_KBD(("Bad keysym \"%s\" in keymap %s (ignoring line)\n", keyname,
+				   mapname));
+			return;
+		}
+
+		/* Allocate space for key_translation structure */
+		tr = (key_translation *) xmalloc(sizeof(key_translation));
+		memset(tr, 0, sizeof(key_translation));
+		*prev_next = tr;
+		prev_next = &tr->next;
+		tr->seq_keysym = keysym;
+
+		DEBUG_KBD(("0x%x, ", (unsigned int) keysym));
+	}
+	DEBUG_KBD(("\n"));
+}
+
+BOOL
+xkeymap_from_locale(const char *locale)
+{
+	char *str, *ptr;
+	FILE *fp;
+
+	/* Create a working copy */
+	str = xstrdup(locale);
+
+	/* Truncate at dot and at */
+	ptr = strrchr(str, '.');
+	if (ptr)
+		*ptr = '\0';
+	ptr = strrchr(str, '@');
+	if (ptr)
+		*ptr = '\0';
+
+	/* Replace _ with - */
+	ptr = strrchr(str, '_');
+	if (ptr)
+		*ptr = '-';
+
+	/* Convert to lowercase */
+	ptr = str;
+	while (*ptr)
+	{
+		*ptr = tolower((int) *ptr);
+		ptr++;
+	}
+
+	/* Try to open this keymap (da-dk) */
+	fp = xkeymap_open(str);
+	if (fp == NULL)
+	{
+		/* Truncate at dash */
+		ptr = strrchr(str, '-');
+		if (ptr)
+			*ptr = '\0';
+
+		/* Try the short name (da) */
+		fp = xkeymap_open(str);
+	}
+
+	if (fp)
+	{
+		fclose(fp);
+		STRNCPY(g_keymapname, str, sizeof(g_keymapname));
+		xfree(str);
+		return True;
+	}
+
+	xfree(str);
+	return False;
+}
+
+
+/* Joins two path components. The result should be freed with
+   xfree(). */
+static char *
+pathjoin(const char *a, const char *b)
+{
+	char *result;
+	result = xmalloc(PATH_MAX * 2 + 1);
+
+	if (b[0] == '/')
+	{
+		strncpy(result, b, PATH_MAX);
+	}
+	else
+	{
+		strncpy(result, a, PATH_MAX);
+		strcat(result, "/");
+		strncat(result, b, PATH_MAX);
+	}
+	return result;
+}
+
+/* Try to open a keymap with fopen() */
+FILE *
+xkeymap_open(const char *filename)
+{
+	char *path1, *path2;
+	char *home;
+	FILE *fp;
+
+	/* Try ~/.rdesktop/keymaps */
+	home = getenv("HOME");
+	if (home)
+	{
+		path1 = pathjoin(home, "NX/nxdesktop/keymaps");
+		path2 = pathjoin(path1, filename);
+		xfree(path1);
+		fp = fopen(path2, "r");
+		xfree(path2);
+		if (fp)
+			return fp;
+	}
+
+	/* Try KEYMAP_PATH */
+	path1 = pathjoin(KEYMAP_PATH, filename);
+	fp = fopen(path1, "r");
+	xfree(path1);
+	if (fp)
+		return fp;
+
+	/* Try current directory, in case we are running from the source
+	   tree */
+	path1 = pathjoin("keymaps", filename);
+	fp = fopen(path1, "r");
+	xfree(path1);
+	if (fp)
+		return fp;
+
+	return NULL;
+}
 
 static BOOL
 xkeymap_read(char *mapname)
 {
 	FILE *fp;
 	char line[KEYMAP_MAX_LINE_LENGTH];
-	char path[PATH_MAX], inplace_path[PATH_MAX];
 	unsigned int line_num = 0;
 	unsigned int line_length = 0;
 	char *keyname, *p;
@@ -132,23 +340,12 @@ xkeymap_read(char *mapname)
 	uint8 scancode;
 	uint16 modifiers;
 
+	fp = xkeymap_open(mapname);
 
-	strcpy(path, KEYMAP_PATH);
-	strncat(path, mapname, sizeof(path) - sizeof(KEYMAP_PATH));
-
-	fp = fopen(path, "r");
 	if (fp == NULL)
 	{
-		/* in case we are running from the source tree */
-		strcpy(inplace_path, "keymaps/");
-		strncat(inplace_path, mapname, sizeof(inplace_path) - sizeof("keymaps/"));
-
-		fp = fopen(inplace_path, "r");
-		if (fp == NULL)
-		{
-			error("Failed to open keymap %s\n", path);
-			return False;
-		}
+		error("Failed to open keymap %s\n", mapname);
+		return False;
 	}
 
 	/* FIXME: More tolerant on white space */
@@ -170,26 +367,59 @@ xkeymap_read(char *mapname)
 		}
 
 		/* Include */
-		if (strncmp(line, "include ", 8) == 0)
+		if (str_startswith(line, "include "))
 		{
-			if (!xkeymap_read(line + 8))
+			if (!xkeymap_read(line + sizeof("include ") - 1))
 				return False;
 			continue;
 		}
 
 		/* map */
-		if (strncmp(line, "map ", 4) == 0)
+		if (str_startswith(line, "map "))
 		{
-			g_keylayout = strtol(line + 4, NULL, 16);
+			g_keylayout = strtoul(line + sizeof("map ") - 1, NULL, 16);
 			DEBUG_KBD(("Keylayout 0x%x\n", g_keylayout));
 			continue;
 		}
 
 		/* compose */
-		if (strncmp(line, "enable_compose", 15) == 0)
+		if (str_startswith(line, "enable_compose"))
 		{
 			DEBUG_KBD(("Enabling compose handling\n"));
 			g_enable_compose = True;
+			continue;
+		}
+
+		/* sequence */
+		if (str_startswith(line, "sequence"))
+		{
+			add_sequence(line + sizeof("sequence") - 1, mapname);
+			continue;
+		}
+
+		/* keyboard_type */
+		if (str_startswith(line, "keyboard_type "))
+		{
+			g_keyboard_type = strtol(line + sizeof("keyboard_type ") - 1, NULL, 16);
+			DEBUG_KBD(("keyboard_type 0x%x\n", g_keyboard_type));
+			continue;
+		}
+
+		/* keyboard_subtype */
+		if (str_startswith(line, "keyboard_subtype "))
+		{
+			g_keyboard_subtype =
+				strtol(line + sizeof("keyboard_subtype ") - 1, NULL, 16);
+			DEBUG_KBD(("keyboard_subtype 0x%x\n", g_keyboard_subtype));
+			continue;
+		}
+
+		/* keyboard_functionkeys */
+		if (str_startswith(line, "keyboard_functionkeys "))
+		{
+			g_keyboard_functionkeys =
+				strtol(line + sizeof("keyboard_functionkeys ") - 1, NULL, 16);
+			DEBUG_KBD(("keyboard_functionkeys 0x%x\n", g_keyboard_functionkeys));
 			continue;
 		}
 
@@ -227,7 +457,7 @@ xkeymap_read(char *mapname)
 
 		if (strstr(line_rest, "shift"))
 		{
-			MASK_ADD_BITS(modifiers, MapLeftShiftMask);
+			MASK_ADD_BITS(modifiers, MapLeftShiftMask); 
 		}
 
 		if (strstr(line_rest, "numlock"))
@@ -268,19 +498,10 @@ void
 xkeymap_init(void)
 {
 	unsigned int max_keycode;
-	char *mapname_ptr;
 
-	/* Make keymapname lowercase */
-	mapname_ptr = (char *)keymapname;
-	while (*mapname_ptr)
+	if (strcmp(g_keymapname, "none"))
 	{
-		*mapname_ptr = tolower((int) *mapname_ptr);
-		mapname_ptr++;
-	}
-
-	if (strcmp(keymapname, "none"))
-	{
-		if (xkeymap_read(keymapname))
+		if (xkeymap_read(g_keymapname))
 			keymap_loaded = True;
 	}
 
@@ -336,20 +557,18 @@ reset_winkey(uint32 ev_time)
 	}
 }
 
-/* Handles, for example, multi-scancode keypresses (which is not
-   possible via keymap-files) */
+/* Handle special key combinations */
 BOOL
 handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pressed)
 {
 	switch (keysym)
 	{
-                case XK_F:
-                case XK_f:
+		case XK_Return:
                         if ((get_key_state(state, XK_Alt_L) || get_key_state(state, XK_Alt_R))
                             && (get_key_state(state, XK_Control_L)
                                 || get_key_state(state, XK_Control_R)))
                         {
-                                /* Ctrl-Alt-F: toggle full screen */
+                                /* Ctrl-Alt-Enter: toggle full screen */
                                 if (pressed)
                                         xwin_toggle_fullscreen();
                                 return True;
@@ -417,12 +636,19 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 				return True;
 			break;
 		case XK_Num_Lock:
-			/* FIXME: We might want to do RDP_INPUT_SYNCHRONIZE here, if g_numlock_sync */
-			if (!g_numlock_sync)
-				/* Inhibit */
-				return True;
-			break;
+			/* Synchronize on key release */
+			if (g_numlock_sync && !pressed)
+				rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0,
+					       ui_get_numlock_state(read_keyboard_state()), 0);
 
+			/* Inhibit */
+			return True;
+			break;
+		case XK_Overlay1_Enable:
+			/* Toggle SeamlessRDP */
+			if (pressed)
+				ui_seamless_toggle();
+			break;
                 case XK_Up:
                 case XK_KP_Up:
                 case XK_KP_8:
@@ -511,70 +737,162 @@ handle_special_keys(uint32 keysym, unsigned int state, uint32 ev_time, BOOL pres
 	return False;
 }
 
-
 key_translation
 xkeymap_translate_key(uint32 keysym, unsigned int keycode, unsigned int state)
 {
-	key_translation tr = { 0, 0 };
+	key_translation tr = { 0, 0, 0, 0 };
+	key_translation *ptr;
 
-	tr = keymap[keysym & KEYMAP_MASK];
-
-	if (tr.modifiers & MapInhibitMask)
+	ptr = keymap[keysym & KEYMAP_MASK];
+	if (ptr)
 	{
-		DEBUG_KBD(("Inhibiting key\n"));
-		tr.scancode = 0;
-		return tr;
-	}
+                if (ptr -> next)   /* list of candidates */
+                {
+                  int item_good;
+                  int item_mod;
 
-	if (tr.modifiers & MapLocalStateMask)
-	{
-		/* The modifiers to send for this key should be obtained
-		   from the local state. Currently, only shift is implemented. */
-		if (state & ShiftMask)
+                  do
+                  {
+                    item_good = 1;
+                    item_mod = ptr -> modifiers;
+                    
+                    if (ptr -> scancode == 0) item_good = 0;
+                    if (MASK_HAS_BITS(item_mod, MapRightAltMask) && !(state & 1<<7)) item_good = 0;
+                    if (MASK_HAS_BITS(item_mod, MapLeftAltMask) && !(state & 1<<3)) item_good = 0;
+                    if (MASK_HAS_BITS(item_mod, MapCtrlMask) && !(state & 1<<2)) item_good = 0;
+                    if (MASK_HAS_BITS(item_mod, MapWinMask) && !(state & 1<<6)) item_good = 0;
+                    if (MASK_HAS_BITS(item_mod, MapShiftMask) && !(state & 1)) item_good = 0;
+                    
+                    if (item_good == 0) 
+                      ptr = ptr -> next;
+                  } 
+                  while ((item_good == 0) && (ptr -> next));
+
+                  /* if non canditate is found we keep the first item */
+                  if (item_good == 0)
+                    ptr = keymap[keysym & KEYMAP_MASK];
+                }
+
+                tr = *ptr;
+
+		if (tr.seq_keysym == 0)	/* Normal scancode translation */
 		{
-			tr.modifiers = MapLeftShiftMask;
+			if (MASK_HAS_BITS(tr.modifiers, MapInhibitMask))
+			{
+				DEBUG_KBD(("Inhibiting key\n"));
+				tr.scancode = 0;
+				return tr;
+			}
+
+			if (MASK_HAS_BITS(tr.modifiers, MapLocalStateMask))
+			{
+				/* The modifiers to send for this key should be obtained
+				   from the local state. Currently, only shift is implemented. */
+				if (MASK_HAS_BITS(state, ShiftMask))
+				{
+					tr.modifiers = MapLeftShiftMask;
+				}
+			}
+
+			/* Windows interprets CapsLock+Ctrl+key
+			   differently from Shift+Ctrl+key. Since we
+			   are simulating CapsLock with Shifts, things
+			   like Ctrl+f with CapsLock on breaks. To
+			   solve this, we are releasing Shift if Ctrl
+			   is on, but only if Shift isn't physically pressed. */
+			if (MASK_HAS_BITS(tr.modifiers, MapShiftMask)
+			    && MASK_HAS_BITS(remote_modifier_state, MapCtrlMask)
+			    && !MASK_HAS_BITS(state, ShiftMask))
+			{
+				DEBUG_KBD(("Non-physical Shift + Ctrl pressed, releasing Shift\n"));
+				MASK_REMOVE_BITS(tr.modifiers, MapShiftMask);
+			}
+
+			DEBUG_KBD(("Found scancode translation, scancode=0x%x, modifiers=0x%x\n",
+				   tr.scancode, tr.modifiers));
 		}
-	}
-
-        if (((remote_modifier_state & MapLeftCtrlMask)  || 
-		(remote_modifier_state & MapRightCtrlMask)) && get_key_state(state, XK_Caps_Lock))
-	{
-		DEBUG_KBD(("CapsLock + Ctrl pressed, releasing LeftShift\n"));
-		tr.modifiers ^= MapLeftShiftMask;
-	}
-
-	if (tr.scancode != 0)
-	{
-		DEBUG_KBD(("Found key translation, scancode=0x%x, modifiers=0x%x\n",
-			   tr.scancode, tr.modifiers));
-		return tr;
-	}
-
-	if (keymap_loaded)
-		warning("No translation for (keysym 0x%lx, %s)\n", keysym, get_ksname(keysym));
-
-	/* not in keymap, try to interpret the raw scancode */
-	if (((int) keycode >= min_keycode) && (keycode <= 0x60))
-	{
-		tr.scancode = keycode - min_keycode;
-
-		/* The modifiers to send for this key should be
-		   obtained from the local state. Currently, only
-		   shift is implemented. */
-		if (state & ShiftMask)
-		{
-			tr.modifiers = MapLeftShiftMask;
-		}
-
-		DEBUG_KBD(("Sending guessed scancode 0x%x\n", tr.scancode));
 	}
 	else
 	{
-		DEBUG_KBD(("No good guess for keycode 0x%x found\n", keycode));
+		if (keymap_loaded)
+			warning("No translation for (keysym 0x%lx, %s)\n", keysym,
+				get_ksname(keysym));
+
+		/* not in keymap, try to interpret the raw scancode */
+		if (((int) keycode >= min_keycode) && (keycode <= 0x60))
+		{
+			tr.scancode = keycode - min_keycode;
+
+			/* The modifiers to send for this key should be
+			   obtained from the local state. Currently, only
+			   shift is implemented. */
+			if (MASK_HAS_BITS(state, ShiftMask))
+			{
+				tr.modifiers = MapLeftShiftMask;
+			}
+
+			DEBUG_KBD(("Sending guessed scancode 0x%x\n", tr.scancode));
+		}
+		else
+		{
+			DEBUG_KBD(("No good guess for keycode 0x%x found\n", keycode));
+		}
 	}
 
 	return tr;
 }
+
+void
+xkeymap_send_keys(uint32 keysym, unsigned int keycode, unsigned int state, uint32 ev_time,
+		  BOOL pressed, uint8 nesting)
+{
+	key_translation tr, *ptr;
+	tr = xkeymap_translate_key(keysym, keycode, state);
+
+	if (tr.seq_keysym == 0)
+	{
+		/* Scancode translation */
+		if (tr.scancode == 0)
+			return;
+
+		if (pressed)
+		{
+			save_remote_modifiers(tr.scancode);
+			ensure_remote_modifiers(ev_time, tr);
+			rdp_send_scancode(ev_time, RDP_KEYPRESS, tr.scancode);
+			restore_remote_modifiers(ev_time, tr.scancode);
+		}
+		else
+		{
+			rdp_send_scancode(ev_time, RDP_KEYRELEASE, tr.scancode);
+		}
+		return;
+	}
+
+	/* Sequence, only on key down */
+	if (pressed)
+	{
+		ptr = &tr;
+		do
+		{
+			DEBUG_KBD(("Handling sequence element, keysym=0x%x\n",
+				   (unsigned int) ptr->seq_keysym));
+
+			if (nesting++ > 32)
+			{
+				error("Sequence nesting too deep\n");
+				return;
+			}
+
+			xkeymap_send_keys(ptr->seq_keysym, keycode, state, ev_time, True, nesting);
+			xkeymap_send_keys(ptr->seq_keysym, keycode, state, ev_time, False, nesting);
+			ptr = ptr->next;
+		}
+		while (ptr);
+	}
+}
+
+
 
 uint16
 xkeymap_translate_button(unsigned int button)
@@ -744,7 +1062,7 @@ read_keyboard_state()
         Window wdummy;
         int dummy;
 
-        if (first_time_read_keyboard)
+	if (first_time_read_keyboard)
             {
             XQueryPointer(g_display, g_wnd, &wdummy, &wdummy, &dummy, &dummy, &dummy, &dummy, &state);
             first_time_read_keyboard = False;

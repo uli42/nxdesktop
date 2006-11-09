@@ -1,12 +1,38 @@
 ChangeLog:
 
+nxdesktop-2.1.0-8
+
+- Fixed the recognition of parameters from command line.
+
+- Removed unused cursor variable.
+
+nxdesktop-2.1.0-7
+
+- Fixed the rdesktop code version shown in logs.
+
+nxdesktop-2.1.0-6
+
+- Removed the X11 cursor displayed on starting a RDP session. 
+
+nxdesktop-2.1.0-5
+
+- Fixed TR08D01488. Braces are correctly shown in a RDP session when 
+  italian keyboard is selected.
+
+nxdesktop-2.1.0-4
+
+- Merged code with rdesktop 1.5.0.
+
+- Fixed TR09D01495. With the code merging the TR has been fixed.
+
+- Fixed TR07D01439. With the code merging the TR has been fixed.
+
 nxdesktop-2.1.0-3
 
 - Fixed TR08D01490. Now cut&paste operations between RDP session and
   local desktop works.
 
 - Changed position to some variables declaration.
-
 
 nxdesktop-2.1.0-2
 

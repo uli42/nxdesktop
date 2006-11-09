@@ -1,3 +1,20 @@
+rdesktop (1.5.0)
+  * SeamlessRDP - seamless windows support
+  * Keymap fixes
+  * Fix connection issues with Windows XP RTM
+  * Keyboard handling improvements and fixes
+  * SGI/Irix sound-driver fixes
+  * Support for clipboard INCR protocol
+  * Session Directory support (patch from Brian Chapeau <lheria@users.sourceforge.net>)
+  * Support for long filenames on redirected drives
+  * XOR ellipse drawing fix
+  * Clipboard unicode support (Ilya Konstantinov)
+  * Fix display issues with exotic color depths (30bpp, 32bpp, etc) (Ilya Konstantinov)
+  * Large file support
+  * The default color depth is now the depth of the root window
+  * Basic support for Windows Vista Beta 2
+  * Fix high cpu-usage in OSS-driver
+
 rdesktop (1.4.1)
    * persistent bitmap cache optimisations
    * support for more RDP-orders (ellipse, polygon)

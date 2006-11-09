@@ -1,4 +1,4 @@
-.TH rdesktop 1 "March 2005"
+.TH rdesktop 1 "November 2005"
 .SH NAME
 .I rdesktop
 \- Remote Desktop Protocol client
@@ -37,11 +37,29 @@ standard input).
 Client hostname.  Normally rdesktop automatically obtains the hostname of the
 client.
 .TP
-.BR "-k <layout>"
+.BR "-k <keyboard-map>"
 Keyboard layout to emulate.  This requires a corresponding keymap file to be
 installed.  The standard keymaps provided with rdesktop follow the RFC1766
 naming scheme: a language code followed by a country code if necessary - e.g.
-en-us, en-gb, de, fr, sv, etc.  The default is en-us (a US keyboard).
+en-us, en-gb, de, fr, sv, etc.
+
+The default keyboard map depends on the current locale (LC_* and LANG
+environment variables). If the current locale is unknown, the default
+keyboard map is en-us (a US English keyboard).
+
+The keyboard maps are file names, which means that they are case
+sensitive. The standard keymaps are all in lowercase.
+
+The keyboard maps are searched relative to the directories
+$HOME/.rdesktop/keymaps, KEYMAP_PATH (specified at build time), and
+$CWD/keymaps, in this order. The keyboard-map argument can also be an
+absolute filename.
+
+The special value `none' can be used instead of a keyboard map.
+In this case, rdesktop will guess the scancodes from the X11 event key
+codes using an internal mapping method. This method only supports the
+basic alphanumeric keys and may not work properly on all platforms
+so its use is discouraged.
 .TP
 .BR "-g <geometry>"
 Desktop geometry (WxH). If geometry is the special word "workarea", the geometry
@@ -57,6 +75,16 @@ toggled at any time using Ctrl-Alt-Enter.
 .BR "-b"
 Force the server to send screen updates as bitmaps rather than using
 higher-level drawing operations.
+.TP
+.BR "-A"
+Enable SeamlessRDP. In this mode, rdesktop creates a X11 window for
+each window on the server side. This mode requires the SeamlessRDP
+server side component, which is available from 
+\fIhttp://www.cendio.com/seamlessrdp/\fR.
+When using this option, you should specify a startup shell which
+launches the desired application through SeamlessRDP. 
+
+Example: rdesktop -A -s 'seamlessrdpshell notepad'.
 .TP
 .BR "-B"
 Use the BackingStore of the Xserver instead of the integrated one in
@@ -109,11 +137,11 @@ be decimal or hexadecimal (prefixed by 0x).
 Sets the colour depth for the connection (8, 15, 16 or 24).
 More than 8 bpp are only supported when connecting to Windows XP
 (up to 16 bpp) or newer.  Note that the colour depth may also be
-limited by the server configuration.
+limited by the server configuration. The default value is the depth 
+of the root window. 
 .TP
 .BR "-z"
-Enable compression of the RDP datastream. This currently only works
-for a colour depth of 8bpp.
+Enable compression of the RDP datastream.
 .TP
 .BR "-x <experience>"
 Changes default bandwidth performance behaviour for RDP5. By default only
@@ -168,6 +196,11 @@ printer on the command line will be set as your default printer.
 Redirects sound generated on the server to the client. "remote" only has
 any effect when you connect to the console with the -0 option. (Requires
 Windows XP or newer).
+.TP
+.BR "-r lspci"
+Activates the lspci channel, which allows the server to enumerate the
+clients PCI devices. See the file lspci-channel.txt in the
+documentation for more information.
 .TP
 .BR "-0"
 Attach to the console of the server (requires Windows Server 2003

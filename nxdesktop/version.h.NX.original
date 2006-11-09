@@ -16,6 +16,6 @@
 /**************************************************************************/
  
 #define NXDESKTOP_SESSION 2
-#define NXDESKTOP_MAJOR_VERSION 3
-#define NXDESKTOP_MINOR_VERSION 0
+#define NXDESKTOP_MAJOR_VERSION 2
+#define NXDESKTOP_MINOR_VERSION 1
 #define NXDESKTOP_RELEASE       0

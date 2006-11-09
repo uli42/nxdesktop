@@ -92,6 +92,9 @@ static PIXCACHE pixmap_cache[PIXCACHE_ENTRIES];
 
 BOOL rdp_window_moving = False;
 
+/* We can't include Xproto.h because of conflicting defines for BOOL */
+#define X_ConfigureWindow              12
+
 #ifdef NXDESKTOP_ONSTART
 
 /* Atom nxdesktop_WM_START; */
@@ -105,6 +108,7 @@ extern int g_width;
 extern int g_height;
 extern int g_xpos;
 extern int g_ypos;
+extern int g_pos;
 extern BOOL g_sendmotion;
 extern BOOL g_fullscreen;
 extern BOOL g_grab_keyboard;
@@ -112,7 +116,10 @@ extern BOOL g_hide_decorations;
 extern BOOL g_use_rdp5;
 
 extern char g_title[];
-extern int g_server_bpp;
+/* Color depth of the RDP session.
+   As of RDP 5.1, it may be 8, 15, 16 or 24. */
+extern int g_server_depth;
+
 extern int g_win_button_size;
 
 extern int xo;
@@ -131,11 +138,7 @@ BOOL viewport_mode_locked = False;
 Window g_viewport_wnd = 0;
 uint32 g_embed_wnd;
 static Window wnd2;
-BOOL g_enable_compose = False;
 BOOL g_Unobscured;		/* used for screenblt */
-static GC g_gc = NULL;
-static GC g_create_bitmap_gc = NULL;
-static GC g_create_glyph_gc = NULL;
 static Visual *g_visual;
 static int g_depth;
 static int g_bpp;
@@ -143,7 +146,6 @@ static XIM g_IM;
 static XIC g_IC;
 static XModifierKeymap *g_mod_map;
 static Cursor g_current_cursor;
-static HCURSOR g_null_cursor = NULL;
 static Cursor viewportCursor;
 static int viewportLastX;
 static int viewportLastY;
@@ -195,7 +197,6 @@ static int PACK_RDP_COMPRESSED;
 static int PACK_RDP_PLAIN;
 static BOOL g_focused;
 static BOOL g_mouse_in_wnd;
-static BOOL g_arch_match = False; /* set to True if RGB XServer and little endian */
 
 /*
  * Avoid to use special NX operations
@@ -292,9 +293,7 @@ typedef struct _seamless_window
 	struct _seamless_window *next;
 } seamless_window;
 static seamless_window *g_seamless_windows = NULL;
-/* for seamless mode
 static unsigned long g_seamless_focused = 0;
-*/
 static BOOL g_seamless_started = False;	/* Server end is up and running */
 static BOOL g_seamless_active = False;	/* We are currently in seamless mode */
 static BOOL g_seamless_hidden = False;	/* Desktop is hidden on server */
@@ -304,6 +303,57 @@ extern BOOL float_window_mode;
 int g_x_offset = 0;
 int g_y_offset = 0;
 
+extern uint32 g_embed_wnd;
+BOOL g_enable_compose = False;
+BOOL g_Unobscured;		/* used for screenblt */
+static GC g_gc = NULL;
+static GC g_create_bitmap_gc = NULL;
+static GC g_create_glyph_gc = NULL;
+static XRectangle g_clip_rectangle;
+static Visual *g_visual;
+/* Color depth of the X11 visual of our window (e.g. 24 for True Color R8G8B visual).
+   This may be 32 for R8G8B8 visuals, and then the rest of the bits are undefined
+   as far as we're concerned. */
+static int g_depth;
+/* Bits-per-Pixel of the pixmaps we'll be using to draw on our window.
+   This may be larger than g_depth, in which case some of the bits would
+   be kept solely for alignment (e.g. 32bpp pixmaps on a 24bpp visual). */
+static int g_bpp;
+static XIM g_IM;
+static XIC g_IC;
+static XModifierKeymap *g_mod_map;
+static Cursor g_current_cursor;
+static HCURSOR g_null_cursor = NULL;
+static Atom g_protocol_atom, g_kill_atom;
+extern Atom g_net_wm_state_atom;
+extern Atom g_net_wm_desktop_atom;
+static BOOL g_focused;
+static BOOL g_mouse_in_wnd;
+/* Indicates that:
+   1) visual has 15, 16 or 24 depth and the same color channel masks
+      as its RDP equivalent (implies X server is LE),
+   2) host is LE
+   This will trigger an optimization whose real value is questionable.
+*/
+static BOOL g_compatible_arch;
+/* Indicates whether RDP's bitmaps and our XImages have the same
+   binary format. If so, we can avoid an expensive translation.
+   Note that this can be true when g_compatible_arch is false,
+   e.g.:
+   
+     RDP(LE) <-> host(BE) <-> X-Server(LE)
+     
+   ('host' is the machine running rdesktop; the host simply memcpy's
+    so its endianess doesn't matter)
+ */
+static BOOL g_no_translate_image = False;
+
+/* endianness */
+static BOOL g_host_be;
+static BOOL g_xserver_be;
+static int g_red_shift_r, g_blue_shift_r, g_green_shift_r;
+static int g_red_shift_l, g_blue_shift_l, g_green_shift_l;
+
 /* software backing store */
 extern BOOL g_ownbackstore;
 static Pixmap g_backstore = 0;
@@ -312,6 +362,7 @@ static Pixmap g_backstore = 0;
 static BOOL g_moving_wnd;
 static int g_move_x_offset = 0;
 static int g_move_y_offset = 0;
+static BOOL g_using_full_workarea = False;
 
 /*  NX Mods */
 /* icon pixmaps */
@@ -360,11 +411,11 @@ extern BOOL g_rdpsnd;
 #define PROP_MOTIF_WM_HINTS_ELEMENTS    5
 typedef struct
 {
-	uint32 flags;
-	uint32 functions;
-	uint32 decorations;
-	sint32 inputMode;
-	uint32 status;
+	unsigned long flags;
+	unsigned long functions;
+	unsigned long decorations;
+	long inputMode;
+	unsigned long status;
 }
 PropMotifWmHints;
 
@@ -391,7 +442,7 @@ PixelColour;
                 } \
                 XSetClipRectangles(g_display, g_gc, 0, 0, &g_clip_rectangle, 1, YXBanded); \
         } while (0)
-/* For seamless mode
+
 static void
 seamless_XFillPolygon(Drawable d, XPoint * points, int npoints, int xoffset, int yoffset)
 {
@@ -410,7 +461,7 @@ seamless_XDrawLines(Drawable d, XPoint * points, int npoints, int xoffset, int y
 	XDrawLines(g_display, d, g_gc, points, npoints, CoordModePrevious);
 	points[0].x += xoffset;
 	points[0].y += yoffset;
-} */
+}
 
 /* NX */
 /* Holds the key modifiers state */
@@ -421,6 +472,7 @@ unsigned int buf_key_vector;
 #define FILL_RECTANGLE(x,y,cx,cy)\
 { \
 	XFillRectangle(g_display, g_wnd, g_gc, x, y, cx, cy); \
+ 	ON_ALL_SEAMLESS_WINDOWS(XFillRectangle, (g_display, sw->wnd, g_gc, x-sw->xoffset, y-sw->yoffset, cx, cy)); \
 	if (g_ownbackstore) \
 		XFillRectangle(g_display, g_backstore, g_gc, x, y, cx, cy); \
 }
@@ -435,6 +487,7 @@ unsigned int buf_key_vector;
 	XFillPolygon(g_display, g_wnd, g_gc, p, np, Complex, CoordModePrevious); \
 	if (g_ownbackstore) \
 		XFillPolygon(g_display, g_backstore, g_gc, p, np, Complex, CoordModePrevious); \
+	ON_ALL_SEAMLESS_WINDOWS(seamless_XFillPolygon, (sw->wnd, p, np, sw->xoffset, sw->yoffset)); \
 }
 
 #define DRAW_ELLIPSE(x,y,cx,cy,m)\
@@ -443,14 +496,15 @@ unsigned int buf_key_vector;
 	{ \
 		case 0:	/* Outline */ \
 			XDrawArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
+			ON_ALL_SEAMLESS_WINDOWS(XDrawArc, (g_display, sw->wnd, g_gc, x-sw->xoffset, y-sw->yoffset, cx, cy, 0, 360*64)); \
 			if (g_ownbackstore) \
 				XDrawArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
 			break; \
 		case 1: /* Filled */ \
-			XFillArc(g_display, g_ownbackstore ? g_backstore : g_wnd, g_gc, x, y, \
-				 cx, cy, 0, 360*64); \
+			XFillArc(g_display, g_wnd, g_gc, x, y, cx, cy, 0, 360*64); \
+			ON_ALL_SEAMLESS_WINDOWS(XFillArc, (g_display, sw->wnd, g_gc, x-sw->xoffset, y-sw->yoffset, cx, cy, 0, 360*64)); \
 			if (g_ownbackstore) \
-				XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y); \
+				XFillArc(g_display, g_backstore, g_gc, x, y, cx, cy, 0, 360*64); \
 			break; \
 	} \
 }
@@ -461,7 +515,7 @@ static Colormap g_xcolmap;
 static uint32 *g_colmap = NULL;
 static unsigned int r, b, g, or, ob, og, off;
 
-#define TRANSLATE(col)		( g_server_bpp != 8 ? translate_colour(col) : g_owncolmap ? col : g_colmap[col] )
+#define TRANSLATE(col)		( g_server_depth != 8 ? translate_colour(col) : g_owncolmap ? col : g_colmap[col] )
 #define SET_FOREGROUND(col)	XSetForeground(g_display, g_gc, TRANSLATE(col));
 #define SET_BACKGROUND(col)	XSetBackground(g_display, g_gc, TRANSLATE(col));
 
@@ -503,7 +557,6 @@ sw_get_window_by_id(unsigned long id)
 	return NULL;
 }
 
-/* For seamless mode
 static seamless_window *
 sw_get_window_by_wnd(Window wnd)
 {
@@ -514,7 +567,7 @@ sw_get_window_by_wnd(Window wnd)
 			return sw;
 	}
 	return NULL;
-}*/
+}
 
 
 static void
@@ -543,7 +596,6 @@ sw_remove_window(seamless_window * win)
 
 
 /* Move all windows except wnd to new desktop */
-/* For seamless mode
 static void
 sw_all_to_desktop(Window wnd, unsigned int desktop)
 {
@@ -558,11 +610,10 @@ sw_all_to_desktop(Window wnd, unsigned int desktop)
 			sw->desktop = desktop;
 		}
 	}
-} */
+}
 
 
 /* Send our position */
-/* For seamless mode
 static void
 sw_update_position(seamless_window * sw)
 {
@@ -584,11 +635,10 @@ sw_update_position(seamless_window * sw)
 	sw->outpos_yoffset = y;
 	sw->outpos_width = wa.width;
 	sw->outpos_height = wa.height;
-} */
+}
 
 
 /* Check if it's time to send our position */
-/* For seamless mode
 static void
 sw_check_timers()
 {
@@ -604,7 +654,7 @@ sw_check_timers()
 			sw_update_position(sw);
 		}
 	}
-}*/
+}
 
 
 static void
@@ -635,7 +685,7 @@ sw_restack_window(seamless_window * sw, unsigned long behind)
 	sw->behind = behind;
 }
 
-/*
+
 static void
 sw_handle_restack(seamless_window * sw)
 {
@@ -685,7 +735,6 @@ sw_handle_restack(seamless_window * sw)
       end:
 	XFree(children);
 }
-*/
 
 static seamless_group *
 sw_find_group(unsigned long id, BOOL dont_create)
@@ -769,6 +818,9 @@ mwm_hide_decorations(Window wnd)
 #define BSWAP32(x) { x = (((x & 0xff00ff) << 8) | ((x >> 8) & 0xff00ff)); \
 			x = (x << 16) | (x >> 16); }
 
+/* The following macros output the same octet sequences
+   on both BE and LE hosts: */
+
 #define BOUT16(o, x) { *(o++) = x >> 8; *(o++) = x; }
 #define BOUT24(o, x) { *(o++) = x >> 16; *(o++) = x >> 8; *(o++) = x; }
 #define BOUT32(o, x) { *(o++) = x >> 24; *(o++) = x >> 16; *(o++) = x >> 8; *(o++) = x; }
@@ -780,7 +832,7 @@ static uint32
 translate_colour(uint32 colour)
 {
 	PixelColour pc;
-	switch (g_server_bpp)
+	switch (g_server_depth)
 	{
 		case 15:
 			SPLITCOLOUR15(colour, pc);
@@ -848,7 +900,7 @@ translate8to16(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint16 value;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT2
@@ -882,7 +934,7 @@ translate8to24(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 
-	if (g_xserver_be)
+	if (g_compatible_arch)
 	{
 		while (out < end)
 		{
@@ -905,7 +957,7 @@ translate8to32(const uint8 * data, uint8 * out, uint8 * end)
 {
 	uint32 value;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT4
@@ -977,7 +1029,7 @@ translate15to24(const uint16 * data, uint8 * out, uint8 * end)
 	uint16 pixel;
 	PixelColour pc;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT3
@@ -1027,7 +1079,7 @@ translate15to32(const uint16 * data, uint8 * out, uint8 * end)
 	uint32 value;
 	PixelColour pc;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT4
@@ -1135,7 +1187,7 @@ translate16to24(const uint16 * data, uint8 * out, uint8 * end)
 	uint16 pixel;
 	PixelColour pc;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT3
@@ -1205,7 +1257,7 @@ translate16to32(const uint16 * data, uint8 * out, uint8 * end)
 	uint32 value;
 	PixelColour pc;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 		REPEAT4
@@ -1334,7 +1386,7 @@ translate24to32(const uint8 * data, uint8 * out, uint8 * end)
 	uint32 value;
 	PixelColour pc;
 
-	if (g_arch_match)
+	if (g_compatible_arch)
 	{
 		/* *INDENT-OFF* */
 #ifdef NEED_ALIGN
@@ -1348,9 +1400,10 @@ translate24to32(const uint8 * data, uint8 * out, uint8 * end)
 #else
 		REPEAT4
 		(
-			*((uint32 *) out) = *((uint32 *) data);
-			out += 4;
-			data += 3;
+	 	/* Only read 3 bytes. Reading 4 bytes means reading beyond buffer. */
+		*((uint32 *) out) = *((uint16 *) data) + (*((uint8 *) data + 2) << 16);
+		out += 4;
+		data += 3;
 		)
 #endif
 		/* *INDENT-ON* */
@@ -1388,16 +1441,19 @@ translate_image(int width, int height, uint8 * data)
 	uint8 *out;
 	uint8 *end;
 
-	/* if server and xserver bpp match, */
-	/* and arch(endian) matches, no need to translate */
-	/* just return data */
-	if (g_arch_match)
+	/*
+	   If RDP depth and X Visual depths match,
+	   and arch(endian) matches, no need to translate:
+	   just return data.
+	   Note: select_visual should've already ensured g_no_translate
+	   is only set for compatible depths, but the RDP depth might've
+	   changed during connection negotiations.
+	 */
+	if (g_no_translate_image)
 	{
-		if (g_depth == 15 && g_server_bpp == 15)
-			return data;
-		if (g_depth == 16 && g_server_bpp == 16)
-			return data;
-		if (g_depth == 24 && g_bpp == 24 && g_server_bpp == 24)
+		if ((g_depth == 15 && g_server_depth == 15) ||
+		    (g_depth == 16 && g_server_depth == 16) ||
+		    (g_depth == 24 && g_server_depth == 24))
 			return data;
 	}
 
@@ -1405,7 +1461,7 @@ translate_image(int width, int height, uint8 * data)
 	out = (uint8 *) xmalloc(size);
 	end = out + size;
 
-	switch (g_server_bpp)
+	switch (g_server_depth)
 	{
 		case 24:
 			switch (g_bpp)
@@ -1546,6 +1602,240 @@ get_key_state(unsigned int state, uint32 keysym)
 	return (state & keysymMask) ? True : False;
 }
 
+static void
+calculate_shifts(uint32 mask, int *shift_r, int *shift_l)
+{
+	*shift_l = ffs(mask) - 1;
+	mask >>= *shift_l;
+	*shift_r = 8 - ffs(mask & ~(mask >> 1));
+}
+
+/* Given a mask of a colour channel (e.g. XVisualInfo.red_mask),
+   calculates the bits-per-pixel of this channel (a.k.a. colour weight).
+ */
+static unsigned
+calculate_mask_weight(uint32 mask)
+{
+	unsigned weight = 0;
+	do
+	{
+		weight += (mask & 1);
+	}
+	while (mask >>= 1);
+	return weight;
+}
+
+static BOOL
+select_visual(int screen_num)
+{
+	XPixmapFormatValues *pfm;
+	int pixmap_formats_count, visuals_count;
+	XVisualInfo *vmatches = NULL;
+	XVisualInfo template;
+	int i;
+	unsigned red_weight, blue_weight, green_weight;
+
+	red_weight = blue_weight = green_weight = 0;
+
+	if (g_server_depth == -1)
+	{
+		g_server_depth = DisplayPlanes(g_display, DefaultScreen(g_display));
+	}
+
+	pfm = XListPixmapFormats(g_display, &pixmap_formats_count);
+	if (pfm == NULL)
+	{
+		error("Unable to get list of pixmap formats from display.\n");
+		XCloseDisplay(g_display);
+		return False;
+	}
+
+	/* Search for best TrueColor visual */
+	template.class = TrueColor;
+	template.screen = screen_num;
+	vmatches =
+		XGetVisualInfo(g_display, VisualClassMask | VisualScreenMask, &template,
+			       &visuals_count);
+	g_visual = NULL;
+	g_no_translate_image = False;
+	g_compatible_arch = False;
+	if (vmatches != NULL)
+	{
+		for (i = 0; i < visuals_count; ++i)
+		{
+			XVisualInfo *visual_info = &vmatches[i];
+			BOOL can_translate_to_bpp = False;
+			int j;
+
+			/* Try to find a no-translation visual that'll
+			   allow us to use RDP bitmaps directly as ZPixmaps. */
+			if (!g_xserver_be && (((visual_info->depth == 15) &&
+					       /* R5G5B5 */
+					       (visual_info->red_mask == 0x7c00) &&
+					       (visual_info->green_mask == 0x3e0) &&
+					       (visual_info->blue_mask == 0x1f)) ||
+					      ((visual_info->depth == 16) &&
+					       /* R5G6B5 */
+					       (visual_info->red_mask == 0xf800) &&
+					       (visual_info->green_mask == 0x7e0) &&
+					       (visual_info->blue_mask == 0x1f)) ||
+					      ((visual_info->depth == 24) &&
+					       /* R8G8B8 */
+					       (visual_info->red_mask == 0xff0000) &&
+					       (visual_info->green_mask == 0xff00) &&
+					       (visual_info->blue_mask == 0xff))))
+			{
+				g_visual = visual_info->visual;
+				g_depth = visual_info->depth;
+				g_compatible_arch = !g_host_be;
+				g_no_translate_image = (visual_info->depth == g_server_depth);
+				if (g_no_translate_image)
+					/* We found the best visual */
+					break;
+			}
+			else
+			{
+				g_compatible_arch = False;
+			}
+
+			if (visual_info->depth > 24)
+			{
+				/* Avoid 32-bit visuals and likes like the plague.
+				   They're either untested or proven to work bad
+				   (e.g. nvidia's Composite 32-bit visual).
+				   Most implementation offer a 24-bit visual anyway. */
+				continue;
+			}
+
+			/* Only care for visuals, for whose BPPs (not depths!)
+			   we have a translateXtoY function. */
+			for (j = 0; j < pixmap_formats_count; ++j)
+			{
+				if (pfm[j].depth == visual_info->depth)
+				{
+					if ((pfm[j].bits_per_pixel == 16) ||
+					    (pfm[j].bits_per_pixel == 24) ||
+					    (pfm[j].bits_per_pixel == 32))
+					{
+						can_translate_to_bpp = True;
+					}
+					break;
+				}
+			}
+
+			/* Prefer formats which have the most colour depth.
+			   We're being truly aristocratic here, minding each
+			   weight on its own. */
+			if (can_translate_to_bpp)
+			{
+				unsigned vis_red_weight =
+					calculate_mask_weight(visual_info->red_mask);
+				unsigned vis_green_weight =
+					calculate_mask_weight(visual_info->green_mask);
+				unsigned vis_blue_weight =
+					calculate_mask_weight(visual_info->blue_mask);
+				if ((vis_red_weight >= red_weight)
+				    && (vis_green_weight >= green_weight)
+				    && (vis_blue_weight >= blue_weight))
+				{
+					red_weight = vis_red_weight;
+					green_weight = vis_green_weight;
+					blue_weight = vis_blue_weight;
+					g_visual = visual_info->visual;
+					g_depth = visual_info->depth;
+				}
+			}
+		}
+		XFree(vmatches);
+	}
+
+	if (g_visual != NULL)
+	{
+		g_owncolmap = False;
+		calculate_shifts(g_visual->red_mask, &g_red_shift_r, &g_red_shift_l);
+		calculate_shifts(g_visual->green_mask, &g_green_shift_r, &g_green_shift_l);
+		calculate_shifts(g_visual->blue_mask, &g_blue_shift_r, &g_blue_shift_l);
+	}
+	else
+	{
+		template.class = PseudoColor;
+		template.depth = 8;
+		template.colormap_size = 256;
+		vmatches =
+			XGetVisualInfo(g_display,
+				       VisualClassMask | VisualDepthMask | VisualColormapSizeMask,
+				       &template, &visuals_count);
+		if (vmatches == NULL)
+		{
+			error("No usable TrueColor or PseudoColor visuals on this display.\n");
+			XCloseDisplay(g_display);
+			XFree(pfm);
+			return False;
+		}
+
+		/* we use a colourmap, so the default visual should do */
+		g_owncolmap = True;
+		g_visual = vmatches[0].visual;
+		g_depth = vmatches[0].depth;
+	}
+
+	g_bpp = 0;
+	for (i = 0; i < pixmap_formats_count; ++i)
+	{
+		XPixmapFormatValues *pf = &pfm[i];
+		if (pf->depth == g_depth)
+		{
+			g_bpp = pf->bits_per_pixel;
+
+			if (g_no_translate_image)
+			{
+				switch (g_server_depth)
+				{
+					case 15:
+					case 16:
+						if (g_bpp != 16)
+							g_no_translate_image = False;
+						break;
+					case 24:
+						/* Yes, this will force image translation
+						   on most modern servers which use 32 bits
+						   for R8G8B8. */
+						if (g_bpp != 24)
+							g_no_translate_image = False;
+						break;
+					default:
+						g_no_translate_image = False;
+						break;
+				}
+			}
+
+			/* Pixmap formats list is a depth-to-bpp mapping --
+			   there's just a single entry for every depth,
+			   so we can safely break here */
+			break;
+		}
+	}
+	XFree(pfm);
+	pfm = NULL;
+	return True;
+}
+
+static XErrorHandler g_old_error_handler;
+
+static int
+error_handler(Display * dpy, XErrorEvent * eev)
+{
+	if ((eev->error_code == BadMatch) && (eev->request_code == X_ConfigureWindow))
+	{
+		fprintf(stderr, "Got \"BadMatch\" when trying to restack windows.\n");
+		fprintf(stderr,
+			"This is most likely caused by a broken window manager (commonly KWin).\n");
+		return 0;
+	}
+
+	return g_old_error_handler(dpy, eev);
+}
+
 BOOL ui_open_display()
 
 {
@@ -1611,159 +1901,65 @@ static void nxdesktopDisplayFlushHandler(Display *display, int reason)
     fprintf(stderr, "nxdesktopDisplayCongestionHandler: FLUSH! Flush requested in the proxy link.\n");
 }
 
-static void
-calculate_shifts(uint32 mask, int *shift_r, int *shift_l)
-{
-	*shift_l = ffs(mask) - 1;
-	mask >>= *shift_l;
-	*shift_r = 8 - ffs(mask & ~(mask >> 1));
-}
-
 BOOL
 ui_init(void)
 {
-	XVisualInfo vi;
-	XPixmapFormatValues *pfm;
-	uint16 test;
-	int minkey, maxkey;
-	int i, screen_num, nvisuals;
-	XVisualInfo *vmatches = NULL;
-	XVisualInfo template;
-	Bool TrueColorVisual = False;
+	int screen_num;
 	
-	/*g_display = XOpenDisplay(nxDisplay);
+	g_display = XOpenDisplay(nxDisplay);
 	if (g_display == NULL)
 	{
-		error("Failed to open g_display: %s\n", XDisplayName(NULL));
+		error("Failed to open display: %s\n", XDisplayName(NULL));
 		return False;
-	}*/
+	}
    
 	g_x_socket = ConnectionNumber(g_display); /* NX */
 	{
-          extern void tcp_resize_buf(int, int, int);
-          extern int rdp_bufsize;
-          tcp_resize_buf(g_x_socket, 0, rdp_bufsize);
+          	extern void tcp_resize_buf(int, int, int);
+          	extern int rdp_bufsize;
+          	tcp_resize_buf(g_x_socket, 0, rdp_bufsize);
         }
 	
+	{
+		uint16 endianess_test = 1;
+		g_host_be = !(BOOL) (*(uint8 *) (&endianess_test));
+	}
+
+	g_old_error_handler = XSetErrorHandler(error_handler);
+	g_xserver_be = (ImageByteOrder(g_display) == MSBFirst);
 	screen_num = DefaultScreen(g_display);
 	g_screen = ScreenOfDisplay(g_display, screen_num);
 	g_depth = DefaultDepthOfScreen(g_screen);
 	
-	/* Search for best TrueColor depth */
-	template.class = TrueColor;
-	vmatches = XGetVisualInfo(g_display, VisualClassMask, &template, &nvisuals);
-
-	nvisuals--;
-	while (nvisuals >= 0)
-	{
-		if ((vmatches + nvisuals)->depth > g_depth)
-		{
-			g_depth = (vmatches + nvisuals)->depth;
-		}
-		nvisuals--;
-		TrueColorVisual = True;
-	}
-
-	/* NX */
-	XFree(vmatches);
-	/* NX */
-	
-	test = 1;
-	g_host_be = !(BOOL) (*(uint8 *) (&test));
-	g_xserver_be = (ImageByteOrder(g_display) == MSBFirst);
-
-	if ((g_server_bpp == 8) && ((!TrueColorVisual) || (g_depth <= 8)))
-	{
-		/* we use a colourmap, so the default visual should do */
-		g_visual = DefaultVisualOfScreen(g_screen);
-		g_depth = DefaultDepthOfScreen(g_screen);
-
-		/* Do not allocate colours on a TrueColor visual */
-		if (g_visual->class == TrueColor)
-		{
-			g_owncolmap = False;
-		}
-	}
-	else
-	{
-		/* need a truecolour visual */
-		if (!XMatchVisualInfo(g_display, screen_num, g_depth, TrueColor, &vi))
-		{
-			error("The display does not support true colour - high colour support unavailable.\n");
-			return False;
-		}
-
-		g_visual = vi.visual;
-		g_owncolmap = False;
-		calculate_shifts(vi.red_mask, &g_red_shift_r, &g_red_shift_l);
-		calculate_shifts(vi.blue_mask, &g_blue_shift_r, &g_blue_shift_l);
-		calculate_shifts(vi.green_mask, &g_green_shift_r, &g_green_shift_l);
-
-		/* if RGB video and everything is little endian */
-		if ((vi.red_mask > vi.green_mask && vi.green_mask > vi.blue_mask) &&
-		    !g_xserver_be && !g_host_be)
-		{
-			if (g_depth <= 16 || (g_red_shift_l == 16 && g_green_shift_l == 8 &&
-					      g_blue_shift_l == 0))
-			{
-				g_arch_match = True;
-			}
-		}
-
-		if (g_arch_match)
-		{
-			DEBUG(("Architectures match, enabling little endian optimisations.\n"));
-		}
-	}
-	
-	nxdesktopUseNXTrans = NXTransRunning(NX_FD_ANY);
-	
-        XSetErrorHandler(nxdesktopErrorHandler);
-
-	#ifndef NXDESKTOP_USES_RECT_BUF
-	warning("XFillRect optimization disabled\n");
-	#endif
-
-	pfm = XListPixmapFormats(g_display, &i);
-	if (pfm != NULL)
-	{
-		/* Use maximum bpp for this depth - this is generally
-		   desirable, e.g. 24 bits->32 bits. */
-		while (i--)
-		{
-			if ((pfm[i].depth == g_depth) && (pfm[i].bits_per_pixel > g_bpp))
-			{
-				g_bpp = pfm[i].bits_per_pixel;
-			}
-		}
-		XFree(pfm);
-	}
-	/* NX */ 
-	else
-	{
-	    error("Failed to alloc list of pixmap formats.\n");
-	    XCloseDisplay(g_display);
-	    return False;
-	}
-	/* NX */
-
-	if (g_bpp < 8)
-	{
-		error("Less than 8 bpp not currently supported.\n");
-		XCloseDisplay(g_display);
+	if (!select_visual(screen_num))
 		return False;
+
+	if (g_no_translate_image)
+	{
+		DEBUG(("Performance optimization possible: avoiding image translation (colour depth conversion).\n"));
 	}
+
+	if (g_server_depth > g_bpp)
+	{
+		warning("Remote desktop colour depth %d higher than display colour depth %d.\n",
+			g_server_depth, g_bpp);
+	}
+
+	DEBUG(("RDP depth: %d, display depth: %d, display bpp: %d, X server BE: %d, host BE: %d\n",
+	       g_server_depth, g_depth, g_bpp, g_xserver_be, g_host_be));
+
+	XSetErrorHandler(nxdesktopErrorHandler);
 
 	if (!g_owncolmap)
 	{
 		g_xcolmap = XCreateColormap(g_display, RootWindowOfScreen(g_screen), g_visual,	AllocNone);
 		if (g_depth <= 8)
-		    warning("Screen depth is 8 bits or lower: you may want to use -C for a private colourmap\n");
+		    warning("Display colour depth is %d bits: you may want to use -C for a private colourmap\n", g_depth);
 	}
 
 	if ((!g_ownbackstore) && (DoesBackingStore(g_screen) != Always))
 	{
-		warning("External BackingStore not available, using internal\n");
+		warning("External BackingStore not available. Using internal\n");
 		g_ownbackstore = True;
 	}
 
@@ -1774,10 +1970,13 @@ ui_init(void)
 	{
 		g_width = WidthOfScreen(g_screen);
 		g_height = HeightOfScreen(g_screen);
+		g_using_full_workarea = True;
 	}
 	else if (g_width < 0)
 	{
 		/* Percent of screen */
+		if (-g_width >= 100)
+			g_using_full_workarea = True;
 		g_height = HeightOfScreen(g_screen) * (-g_width) / 100;
 		g_width = WidthOfScreen(g_screen) * (-g_width) / 100;
 	}
@@ -1790,24 +1989,19 @@ ui_init(void)
 		{
 			g_width = cx;
 			g_height = cy;
+			g_using_full_workarea = True;
 		}
 		else
 		{
 			warning("Failed to get workarea: probably your window manager does not support extended hints\n");
-			g_width = 800;
-			g_height = 600;
+	    		g_width = WidthOfScreen(g_screen);
+	   		g_height = HeightOfScreen(g_screen);
 		}
-	}
-	else if (float_window_mode)
-	{
-	    g_width = WidthOfScreen(g_screen);
-	    g_height = HeightOfScreen(g_screen);
 	}
 
 	/* make sure width is a multiple of 4 */
 	g_width = (g_width + 3) & ~3;
 
-	XDisplayKeycodes(g_display, &minkey, &maxkey);
 	g_mod_map = XGetModifierMapping(g_display);
 
 	xkeymap_init();
@@ -1816,8 +2010,11 @@ ui_init(void)
 		g_IM = XOpenIM(g_display, NULL, NULL, NULL);
 
 	xclip_init();
+	ewmh_init();
+	if (g_seamless_rdp)
+		seamless_init();
 
-	DEBUG_RDP5(("server bpp %d client bpp %d depth %d\n", g_server_bpp, g_bpp, g_depth));
+	DEBUG_RDP5(("server bpp %d client bpp %d depth %d\n", g_server_depth, g_bpp, g_depth));
 
 	return True;
 }
@@ -1940,7 +2137,7 @@ ui_init_nx(void)
 	    #endif
 
 	    /* COMPRESS methods */
-	    if ((methods[PACK_RDP_COMPRESSED_16M_COLORS] == True) && (g_server_bpp > 16))
+	    if ((methods[PACK_RDP_COMPRESSED_16M_COLORS] == True) && (g_server_depth > 16))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_16M_COLORS.\n");
@@ -1949,7 +2146,7 @@ ui_init_nx(void)
 		nxdesktopUseNXCompressedRdpImages = True;
     	    }
 	    else
-    	    if ((methods[PACK_RDP_COMPRESSED_64K_COLORS] == True) && (g_server_bpp > 15))
+    	    if ((methods[PACK_RDP_COMPRESSED_64K_COLORS] == True) && (g_server_depth > 15))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_64K_COLORS.\n");
@@ -1958,7 +2155,7 @@ ui_init_nx(void)
 		nxdesktopUseNXCompressedRdpImages = True;
     	    }
 	    else
-	    if ((methods[PACK_RDP_COMPRESSED_32K_COLORS] == True) && (g_server_bpp > 8))
+	    if ((methods[PACK_RDP_COMPRESSED_32K_COLORS] == True) && (g_server_depth > 8))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_COMPRESSED_32K_COLORS.\n");
@@ -1977,7 +2174,7 @@ ui_init_nx(void)
     	    }
 	    
 	    /* PLAIN methods */
-	    if ((methods[PACK_RDP_PLAIN_16M_COLORS] == True) && (g_server_bpp > 16))
+	    if ((methods[PACK_RDP_PLAIN_16M_COLORS] == True) && (g_server_depth > 16))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_PLAIN_16M_COLORS.\n");
@@ -1986,7 +2183,7 @@ ui_init_nx(void)
 		nxdesktopUseNXRdpImages = True;
     	    }
 	    else
-    	    if ((methods[PACK_RDP_PLAIN_64K_COLORS] == True) && (g_server_bpp > 15))
+    	    if ((methods[PACK_RDP_PLAIN_64K_COLORS] == True) && (g_server_depth > 15))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_PLAIN_64K_COLORS.\n");
@@ -1995,7 +2192,7 @@ ui_init_nx(void)
 		nxdesktopUseNXRdpImages = True;
     	    }
 	    else
-    	    if ((methods[PACK_RDP_PLAIN_32K_COLORS] == True) && (g_server_bpp > 8))
+    	    if ((methods[PACK_RDP_PLAIN_32K_COLORS] == True) && (g_server_depth > 8))
     	    {
 		#ifdef NXDESKTOP_XWIN_METHODS_DEBUG
 		nxdesktopDebug ("ui_init", "Using pack method PACK_RDP_PLAIN_32K_COLORS.\n");
@@ -2082,7 +2279,15 @@ ui_deinit(void)
 	nxdesktopDebug("XPutImage","paint_bitmap times = %d\n",paint_bitmap_times);
 	nxdesktopDebug("XPutImage","paint_bitmap_backstore total = %d\n",paint_bitmap_backstore_total);
 	nxdesktopDebug("XPutImage","paint_bitmap_backstore times = %d\n",paint_bitmap_backstore_times);
-	#endif	
+	#endif
+
+	while (g_seamless_windows)
+	{
+		XDestroyWindow(g_display, g_seamless_windows->wnd);
+		sw_remove_window(g_seamless_windows);
+	}
+
+	xclip_deinit();
 	
 	if (g_IM != NULL)
 		XCloseIM(g_IM);
@@ -2363,8 +2568,12 @@ ui_create_window(BOOL ToggleFullscreen)
 			      CWBackingStore | (g_fullscreen ? CWOverrideRedirect:
 			      SubstructureRedirectMask) | StructureNotifyMask, &attribs);
 	
+
 	if (g_gc == NULL)
+	{
 		g_gc = XCreateGC(g_display, g_wnd, 0, NULL);
+		ui_reset_clip();
+	}
 
 	if (g_create_bitmap_gc == NULL)
 		g_create_bitmap_gc = XCreateGC(g_display, g_wnd, 0, NULL);
@@ -2391,10 +2600,10 @@ ui_create_window(BOOL ToggleFullscreen)
 		wnd2 = XCreateWindow (g_display, RootWindowOfScreen(g_screen), 0, 0, 1, 1,
 				0, CopyFromParent, InputOutput, CopyFromParent,
 				CWBackingStore | CWBackPixel , &attribs);
-
 	}
 	
-	if (((((g_width >= WidthOfScreen(g_screen)*1.05)) || (g_height >= (HeightOfScreen(g_screen)*1.1))) && (nxdesktopUseNXTrans)) || (ToggleFullscreen))
+	if (((((g_width >= WidthOfScreen(g_screen)*1.05)) || 
+		(g_height >= (HeightOfScreen(g_screen)*1.1))) && (nxdesktopUseNXTrans)) || (ToggleFullscreen))
 	{
 	    viewport_mode_locked = True;
 	    viewport_keys_enabled = True;
@@ -2619,22 +2828,22 @@ ui_create_window(BOOL ToggleFullscreen)
 	
 	XMapWindow(g_display, g_wnd); 
 	
-	XGrabKeyboard(g_display, g_wnd, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+	/* wait for VisibilityNotify */ 
 
-	/* wait for VisibilityNotify 
 	do
 	{
 		XMaskEvent(g_display, VisibilityChangeMask, &xevent);
 	}
-	while (xevent.type != VisibilityNotify);*/
+	while (xevent.type != VisibilityNotify);
 	g_Unobscured = xevent.xvisibility.state == VisibilityUnobscured;
 
 	g_focused = False;
 	g_mouse_in_wnd = False;
 
 	/* handle the WM_DELETE_WINDOW protocol */
-	/*g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
-	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);*/
+	g_protocol_atom = XInternAtom(g_display, "WM_PROTOCOLS", True);
+	g_kill_atom = XInternAtom(g_display, "WM_DELETE_WINDOW", True);
+	XSetWMProtocols(g_display, g_wnd, &g_kill_atom, 1);
 
 	nxdesktopSetAtoms();
 	/* create invisible 1x1 cursor to be used as null cursor */
@@ -2645,13 +2854,15 @@ ui_create_window(BOOL ToggleFullscreen)
 	#if defined(NXDESKTOP_LOGO) && !defined(NKDESKTOP_SPLASH)
 	if (showNXlogo)
         {
-	    /*
+	   /*
 	    * if you want some animation, change the initial value to 5 and the sleep to 1
 	    */
           
+           /*
 	    Cursor cursor;
 	    cursor = XCreateFontCursor(g_display, 0);
 	    XDefineCursor(g_display, g_wnd, (Cursor)cursor);
+            */
 	  
 	    while (i)
 	    {
@@ -2761,13 +2972,18 @@ xwin_toggle_fullscreen(void)
 	attribs.backing_store = g_ownbackstore ? NotUseful : Always;
 	attribs.override_redirect = False;
 	attribs.colormap = g_xcolmap;
-	
+
+        if (g_seamless_active)
+                /* Turn off SeamlessRDP mode */
+                ui_seamless_toggle();
+
 	if (!g_ownbackstore)
 	{
 		/* need to save contents of window */
 		contents = XCreatePixmap(g_display, g_wnd, g_width, g_height, g_depth);
 		XCopyArea(g_display, g_wnd, contents, g_gc, 0, 0, g_width, g_height, 0, 0);
 	}
+    
 	#ifdef NXDESKTOP_LOGO
 	showNXlogo = False;
         #endif
@@ -2785,7 +3001,7 @@ xwin_toggle_fullscreen(void)
 	#ifdef NXDESKTOP_LOGO
 	showNXlogo = savedShowNXlogo;
 	#endif
-	XDefineCursor(g_display, g_wnd, g_current_cursor);
+	/* XDefineCursor(g_display, g_wnd, g_current_cursor); */
 
 	if (!g_ownbackstore)
 	{
@@ -2795,7 +3011,7 @@ xwin_toggle_fullscreen(void)
 	
 }
 
-/* Process all events in Xlib queue
+/* Process events in Xlib queue
    Returns 0 after user quit, 1 otherwise */
 static int
 xwin_process_events(void)
@@ -2804,13 +3020,16 @@ xwin_process_events(void)
 	KeySym keysym;
 	uint16 button, flags;
 	key_translation tr;
+	uint32 ev_time;
 	char str[256];
 	Status status;
+	int events = 0;
+	seamless_window *sw;
 
 	/* NX used only to send RDP inputs for which we can't obtain the real X server time */
-	uint32 ev_time = (last_Xtime == 0) ? (uint32)time(NULL): last_Xtime;
-	
-	while (XPending(g_display) > 0)
+	ev_time = (last_Xtime == 0) ? (uint32)time(NULL): last_Xtime;
+
+	while ((XPending(g_display) > 0) && events++ < 20)
 	{
 		XNextEvent(g_display, &xevent);
 		if ((g_IC != NULL) && (XFilterEvent(&xevent, None) == True))
@@ -2857,36 +3076,26 @@ xwin_process_events(void)
 		
 		switch (xevent.type)
 		{
-			/* NX */
-			
-			case MapNotify:
-			    if (g_fullscreen) 
-				sigusr_func(SIGUSR2);
-			break;
-			
-			/* NX */
-			
 			case VisibilityNotify:
-				g_Unobscured = xevent.xvisibility.state == VisibilityUnobscured;
+				if (xevent.xvisibility.window == g_wnd)
+					g_Unobscured = xevent.xvisibility.state == VisibilityUnobscured;
 				break;
-				
-			/*
+					
 			case ClientMessage:
-				 the window manager told us to quit 
+				/* the window manager told us to quit */
 				if ((xevent.xclient.message_type == g_protocol_atom)
 				    && ((Atom) xevent.xclient.data.l[0] == g_kill_atom))
-					 Quit 
+					/* Quit */
 					return 0;
 				break;
-			*/
-			
+	
 			case KeyPress:
 				g_last_gesturetime = xevent.xkey.time;
 				if (g_IC != NULL)
 					/* Multi_key compatible version */
 				{
-				    XmbLookupString(g_IC, &xevent.xkey, str, sizeof(str), &keysym,
-							&status);
+				    XmbLookupString(g_IC, &xevent.xkey, str, sizeof(str), 
+							&keysym, &status);
 					if (!((status == XLookupKeySym) || (status == XLookupBoth)))
 					{
 						error("XmbLookupString failed with status 0x%x\n",
@@ -2902,7 +3111,7 @@ xwin_process_events(void)
 						      str, sizeof(str), &keysym, NULL);
 				}
 				
-				DEBUG_KBD(("KeyPress for (keysym 0x%lx, %s)\n", keysym,
+				DEBUG_KBD(("KeyPress for keysym (0x%lx, %s)\n", keysym,
 					   get_ksname(keysym)));
 
 				ev_time = time(NULL);
@@ -2911,7 +3120,10 @@ xwin_process_events(void)
 
 				tr = xkeymap_translate_key(keysym,
 							   xevent.xkey.keycode, xevent.xkey.state);
-							   
+
+				/*xkeymap_send_keys(keysym, xevent.xkey.keycode, xevent.xkey.state,
+						  ev_time, True, 0);*/
+				   
 				/* NX
 				scancode = tr.scancode; */
 
@@ -2963,7 +3175,7 @@ xwin_process_events(void)
 				XLookupString((XKeyEvent *) & xevent, str,
 					      sizeof(str), &keysym, NULL);
 
-				DEBUG_KBD(("\nKeyRelease for (keysym 0x%lx, %s)\n", keysym,
+				DEBUG_KBD(("\nKeyRelease for keysym (0x%lx, %s)\n", keysym,
 					   get_ksname(keysym)));
 
 				ev_time = time(NULL);
@@ -2972,7 +3184,10 @@ xwin_process_events(void)
 
 				tr = xkeymap_translate_key(keysym,
 							   xevent.xkey.keycode, xevent.xkey.state);
-							   
+
+				/* xkeymap_send_keys(keysym, xevent.xkey.keycode, xevent.xkey.state,
+						  ev_time, False, 0); */
+			   
 				/* NX
 				scancode = tr.scancode; */
 
@@ -3065,8 +3280,6 @@ xwin_process_events(void)
                                   break;
                                 }
 
-				/* NX */
-				
 			case ButtonRelease:
 				g_last_gesturetime = xevent.xbutton.time;
 				/* NX */
@@ -3136,7 +3349,6 @@ xwin_process_events(void)
 							g_move_y_offset = xevent.xbutton.y;
 						}
 						break;
-
 					}
 				}
 				
@@ -3181,6 +3393,19 @@ xwin_process_events(void)
                                   break;
                                 }
 
+				if (xevent.xmotion.window == g_wnd)
+				{
+					rdp_send_input(time(NULL), RDP_INPUT_MOUSE, MOUSE_FLAG_MOVE,
+						       xevent.xmotion.x, xevent.xmotion.y);
+				}
+				else
+				{
+					/* SeamlessRDP */
+					rdp_send_input(time(NULL), RDP_INPUT_MOUSE, MOUSE_FLAG_MOVE,
+						       xevent.xmotion.x_root,
+						       xevent.xmotion.y_root);
+				}
+
 				if (g_fullscreen && !g_focused)
 					XSetInputFocus(g_display, g_wnd, RevertToPointerRoot,
 						       CurrentTime);      
@@ -3199,6 +3424,16 @@ xwin_process_events(void)
 				if (g_grab_keyboard && g_mouse_in_wnd && g_fullscreen)
 					XGrabKeyboard(g_display, g_wnd, True,
 						      GrabModeAsync, GrabModeAsync, CurrentTime);
+
+				sw = sw_get_window_by_wnd(xevent.xfocus.window);
+				if (!sw)
+					break;
+
+				if (sw->id != g_seamless_focused)
+				{
+					seamless_send_focus(sw->id, 0);
+					g_seamless_focused = sw->id;
+				}
 				break;
 
 			case FocusOut:
@@ -3250,11 +3485,28 @@ xwin_process_events(void)
 				break;
 
 			case Expose:
-				XCopyArea(g_display, g_backstore, g_wnd, g_gc,
-					  xevent.xexpose.x, xevent.xexpose.y,
-					  xevent.xexpose.width,
-					  xevent.xexpose.height,
-					  xevent.xexpose.x, xevent.xexpose.y);
+				if (xevent.xexpose.window == g_wnd)
+				{
+					XCopyArea(g_display, g_backstore, xevent.xexpose.window,
+						  g_gc,
+						  xevent.xexpose.x, xevent.xexpose.y,
+						  xevent.xexpose.width, xevent.xexpose.height,
+						  xevent.xexpose.x, xevent.xexpose.y);
+				}
+				else
+				{
+					sw = sw_get_window_by_wnd(xevent.xexpose.window);
+					if (!sw)
+						break;
+					XCopyArea(g_display, g_backstore,
+						  xevent.xexpose.window, g_gc,
+						  xevent.xexpose.x + sw->xoffset,
+						  xevent.xexpose.y + sw->yoffset,
+						  xevent.xexpose.width,
+						  xevent.xexpose.height, xevent.xexpose.x,
+						  xevent.xexpose.y);
+				}
+
 				break;
 
 			case MappingNotify:
@@ -3295,8 +3547,47 @@ xwin_process_events(void)
 				{
                                     xclip_handle_PropertyNotify(&xevent.xproperty);
                                 } 
+
+				if (xevent.xproperty.window == g_wnd)
+					break;
+				if (xevent.xproperty.window == DefaultRootWindow(g_display))
+					break;
+
+				/* seamless */
+				sw = sw_get_window_by_wnd(xevent.xproperty.window);
+				if (!sw)
+					break;
+
+				if ((xevent.xproperty.atom == g_net_wm_state_atom)
+				    && (xevent.xproperty.state == PropertyNewValue))
+				{
+					sw->state = ewmh_get_window_state(sw->wnd);
+					seamless_send_state(sw->id, sw->state, 0);
+				}
+
+				if ((xevent.xproperty.atom == g_net_wm_desktop_atom)
+				    && (xevent.xproperty.state == PropertyNewValue))
+				{
+					sw->desktop = ewmh_get_window_desktop(sw->wnd);
+					sw_all_to_desktop(sw->wnd, sw->desktop);
+				}
+
 				break;
+			case MapNotify:
+				/* NX */
+        	                    if (g_fullscreen)
+                	                sigusr_func(SIGUSR2);
+	                        /* NX */
+				if (!g_seamless_active)
+					rdp_send_client_window_status(1);
+				break;
+                        /*  
+			case UnmapNotify:
+				if (!g_seamless_active)
+					rdp_send_client_window_status(0);
+			 */
                         case ConfigureNotify:
+
                                 if ((xevent.xconfigure.window == g_viewport_wnd) && !g_fullscreen)
                                 {
                     		    g_saved_viewport_x = xevent.xconfigure.x;
@@ -3313,7 +3604,31 @@ xwin_process_events(void)
 					viewport_keys_enabled = False;
 				    }
                     		}
-                                break;
+
+				if (!g_seamless_active)
+					break;
+
+				sw = sw_get_window_by_wnd(xevent.xconfigure.window);
+				if (!sw)
+					break;
+
+				gettimeofday(sw->position_timer, NULL);
+				if (sw->position_timer->tv_usec + SEAMLESSRDP_POSITION_TIMER >=
+				    1000000)
+				{
+					sw->position_timer->tv_usec +=
+						SEAMLESSRDP_POSITION_TIMER - 1000000;
+					sw->position_timer->tv_sec += 1;
+				}
+				else
+				{
+					sw->position_timer->tv_usec += SEAMLESSRDP_POSITION_TIMER;
+				}
+
+				sw_handle_restack(sw);
+
+				break;
+
 		}
 	}
 	/* Keep going */
@@ -3428,7 +3743,10 @@ ui_select(int rdp_socket)
             */
 
             NXFlushDisplay(g_display, NXFlushLink);
- 
+
+	    if (g_seamless_active)
+		sw_check_timers();
+
 	    FD_ZERO(&rfds);
 	    FD_ZERO(&wfds);
 	    FD_SET(rdp_socket, &rfds);
@@ -3448,6 +3766,7 @@ ui_select(int rdp_socket)
 	    
 	    /* add redirection handles */
 	    rdpdr_add_fds(&n, &rfds, &wfds, &tv, &s_timeout);
+	    seamless_select_timeout(&tv);
 	    n++;
 
 	    Retry:
@@ -3498,7 +3817,7 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	uint8 *tdata;
 	int bitmap_pad;
 
-	if (g_server_bpp == 8)
+	if (g_server_depth == 8)
 	{
 		bitmap_pad = 8;
 	}
@@ -3566,10 +3885,11 @@ ui_create_bitmap(int width, int height, uint8 * data, int size, BOOL compressed)
 	}
 	#else
 	tdata = (g_owncolmap ? data : translate_image(width, height, data));
+	bitmap = XCreatePixmap(g_display, g_wnd, width, height, g_depth);
 	image = XCreateImage(g_display, g_visual, g_depth, ZPixmap, 0,
 			    (char *) tdata, width, height, bitmap_pad, 0);
 	
-	XPutImage(g_display, bitmap, g_gc, image, 0, 0, 0, 0, width, height); 
+	XPutImage(g_display, bitmap, g_create_bitmap_gc, image, 0, 0, 0, 0, width, height); 
 	#ifdef NXDESKTOP_DEBUG_XPUTIMAGE	    
 	create_bitmap_times++;
 	create_bitmap_total+=image->height*image->bytes_per_line;
@@ -3591,7 +3911,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	uint8 *tdata;
 	int bitmap_pad;
 
-	if (g_server_bpp == 8)
+	if (g_server_depth == 8)
 	{
 		bitmap_pad = 8;
 	}
@@ -3611,7 +3931,7 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 	{
 		int data_length;
 		tdata = data;
-		data_length = width * height * g_server_bpp;
+		data_length = width * height * g_server_depth;
 
 		#ifdef NXDESKTOP_XWIN_GRAPHICS_DEBUG
 		nxdesktopDebug("ui_paint_bitmap","NXCreatePackedImage with g_owncolmap %d and g_depth %d.\n",
@@ -3744,7 +4064,9 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		XPutImage(g_display, g_backstore, g_gc, image, 0, 0, x, y, cx, cy);
 		
 		XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
-		
+		ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+					(g_display, g_backstore, sw->wnd, g_gc, x, y, cx, cy,
+					 x - sw->xoffset, y - sw->yoffset));
 	}
 	else
 	{
@@ -3759,6 +4081,9 @@ ui_paint_bitmap(int x, int y, int cx, int cy, int width, int height, uint8 * dat
 		#endif
 		
 		XPutImage(g_display, g_wnd, g_gc, image, 0, 0, x, y, cx, cy);
+		ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+					(g_display, g_wnd, sw->wnd, g_gc, x, y, cx, cy,
+					 x - sw->xoffset, y - sw->yoffset));
 	}
 	
 	XFree(image);
@@ -3973,6 +4298,7 @@ ui_set_cursor(HCURSOR cursor)
 {
 	g_current_cursor = (Cursor) cursor;
 	XDefineCursor(g_display, g_wnd, g_current_cursor);
+	ON_ALL_SEAMLESS_WINDOWS(XDefineCursor, (g_display, sw->wnd, g_current_cursor));
 }
 
 void
@@ -4182,7 +4508,10 @@ ui_set_colourmap(HCOLOURMAP map)
 		g_colmap = (uint32 *) map;
 	}
 	else
+	{
 		XSetWindowColormap(g_display, g_wnd, (Colormap) map);
+		ON_ALL_SEAMLESS_WINDOWS(XSetWindowColormap, (g_display, sw->wnd, (Colormap) map));
+	}
 		
 	#ifdef NXDESKTOP_XWIN_USES_PACKED_IMAGES
 	
@@ -4226,25 +4555,21 @@ ui_set_colourmap(HCOLOURMAP map)
 void
 ui_set_clip(int x, int y, int cx, int cy)
 {
-	XRectangle rect;
-
-	rect.x = x;
-	rect.y = y;
-	rect.width = cx;
-	rect.height = cy;
-	XSetClipRectangles(g_display, g_gc, 0, 0, &rect, 1, YXBanded);
+	g_clip_rectangle.x = x;
+	g_clip_rectangle.y = y;
+	g_clip_rectangle.width = cx;
+	g_clip_rectangle.height = cy;
+	XSetClipRectangles(g_display, g_gc, 0, 0, &g_clip_rectangle, 1, YXBanded);
 }
 
 void
 ui_reset_clip(void)
 {
-	XRectangle rect;
-
-	rect.x = 0;
-	rect.y = 0;
-	rect.width = g_width;
-	rect.height = g_height;
-	XSetClipRectangles(g_display, g_gc, 0, 0, &rect, 1, YXBanded);
+	g_clip_rectangle.x = 0;
+	g_clip_rectangle.y = 0;
+	g_clip_rectangle.width = g_width;
+	g_clip_rectangle.height = g_height;
+	XSetClipRectangles(g_display, g_gc, 0, 0, &g_clip_rectangle, 1, YXBanded);
 }
 
 void
@@ -4334,6 +4659,10 @@ ui_patblt(uint8 opcode,
 
 	if (g_ownbackstore)
 		XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
+	ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+				(g_display, g_ownbackstore ? g_backstore : g_wnd, sw->wnd, g_gc,
+				 x, y, cx, cy, x - sw->xoffset, y - sw->yoffset));
+ 
 }
 
 void
@@ -4348,20 +4677,18 @@ ui_screenblt(uint8 opcode,
 	SET_FUNCTION(opcode);
 	if (g_ownbackstore)
 	{
-		if (g_Unobscured)
-		{
-			XCopyArea(g_display, g_wnd, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
-			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
-		}	
-		else
-		{
-			XCopyArea(g_display, g_backstore, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
-			XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
-		}
+		XCopyArea(g_display, g_Unobscured ? g_wnd : g_backstore,
+			  g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
+
+		XCopyArea(g_display, g_backstore, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
 	}
 	else
 	{
 		XCopyArea(g_display, g_wnd, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
+		ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+					(g_display, g_ownbackstore ? g_backstore : g_wnd,
+					 sw->wnd, g_gc, x, y, cx, cy, x - sw->xoffset, y - sw->yoffset));
+
 	}
 	RESET_FUNCTION(opcode);
 }
@@ -4377,6 +4704,9 @@ ui_memblt(uint8 opcode,
     
     SET_FUNCTION(opcode);
     XCopyArea(g_display, (Pixmap) src, g_wnd, g_gc, srcx, srcy, cx, cy, x, y);
+    ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+				(g_display, (Pixmap) src, sw->wnd, g_gc,
+				 srcx, srcy, cx, cy, x - sw->xoffset, y - sw->yoffset));
     if (g_ownbackstore)
 	XCopyArea(g_display, (Pixmap) src, g_backstore, g_gc, srcx, srcy, cx, cy, x, y);
     
@@ -4430,6 +4760,9 @@ ui_line(uint8 opcode,
 	SET_FUNCTION(opcode);
 	SET_FOREGROUND(pen->colour);
 	XDrawLine(g_display, g_wnd, g_gc, startx, starty, endx, endy);
+	ON_ALL_SEAMLESS_WINDOWS(XDrawLine, (g_display, sw->wnd, g_gc,
+					    startx - sw->xoffset, starty - sw->yoffset,
+					    endx - sw->xoffset, endy - sw->yoffset));
 	if (g_ownbackstore)
 		XDrawLine(g_display, g_backstore, g_gc, startx, starty, endx, endy);
 	RESET_FUNCTION(opcode);
@@ -4614,6 +4947,10 @@ ui_polyline(uint8 opcode,
 	if (g_ownbackstore)
 		XDrawLines(g_display, g_backstore, g_gc, (XPoint *) points, npoints,
 			   CoordModePrevious);
+
+	ON_ALL_SEAMLESS_WINDOWS(seamless_XDrawLines,
+				(sw->wnd, (XPoint *) points, npoints, sw->xoffset, sw->yoffset));
+
 	RESET_FUNCTION(opcode);
 }
 
@@ -4795,10 +5132,22 @@ ui_draw_text(uint8 font, uint8 flags, uint8 opcode, int mixmode, int x, int y,
 				break;
 			
 			case 0xfe:
-				entry = cache_get_text(text[i + 1]);
-				if (entry != NULL)
+				/* At least one byte needs to follow */
+				if (i + 2 > length)
 				{
-				    if ((((uint8 *) (entry->data))[1] == 0) && (!(flags & TEXT2_IMPLICIT_X)))
+					warning("Skipping short 0xfe command:");
+					for (j = 0; j < length; j++)
+						fprintf(stderr, "%02x ", text[j]);
+					fprintf(stderr, "\n");
+					i = length = 0;
+					break;
+				}
+
+				entry = cache_get_text(text[i + 1]);
+				if (entry->data != NULL)
+				{
+				    if ((((uint8 *) (entry->data))[1] == 0) 
+					&& (!(flags & TEXT2_IMPLICIT_X)) && (i + 2 < length))
 				    {
 					if (flags & TEXT2_VERTICAL)
 					    y += text[i + 2];
@@ -4944,11 +5293,25 @@ ui_draw_text(uint8 font, uint8 flags, uint8 opcode, int mixmode, int x, int y,
 	if (g_ownbackstore)
 	{
 		if (boxcx > 1)
+		{
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, boxx,
 				  boxy, boxcx, boxcy, boxx, boxy);
+			ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+						(g_display, g_backstore, sw->wnd, g_gc,
+						 boxx, boxy,
+						 boxcx, boxcy,
+						 boxx - sw->xoffset, boxy - sw->yoffset));
+		}
 		else
+		{
 			XCopyArea(g_display, g_backstore, g_wnd, g_gc, clipx,
 				  clipy, clipcx, clipcy, clipx, clipy);
+			ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+						(g_display, g_backstore, sw->wnd, g_gc,
+						 clipx, clipy,
+						 clipcx, clipcy, clipx - sw->xoffset,
+						 clipy - sw->yoffset));
+		}
 	}
 }
 
@@ -5168,6 +5531,9 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 				
 		XPutImage(g_display, g_backstore, g_gc, image, 0, 0, x, y, cx, cy);
 		XCopyArea(g_display, g_backstore, g_wnd, g_gc, x, y, cx, cy, x, y);
+		ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+					(g_display, g_backstore, sw->wnd, g_gc,
+					 x, y, cx, cy, x - sw->xoffset, y - sw->yoffset));
 	}
 	else
 	{
@@ -5182,6 +5548,9 @@ ui_desktop_restore(uint32 offset, int x, int y, int cx, int cy)
 		#endif
 		
 		XPutImage(g_display, g_wnd, g_gc, image, 0, 0, x, y, cx, cy);
+		ON_ALL_SEAMLESS_WINDOWS(XCopyArea,
+					(g_display, g_wnd, sw->wnd, g_gc, x, y, cx, cy,
+					 x - sw->xoffset, y - sw->yoffset));
 	}
 
 	XFree(image);
@@ -5701,7 +6070,7 @@ nxdesktopDialog(int type, int code)
     return 0;
 }		
 
-
+/* these do nothing here but are used in uiports */
 void
 ui_begin_update(void)
 {
@@ -5877,8 +6246,8 @@ ui_seamless_create_window(unsigned long id, unsigned long group, unsigned long p
 
 	/* handle the WM_DELETE_WINDOW protocol. FIXME: When killing a
 	   seamless window, we could try to close the window on the
-	   serverside, instead of terminating rdesktop 
-	XSetWMProtocols(g_display, wnd, &g_kill_atom, 1);*/
+	   serverside, instead of terminating rdesktop */ 
+	XSetWMProtocols(g_display, wnd, &g_kill_atom, 1);
 
 	sw = xmalloc(sizeof(seamless_window));
 	sw->wnd = wnd;
@@ -5934,6 +6303,25 @@ ui_seamless_destroy_window(unsigned long id, unsigned long flags)
 	sw_remove_window(sw);
 }
 
+void
+ui_seamless_destroy_group(unsigned long id, unsigned long flags)
+{
+	seamless_window *sw, *sw_next;
+
+	if (!g_seamless_active)
+		return;
+
+	for (sw = g_seamless_windows; sw; sw = sw_next)
+	{
+		sw_next = sw->next;
+
+		if (sw->group->id == id)
+		{
+			XDestroyWindow(g_display, sw->wnd);
+			sw_remove_window(sw);
+		}
+	}
+}
 
 void
 ui_seamless_move_window(unsigned long id, int x, int y, int width, int height, unsigned long flags)
@@ -6133,6 +6521,3 @@ ui_seamless_ack(unsigned int serial)
 		}
 	}
 }
-
-
-/* end */

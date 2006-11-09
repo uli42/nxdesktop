@@ -48,7 +48,7 @@
 #endif
 #include <limits.h>             /* PATH_MAX */
 
-#define VERSION "1.4.1"
+#define VERSION "1.5.0"
 
 #undef NXDESKTOP_MCS_DEBUG
 #undef NXDESKTOP_TCP_DEBUG
@@ -85,6 +85,12 @@
 #define DEBUG_CLIPBOARD(args)
 #endif
 
+#ifdef WITH_DEBUG_CHANNEL
+#define DEBUG_CHANNEL(args) fprintf args;
+#else
+#define DEBUG_CHANNEL(args)
+#endif
+
 #define STRNCPY(dst,src,n)	{ strncpy(dst,src,n-1); dst[n-1] = 0; }
 
 #ifndef MIN
@@ -93,6 +99,22 @@
 
 #ifndef MAX
 #define MAX(x,y)		(((x) > (y)) ? (x) : (y))
+#endif
+
+/* timeval macros */
+#ifndef timerisset
+#define timerisset(tvp)\
+         ((tvp)->tv_sec || (tvp)->tv_usec)
+#endif
+#ifndef timercmp
+#define timercmp(tvp, uvp, cmp)\
+        ((tvp)->tv_sec cmp (uvp)->tv_sec ||\
+        (tvp)->tv_sec == (uvp)->tv_sec &&\
+        (tvp)->tv_usec cmp (uvp)->tv_usec)
+#endif
+#ifndef timerclear
+#define timerclear(tvp)\
+        ((tvp)->tv_sec = (tvp)->tv_usec = 0)
 #endif
 
 /* If configure does not define the endianess, try
@@ -158,15 +180,4 @@
 #define TCP_MESSAGE 0
 #define RDP_MESSAGE 1
 
-#ifdef WITH_DEBUG_KBD
-
-#define DEBUG_KBD(args) printf args;
-
-#else
-
-#define DEBUG_KBD(args)
-
-#endif
-
 #include <sys/wait.h>
-

@@ -113,3 +113,5 @@ minus 0x35
 underscore 0x35 shift
 dead_belowdot 0x35 altgr
 dead_abovedot 0x35 shift altgr
+braceleft 0x1a shift altgr
+braceright 0x1b shift altgr

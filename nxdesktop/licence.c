@@ -1,4 +1,4 @@
-/*
+/* -*- c-basic-offset: 8 -*-
    rdesktop: A Remote Desktop Protocol client.
    RDP licensing negotiation
    Copyright (C) Matthew Chapman 1999-2005
@@ -36,12 +36,7 @@
 /**************************************************************************/
 
 #include "rdesktop.h"
-
-#ifdef WITH_OPENSSL
 #include <openssl/rc4.h>
-#else
-#include "crypto/rc4.h"
-#endif
 
 extern char g_username[64];
 extern char g_hostname[16];
@@ -247,7 +242,7 @@ licence_parse_authreq(STREAM s, uint8 ** token, uint8 ** signature)
 static void
 licence_process_authreq(STREAM s)
 {
-	uint8 *in_token = 0, *in_sig;
+	uint8 *in_token = NULL, *in_sig;
 	uint8 out_token[LICENCE_TOKEN_SIZE], decrypt_token[LICENCE_TOKEN_SIZE];
 	uint8 hwid[LICENCE_HWID_SIZE], crypt_hwid[LICENCE_HWID_SIZE];
 	uint8 sealed_buffer[LICENCE_TOKEN_SIZE + LICENCE_HWID_SIZE];
@@ -342,6 +337,6 @@ licence_process(STREAM s)
 			break;
 
 		default:
-			unimpl("license_process","licence tag 0x%x\n", tag);
+			unimpl("licence_process", "licence tag 0x%x\n", tag);
 	}
 }

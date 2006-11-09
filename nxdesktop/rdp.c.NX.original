@@ -64,12 +64,12 @@ extern BOOL g_polygon_ellipse_orders;
 extern BOOL g_use_rdp5;
 extern uint16 g_server_rdp_version;
 extern uint32 g_rdp5_performanceflags;
-extern int g_server_bpp;
+extern int g_server_depth;
 extern int g_width;
 extern int g_height;
 extern BOOL g_bitmap_cache;
 extern BOOL g_bitmap_cache_persist_enable;
-extern BOOL g_rdp_compression;
+extern BOOL g_numlock_sync;
 
 /* NX */
 extern BOOL nxdesktopUseNXTrans;
@@ -88,6 +88,16 @@ uint8 *g_next_packet;
 uint32 g_rdp_shareid;
 
 extern RDPCOMP g_mppc_dict;
+
+/* Session Directory support */
+extern BOOL g_redirect;
+extern char g_redirect_server[64];
+extern char g_redirect_domain[16];
+extern char g_redirect_password[64];
+extern char g_redirect_username[64];
+extern char g_redirect_cookie[128];
+extern uint32 g_redirect_flags;
+/* END Session Directory support */
 
 #if WITH_DEBUG
 static uint32 g_packetno;
@@ -532,6 +542,37 @@ rdp_send_input(uint32 time, uint16 message_type, uint16 device_flags, uint16 par
 
 }
 
+/* Send a client window information PDU */
+void
+rdp_send_client_window_status(int status)
+{
+	STREAM s;
+	static int current_status = 1;
+
+	if (current_status == status)
+		return;
+
+	s = rdp_init_data(12);
+
+	out_uint32_le(s, status);
+
+	switch (status)
+	{
+		case 0:	/* shut the server up */
+			break;
+
+		case 1:	/* receive data again */
+			out_uint32_le(s, 0);	/* unknown */
+			out_uint16_le(s, g_width);
+			out_uint16_le(s, g_height);
+			break;
+	}
+
+	s_mark_end(s);
+	rdp_send_data(s, RDP_DATA_PDU_CLIENT_WINDOW_STATUS);
+	current_status = status;
+}
+
 /* Send persistent bitmap cache enumeration PDU's */
 static void
 rdp_enum_bmpcache2(void)
@@ -626,7 +667,7 @@ rdp_out_bitmap_caps(STREAM s)
 	out_uint16_le(s, RDP_CAPSET_BITMAP);
 	out_uint16_le(s, RDP_CAPLEN_BITMAP);
 
-	out_uint16_le(s, g_server_bpp);	/* Preferred BPP */
+	out_uint16_le(s, g_server_depth);	/* Preferred colour depth */
 	out_uint16_le(s, 1);	/* Receive 1 BPP */
 	out_uint16_le(s, 1);	/* Receive 4 BPP */
 	out_uint16_le(s, 1);	/* Receive 8 BPP */
@@ -677,7 +718,7 @@ rdp_out_order_caps(STREAM s)
 	out_uint8p(s, order_caps, 32);	/* Orders supported */
 	out_uint16_le(s, 0x6a1);	/* Text capability flags */
 	out_uint8s(s, 6);	/* Pad */
-        out_uint32(s, g_desktop_save == False ? 0 : DESKTOP_CACHE_SIZE);        /* Desktop cache size */
+        out_uint32_le(s, g_desktop_save == False ? 0 : DESKTOP_CACHE_SIZE);        /* Desktop cache size */
 	out_uint32(s, 0);	/* Unknown */
 	out_uint32_le(s, 0x4e4);	/* Unknown */
 }
@@ -690,7 +731,7 @@ rdp_out_bmpcache_caps(STREAM s)
 	out_uint16_le(s, RDP_CAPSET_BMPCACHE);
 	out_uint16_le(s, RDP_CAPLEN_BMPCACHE);
 
-	Bpp = (g_server_bpp + 7) / 8;
+	Bpp = (g_server_depth + 7) / 8;	/* bytes per pixel */
 	out_uint8s(s, 24);	/* unused */
 	out_uint16_le(s, 0x258);	/* entries */
 	out_uint16_le(s, 0x100 * Bpp);	/* max cell size */
@@ -901,12 +942,12 @@ rdp_process_bitmap_caps(STREAM s)
          * The server may limit depth and change the size of the desktop (for
          * example when shadowing another session).
          */
-        if (g_server_bpp != depth)
-        {
-                warning("Remote desktop does not support colour depth %d; falling back to %d\n",
-                        g_server_bpp, depth);
-                g_server_bpp = depth;
-        }
+	if (g_server_depth != depth)
+	{
+		warning("Remote desktop does not support colour depth %d; falling back to %d\n",
+			g_server_depth, depth);
+		g_server_depth = depth;
+	}
         if (g_width != width || g_height != height)
         {
                 warning("Remote desktop changed from %dx%d to %dx%d.\n", g_width, g_height,
@@ -977,7 +1018,8 @@ process_demand_active(STREAM s)
 	rdp_recv(&type);	/* RDP_PDU_SYNCHRONIZE */
 	rdp_recv(&type);	/* RDP_CTL_COOPERATE */
 	rdp_recv(&type);	/* RDP_CTL_GRANT_CONTROL */
-	rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0, ui_get_numlock_state(read_keyboard_state()), 0);
+	rdp_send_input(0, RDP_INPUT_SYNCHRONIZE, 0,
+		       g_numlock_sync ? ui_get_numlock_state(read_keyboard_state()) : 0, 0);
 
 	if (g_use_rdp5)
 	{
@@ -1347,12 +1389,66 @@ process_data_pdu(STREAM s, uint32 * ext_disc_reason)
 
 		case RDP_DATA_PDU_DISCONNECT:
 			process_disconnect_pdu(s, ext_disc_reason);
-			return True;
+
+			/* We used to return true and disconnect immediately here, but
+			 * Windows Vista sends a disconnect PDU with reason 0 when
+			 * reconnecting to a disconnected session, and MSTSC doesn't
+			 * drop the connection.  I think we should just save the status.
+			 */
+			break;
 
 		default:
 			unimpl("process_data_pdu","data PDU %d\n", data_pdu_type);	
 	}
 	return False;
+}
+
+/* Process redirect PDU from Session Directory */
+static BOOL
+process_redirect_pdu(STREAM s /*, uint32 * ext_disc_reason */ )
+{
+	uint32 len;
+
+	/* these 2 bytes are unknown, seem to be zeros */
+	in_uint8s(s, 2);
+
+	/* read connection flags */
+	in_uint32_le(s, g_redirect_flags);
+
+	/* read length of ip string */
+	in_uint32_le(s, len);
+
+	/* read ip string */
+	rdp_in_unistr(s, g_redirect_server, len);
+
+	/* read length of cookie string */
+	in_uint32_le(s, len);
+
+	/* read cookie string (plain ASCII) */
+	in_uint8a(s, g_redirect_cookie, len);
+	g_redirect_cookie[len] = 0;
+
+	/* read length of username string */
+	in_uint32_le(s, len);
+
+	/* read username string */
+	rdp_in_unistr(s, g_redirect_username, len);
+
+	/* read length of domain string */
+	in_uint32_le(s, len);
+
+	/* read domain string */
+	rdp_in_unistr(s, g_redirect_domain, len);
+
+	/* read length of password string */
+	in_uint32_le(s, len);
+
+	/* read password string */
+	rdp_in_unistr(s, g_redirect_password, len);
+
+	g_redirect = True;
+
+	return True;
 }
 
 /* Process incoming packets */
@@ -1400,6 +1496,9 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
                                 #endif
 				*deactivated = True;
 				break;
+			case RDP_PDU_REDIRECT:
+				return process_redirect_pdu(s);
+				break;
 			case RDP_PDU_DATA:
 				disc = process_data_pdu(s, ext_disc_reason);
 				break;
@@ -1416,20 +1515,6 @@ rdp_loop(BOOL * deactivated, uint32 * ext_disc_reason)
 	return True;
 }
 
-/* Test a connection up to the RDP layer */
-BOOL
-test_rdp_connect(char *server)
-{
-        if (!tcp_connect(server))
-        {
-            return False;
-        }
-        else
-        {
-            return True;
-        }
-}
-
 /* Establish a connection up to the RDP layer */
 BOOL
 rdp_connect(char *server, uint32 flags, char *domain, char *password,
@@ -1443,6 +1528,27 @@ rdp_connect(char *server, uint32 flags, char *domain, char *password,
 
 	rdp_send_logon_info(flags, domain, g_username, password, command, directory);
 	return True;
+}
+
+/* Establish a reconnection up to the RDP layer */
+BOOL
+rdp_reconnect(char *server, uint32 flags, char *domain, char *password,
+	      char *command, char *directory, char *cookie)
+{
+	if (!sec_reconnect(server))
+		return False;
+
+	rdp_send_logon_info(flags, domain, g_username, password, command, directory);
+	return True;
+}
+
+/* Called during redirection to reset the state to support redirection */
+void
+rdp_reset_state(void)
+{
+	g_next_packet = NULL;	/* reset the packet information */
+	g_rdp_shareid = 0;
+	sec_reset_state();
 }
 
 /* Disconnect from the RDP layer */

@@ -50,6 +50,9 @@
 
 static VCHANNEL *cliprdr_channel;
 
+static uint8 *last_formats = NULL;
+static uint32 last_formats_length = 0;
+
 static void
 cliprdr_send_packet(uint16 type, uint16 status, uint8 * data, uint32 length)
 {
@@ -77,6 +80,8 @@ cliprdr_send_simple_native_format_announce(uint32 format)
 {
 	uint8 buffer[36];
 
+	DEBUG_CLIPBOARD((stderr, "cliprdr_send_simple_native_format_announce\n"));
+
 	buf_out_uint32(buffer, format);
 	memset(buffer + 4, 0, sizeof(buffer) - 4);      /* description */
 	cliprdr_send_native_format_announce(buffer, sizeof(buffer));
@@ -89,28 +94,19 @@ cliprdr_send_simple_native_format_announce(uint32 format)
 void
 cliprdr_send_native_format_announce(uint8 * formats_data, uint32 formats_data_length)
 {
+	DEBUG_CLIPBOARD((stderr, "cliprdr_send_native_format_announce\n"));
+
         cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, formats_data,
                             formats_data_length);
-}
+        if (formats_data != last_formats)
+	{
+		if (last_formats)
+			xfree(last_formats);
 
-void
-cliprdr_send_text_format_announce(void)
-{
-	uint8 buffer[36];
-
-	buf_out_uint32(buffer, CF_TEXT);
-	memset(buffer + 4, 0, sizeof(buffer) - 4);	/* description */
-	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, buffer, sizeof(buffer));
-}
-
-void
-cliprdr_send_blah_format_announce(void)
-{
-	uint8 buffer[36];
-
-	buf_out_uint32(buffer, CF_OEMTEXT);
-	memset(buffer + 4, 0, sizeof(buffer) - 4);	/* description */
-	cliprdr_send_packet(CLIPRDR_FORMAT_ANNOUNCE, CLIPRDR_REQUEST, buffer, sizeof(buffer));
+		last_formats = xmalloc(formats_data_length);
+		memcpy(last_formats, formats_data, formats_data_length);
+		last_formats_length = formats_data_length;
+	}
 }
 
 void
@@ -118,6 +114,7 @@ cliprdr_send_data_request(uint32 format)
 {
 	uint8 buffer[4];
 
+	DEBUG_CLIPBOARD(("cliprdr_send_data_request\n"));
 	buf_out_uint32(buffer, format);
 	cliprdr_send_packet(CLIPRDR_DATA_REQUEST, CLIPRDR_REQUEST, buffer, sizeof(buffer));
 }
@@ -125,6 +122,7 @@ cliprdr_send_data_request(uint32 format)
 void
 cliprdr_send_data(uint8 * data, uint32 length)
 {
+        DEBUG_CLIPBOARD((stderr, "cliprdr_send_data\n"));
 	cliprdr_send_packet(CLIPRDR_DATA_RESPONSE, CLIPRDR_RESPONSE, data, length);
 }
 
@@ -144,15 +142,21 @@ cliprdr_process(STREAM s)
 
 	if (status == CLIPRDR_ERROR)
 	{
-		if (type == CLIPRDR_FORMAT_ACK)
+                switch (type)
 		{
-			/* FIXME: We seem to get this when we send an announce while the server is
-			   still processing a paste. Try sending another announce. */
-                        cliprdr_send_simple_native_format_announce(CF_TEXT);
-			return;
+			case CLIPRDR_FORMAT_ACK:
+				/* FIXME: We seem to get this when we send an announce while the server is
+				   still processing a paste. Try sending another announce. */
+				cliprdr_send_native_format_announce(last_formats,
+								    last_formats_length);
+				break;
+			case CLIPRDR_DATA_RESPONSE:
+				ui_clip_request_failed();
+				break;
+			default:
+				DEBUG_CLIPBOARD(("CLIPRDR error (type=%d)\n", type));
 		}
 
-		DEBUG_CLIPBOARD((stderr, "CLIPRDR error (type=%d)\n", type));
 		return;
 	}
 
@@ -179,6 +183,12 @@ cliprdr_process(STREAM s)
 		default:
                         unimpl("cliprdr_process","CLIPRDR packet type %d\n", type);
 	}
+}
+
+void
+cliprdr_set_mode(const char *optarg)
+{
+	ui_clip_set_mode(optarg);
 }
 
 BOOL

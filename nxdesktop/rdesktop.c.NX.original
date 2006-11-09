@@ -52,10 +52,10 @@
 #include "NX.h"
 #include "X11/Xos.h"
 
-#ifdef HAVE_ICONV
 #ifdef HAVE_LOCALE_H
 #include <locale.h>
 #endif
+#ifdef HAVE_ICONV
 #ifdef HAVE_LANGINFO_H
 #include <langinfo.h>
 #endif
@@ -67,17 +67,16 @@
 #include <sys/un.h>		/* sockaddr_un */
 #endif
 
-#ifdef WITH_OPENSSL
 #include <openssl/md5.h>
-#else
-#include "crypto/md5.h"
-#endif
 
 char g_title[256] = "";
 char g_username[64];
 char g_hostname[16];
-char keymapname[16];
-int g_keylayout = 0x409;	/* Defaults to US keyboard layout */
+char g_keymapname[PATH_MAX] = "";
+unsigned int g_keylayout = 0x409;	/* Defaults to US keyboard layout */
+int g_keyboard_type = 0x4;	/* Defaults to US keyboard layout */
+int g_keyboard_subtype = 0x0;	/* Defaults to US keyboard layout */
+int g_keyboard_functionkeys = 0xc;	/* Defaults to US keyboard layout */
 
 int g_width = 800;		/* width is special: If 0, the
 				   geometry will be fetched from
@@ -92,7 +91,7 @@ int g_pos = 0;			/* 0 position unspecified,
 				   2 xpos neg,
 				   4 ypos neg  */
 extern int g_tcp_port_rdp;
-int g_server_bpp = 8;
+int g_server_depth = -1;
 int g_win_button_size = 0;	/* If zero, disable single app mode */
 BOOL g_bitmap_compression = True;
 BOOL g_sendmotion = True;
@@ -106,8 +105,10 @@ BOOL g_polygon_ellipse_orders = True;	/* polygon / ellipse orders */
 BOOL g_fullscreen = False;
 BOOL g_grab_keyboard = True;
 BOOL g_hide_decorations = False;
-/* NX */
 BOOL g_use_rdp5 = True;
+BOOL g_rdpclip = True;
+
+/* NX */
 BOOL rdp_img_cache = True;
 BOOL rdp_img_cache_nxcompressed = True;
 BOOL username_option = False;
@@ -133,10 +134,19 @@ BOOL g_numlock_sync = False;
 BOOL lspci_enabled = False;
 BOOL g_owncolmap = False;
 BOOL g_ownbackstore = True;	/* We can't rely on external BackingStore */
-uint32 g_embed_wnd;
 BOOL g_seamless_rdp = False;
+uint32 g_embed_wnd;
 uint32 g_rdp5_performanceflags =
 	RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS;
+
+/* Session Directory redirection */
+BOOL g_redirect = False;
+char g_redirect_server[64];
+char g_redirect_domain[16];
+char g_redirect_password[64];
+char g_redirect_username[64];
+char g_redirect_cookie[128];
+uint32 g_redirect_flags = 0;
 
 #ifdef WITH_RDPSND
 BOOL g_rdpsnd = False;
@@ -159,7 +169,7 @@ rdp2vnc_connect(char *server, uint32 flags, char *domain, char *password,
 #endif
 
 /* Here starts the NX mods */
-#define NUM_KEYMAPS 33
+#define NUM_KEYMAPS 35
 
 struct struct_keymaps
 {
@@ -217,6 +227,7 @@ usage(char *program)
 #ifdef HAVE_ICONV
 	fprintf(stderr, "   -L: local codepage\n");
 #endif
+	fprintf(stderr, "   -A: enable SeamlessRDP mode\n");
 	fprintf(stderr, "   -e: disable encryption (French TS)\n");
 	fprintf(stderr, "   -E: disable encryption from client to server\n");
 	fprintf(stderr, "   -m: do not send motion events\n");
@@ -248,11 +259,16 @@ usage(char *program)
 		"             or      mydeskjet=\"HP LaserJet IIIP\" to enter server driver as well\n");
 	fprintf(stderr, "         '-r sound:[local|off|remote]': enable sound redirection\n");
 	fprintf(stderr, "                     remote would leave sound on server\n");
+	fprintf(stderr,
+		"         '-r clipboard:[off|PRIMARYCLIPBOARD|CLIPBOARD]': enable clipboard\n");
+	fprintf(stderr, "                      redirection.\n");
+	fprintf(stderr,
+		"                      'PRIMARYCLIPBOARD' looks at both PRIMARY and CLIPBOARD\n");
+	fprintf(stderr, "                      when sending data to server.\n");
+	fprintf(stderr, "                      'CLIPBOARD' looks at only CLIPBOARD.\n");
 	fprintf(stderr, "   -0: attach to console\n");
 	fprintf(stderr, "   -4: use RDP version 4\n");
 	fprintf(stderr, "   -5: use RDP version 5 (default)\n");
-        fprintf(stderr, "   -M: disable the \"Ctrl-Alt-Esc\" magic key-sequence\n");
-        fprintf(stderr, "   -B: set receive buffer of RDP socket to value (default %d)\n", rdp_bufsize);
 }
 
 static void
@@ -447,26 +463,37 @@ main(int argc, char *argv[])
 	char fullhostname[64];
 	char domain[16];
 	char password[64];
-	char shell[128];
-	char directory[32];
+	char shell[256];
+	char directory[256];
 	BOOL prompt_password, deactivated;
 	struct passwd *pw;
 	uint32 flags, ext_disc_reason = 0;
 	char *p;
 	int c, i;
-
+	char *locale = NULL;
 	int username_option = 0;
+	BOOL geometry_option = False;
+
+#ifdef HAVE_LOCALE_H
+	/* Set locale according to environment */
+	locale = setlocale(LC_ALL, "");
+	if (locale)
+	{
+		locale = xstrdup(locale);
+	}
+
+#endif
 
         int nx_argc = 0;
         char *nx_argv[argc];
 
         /* show initial info */
         ShowHeaderInfo();
-        InitKeyboardsList();
+	InitKeyboardsList();
+
 	flags = RDP_LOGON_NORMAL;
 	prompt_password = False;
 	domain[0] = password[0] = shell[0] = directory[0] = 0;
-	strcpy(keymapname, "en-us");
 	g_embed_wnd = 0;
 
 	g_num_devices = 0;
@@ -513,7 +540,8 @@ main(int argc, char *argv[])
         #endif
 
 	while ((c = getopt(nx_argc, nx_argv,
-			   VNCOPT "u:L:d:s:c:p:n:k:g:fbvBeEmzCDKS:T:NX:a:x:Pr:045h?F")) != -1)
+			   VNCOPT ":u:L:d:s:c:p:n:k:g:AfbvBeEmzCDKS:T:NX:a:x:Pr:045h?F")) != -1)
+
 	{
 		switch (c)
 		{
@@ -530,6 +558,9 @@ main(int argc, char *argv[])
 					defer_time = 0;
 				break;
 #endif
+			case 'A':
+				g_seamless_rdp = True;
+				break;
 
 			case 'u':
 				STRNCPY(g_username, optarg, sizeof(g_username));
@@ -577,10 +608,11 @@ main(int argc, char *argv[])
 				break;
 
 			case 'k':
-				STRNCPY(keymapname, optarg, sizeof(keymapname));
+				STRNCPY(g_keymapname, optarg, sizeof(g_keymapname));
 				break;
 
 			case 'g':
+				geometry_option = True;
 				g_fullscreen = False;
 				if (!strcmp(optarg, "workarea"))
 				{
@@ -689,15 +721,16 @@ main(int argc, char *argv[])
 				break;
 
 			case 'X':
-				g_embed_wnd = strtol(optarg, NULL, 10);
+				g_embed_wnd = strtol(optarg, NULL, 0);
 				break;
 
 			case 'a':
-				g_server_bpp = strtol(optarg, NULL, 10);
-				if (g_server_bpp != 8 && g_server_bpp != 16 && g_server_bpp != 15
-				    && g_server_bpp != 24)
+				g_server_depth = strtol(optarg, NULL, 10);
+				if (g_server_depth != 8 && 
+				    g_server_depth != 16 && 
+				    g_server_depth != 15 && g_server_depth != 24)
 				{
-					error("Invalid server bpp\n");
+					error("Invalid servercolour depth.\n");
 					return 1;
 				}
 				break;
@@ -734,26 +767,26 @@ main(int argc, char *argv[])
 
 			case 'r':
 
-				if (strncmp("sound", optarg, 5) == 0)
+				if (str_startswith(optarg, "sound"))
 				{
 					optarg += 5;
 
 					if (*optarg == ':')
 					{
-						*optarg++;
+						optarg++;
 						while ((p = next_arg(optarg, ',')))
 						{
-							if (strncmp("remote", optarg, 6) == 0)
+							if (str_startswith(optarg, "remote"))
 								flags |= RDP_LOGON_LEAVE_AUDIO;
 
-							if (strncmp("local", optarg, 5) == 0)
+							if (str_startswith(optarg, "local"))
 #ifdef WITH_RDPSND
 								g_rdpsnd = True;
 #else
 								warning("Not compiled with sound support\n");
 #endif
 
-							if (strncmp("off", optarg, 3) == 0)
+							if (str_startswith(optarg, "off"))
 #ifdef WITH_RDPSND
 								g_rdpsnd = False;
 #else
@@ -772,28 +805,49 @@ main(int argc, char *argv[])
 #endif
 					}
 				}
-				else if (strncmp("disk", optarg, 4) == 0)
+				else if (str_startswith(optarg, "disk"))
 				{
 					/* -r disk:h:=/mnt/floppy */
 					disk_enum_devices(&g_num_devices, optarg + 4);
 				}
-				else if (strncmp("comport", optarg, 7) == 0)
+				else if (str_startswith(optarg, "comport"))
 				{
 					serial_enum_devices(&g_num_devices, optarg + 7);
 				}
-				else if (strncmp("lptport", optarg, 7) == 0)
+				else if (str_startswith(optarg, "lspci"))
+				{
+					lspci_enabled = True;
+				}
+				else if (str_startswith(optarg, "lptport"))
 				{
 					parallel_enum_devices(&g_num_devices, optarg + 7);
 				}
-				else if (strncmp("printer", optarg, 7) == 0)
+				else if (str_startswith(optarg, "printer"))
 				{
 					printer_enum_devices(&g_num_devices, optarg + 7);
 				}
-				else if (strncmp("clientname", optarg, 7) == 0)
+				else if (str_startswith(optarg, "clientname"))
 				{
 					g_rdpdr_clientname = xmalloc(strlen(optarg + 11) + 1);
 					strcpy(g_rdpdr_clientname, optarg + 11);
 				}
+				else if (str_startswith(optarg, "clipboard"))
+				{
+					optarg += 9;
+
+					if (*optarg == ':')
+					{
+						optarg++;
+
+						if (str_startswith(optarg, "off"))
+							g_rdpclip = False;
+						else
+							cliprdr_set_mode(optarg);
+					}
+					else
+						g_rdpclip = True;
+				}
+
 				else
 				{
 					warning("Unknown -r argument\n\n\tPossible arguments are: comport, disk, lptport, printer, sound\n");
@@ -847,7 +901,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (nx_argc - optind < 1)
+	if (nx_argc - optind != 1)
 	{
 		usage(argv[0]);
 		return 1;
@@ -856,6 +910,42 @@ main(int argc, char *argv[])
 	STRNCPY(server, nx_argv[optind], sizeof(server));
 	parse_server_and_port(server);
 
+	if (g_seamless_rdp)
+	{
+		if (g_win_button_size)
+		{
+			error("You cannot use -S and -A at the same time\n");
+			return 1;
+		}
+		g_rdp5_performanceflags &= ~RDP5_NO_FULLWINDOWDRAG;
+		if (geometry_option)
+		{
+			error("You cannot use -g and -A at the same time\n");
+			return 1;
+		}
+		if (g_fullscreen)
+		{
+			error("You cannot use -f and -A at the same time\n");
+			return 1;
+		}
+		if (g_hide_decorations)
+		{
+			error("You cannot use -D and -A at the same time\n");
+			return 1;
+		}
+		if (g_embed_wnd)
+		{
+			error("You cannot use -X and -A at the same time\n");
+			return 1;
+		}
+		if (!g_use_rdp5)
+		{
+			error("You cannot use -4 and -A at the same time\n");
+			return 1;
+		}
+		g_width = -100;
+		g_grab_keyboard = False;
+	}
 	if (!username_option)
 	{
 		pw = getpwuid(getuid());
@@ -897,7 +987,7 @@ main(int argc, char *argv[])
 		STRNCPY(g_hostname, fullhostname, sizeof(g_hostname));
 	}
 
-        /* read the passwordfile or fallback to the prompt or standard comandline option */
+ 	/* read the passwordfile or fallback to the prompt or standard comandline option */
         if (passwordFile[0] == 0)
         {
 		if (prompt_password && read_password(password, sizeof(password)))
@@ -918,6 +1008,20 @@ main(int argc, char *argv[])
 	   }
 	}
 
+	if (g_keymapname[0] == 0)
+	{
+		if (locale && xkeymap_from_locale(locale))
+		{
+			fprintf(stderr, "Autoselected keyboard map %s\n", g_keymapname);
+		}
+		else
+		{
+			STRNCPY(g_keymapname, "en-us", sizeof(g_keymapname));
+		}
+	}
+	if (locale)
+		xfree(locale);
+
 	if (g_title[0] == 0)
 	{
 		strcpy(g_title, "rdesktop - ");
@@ -933,26 +1037,6 @@ main(int argc, char *argv[])
 	rdp2vnc_connect(server, flags, domain, password, shell, directory);
 	return 0;
 #else
-
-        if (!ui_open_display())
-        {
-            return 1;
-        }
-
-        if (nxDisplay[0] != 0)
-        {
-            /* NX - force "modem" experience mode */
-            g_rdp5_performanceflags = RDP5_NO_WALLPAPER | RDP5_NO_FULLWINDOWDRAG | RDP5_NO_MENUANIMATIONS | RDP5_NO_THEMING;
-            /* experimental RDP compression */
-            flags |= (RDP_LOGON_COMPRESSION | RDP_LOGON_COMPRESSION2);
-            /* NX */
-        };
-
-        if (!test_rdp_connect(server))
-        {
-            ui_init();
-            nxdesktopExit(1);
-        }
 
         if (!ui_init())
                 return 1;
@@ -991,11 +1075,11 @@ main(int argc, char *argv[])
 	if (!packet_encryption)
 		g_encryption = False;
 
-        /* NX */
-        info("Connected to RDP server '%s'.\n",server);
-        fprintf(stderr,"Session: Session started at '%s'.\n", GetTimeAsString());
-        info("Color depth %d.\n",g_server_bpp);
-        /* NX */
+	 /* NX */
+	info("Connected to RDP server '%s'.\n",server);
+	fprintf(stderr,"Session: Session started at '%s'.\n", GetTimeAsString());
+	info("Color depth %d.\n",g_server_depth);
+	/* NX */
 
 	DEBUG(("Connection successful.\n"));
 
@@ -1151,6 +1235,19 @@ xmalloc(int size)
 	{
 		error("xmalloc %d\n", size);
 		nxdesktopExit(1);
+	}
+	return mem;
+}
+
+/* strdup */
+char *
+xstrdup(const char *s)
+{
+	char *mem = strdup(s);
+	if (mem == NULL)
+	{
+		perror("strdup");
+		exit(1);
 	}
 	return mem;
 }
@@ -1315,7 +1412,7 @@ next_arg(char *src, char needle)
 			while (*(mvp + 1) != (char) 0x00)
 			{
 				*mvp = *(mvp + 1);
-				*mvp++;
+				mvp++;
 			}
 			*mvp = (char) 0x00;
 			p = nextval;
@@ -1683,7 +1780,7 @@ rd_lock_file(int fd, int start, int len)
 int agentArgument(int i, char *argv[])
 {
     unsigned int aux_w, aux_h;
-
+	
     if (!strcmp(argv[i], "-sync"))
     {
         return 1;
@@ -1930,7 +2027,7 @@ int agentArgument(int i, char *argv[])
         char *aux, *command, *value;
 
         strncpy(options_file,(char *)argv[i+1],strlen((char *)argv[i+1])+1);
-
+	
         if ((fp = fopen(options_file,"r")) == NULL)
         {
             error("agentArgument: Options file could not be opened.\n");
@@ -1985,7 +2082,7 @@ int agentArgument(int i, char *argv[])
                     {
                         if (!strcmp(value, keyboard_defs[j].xkb_name))
                             {
-                                strcpy(keymapname, keyboard_defs[j].file);
+                                strcpy(g_keymapname, keyboard_defs[j].file);
                                 F = True;
                                 break;
                             }
@@ -1996,7 +2093,7 @@ int agentArgument(int i, char *argv[])
                     }
                     #ifdef NXDESKTOP_PARAM_DEBUG
                     nxdesktopDebug("kbtype ","%s\n",value);
-                    nxdesktopDebug("keymapname ","%s\n",keymapname);
+                    nxdesktopDebug("keymapname ","%s\n",g_keymapname);
                     #endif
                 }
 
@@ -2063,20 +2160,20 @@ int agentArgument(int i, char *argv[])
                     nxdesktopDebug("rdpcolors ","%s\n",value);
                     #endif
                     if (!strcmp(value,"256"))
-                        g_server_bpp = 8;
+                        g_server_depth = 8;
                     else
                     if (!strcmp(value,"32K"))
-                        g_server_bpp = 15;
+                        g_server_depth = 15;
                     else
                     if (!strcmp(value,"64K"))
-                        g_server_bpp = 16;
+                        g_server_depth = 16;
                     else
                     if (!strcmp(value,"16M"))
-                        g_server_bpp = 24;
+                        g_server_depth = 24;
                     else
                     {
                         warning("agentArgument: session depth %d is invalid. Using 8 bpp (256 colors).\n",value);
-                        g_server_bpp = 8;
+                        g_server_depth = 8;
                     }
                 }
 
@@ -2168,133 +2265,141 @@ void InitKeyboardsList(void)
     keyboard_defs[1].def="Arabic";
     keyboard_defs[1].file="ar";
 
-    keyboard_defs[2].xkb_name="dk";
-    keyboard_defs[2].def="Danish";
-    keyboard_defs[2].file="da";
+    keyboard_defs[2].xkb_name="cs";
+    keyboard_defs[2].def="Czech";
+    keyboard_defs[2].file="cs";
 
-    keyboard_defs[3].xkb_name="de";
-    keyboard_defs[3].def="German";
-    keyboard_defs[3].file="de";
+    keyboard_defs[3].xkb_name="dk";
+    keyboard_defs[3].def="Danish";
+    keyboard_defs[3].file="da";
 
-    keyboard_defs[4].xkb_name="de_CH";
-    keyboard_defs[4].def="German (Switzerland)";
-    keyboard_defs[4].file="de-ch";
+    keyboard_defs[4].xkb_name="de";
+    keyboard_defs[4].def="German";
+    keyboard_defs[4].file="de";
 
-    keyboard_defs[5].xkb_name="gb";
-    keyboard_defs[5].def="English (Great Britain)";
-    keyboard_defs[5].file="en-gb";
+    keyboard_defs[5].xkb_name="de_CH";
+    keyboard_defs[5].def="German (Switzerland)";
+    keyboard_defs[5].file="de-ch";
 
-    keyboard_defs[6].xkb_name="us";
-    keyboard_defs[6].def="U.S. English";
-    keyboard_defs[6].file="en-us";
+    keyboard_defs[6].xkb_name="gb";
+    keyboard_defs[6].def="English (Great Britain)";
+    keyboard_defs[6].file="en-gb";
 
-    keyboard_defs[7].xkb_name="en_US";
-    keyboard_defs[7].def="U.S. English w/ ISO9995-3";
+    keyboard_defs[7].xkb_name="us";
+    keyboard_defs[7].def="U.S. English";
     keyboard_defs[7].file="en-us";
 
-    keyboard_defs[8].xkb_name="es";
-    keyboard_defs[8].def="Spanish";
-    keyboard_defs[8].file="es";
+    keyboard_defs[8].xkb_name="en_US";
+    keyboard_defs[8].def="U.S. English w/ ISO9995-3";
+    keyboard_defs[8].file="en-us";
 
-    keyboard_defs[9].xkb_name="ee";
-    keyboard_defs[9].def="Estonian";
-    keyboard_defs[9].file="et";
+    keyboard_defs[9].xkb_name="es";
+    keyboard_defs[9].def="Spanish";
+    keyboard_defs[9].file="es";
 
-    keyboard_defs[10].xkb_name="fi";
-    keyboard_defs[10].def="Finish";
-    keyboard_defs[10].file="fi";
+    keyboard_defs[10].xkb_name="ee";
+    keyboard_defs[10].def="Estonian";
+    keyboard_defs[10].file="et";
 
-    keyboard_defs[11].xkb_name="fo";
-    keyboard_defs[11].def="Faeroese";
-    keyboard_defs[11].file="fo";
+    keyboard_defs[11].xkb_name="fi";
+    keyboard_defs[11].def="Finish";
+    keyboard_defs[11].file="fi";
 
-    keyboard_defs[12].xkb_name="fr";
-    keyboard_defs[12].def="French";
-    keyboard_defs[12].file="fr";
+    keyboard_defs[12].xkb_name="fo";
+    keyboard_defs[12].def="Faeroese";
+    keyboard_defs[12].file="fo";
 
-    keyboard_defs[13].xkb_name="be";
-    keyboard_defs[13].def="French (Belgian)";
-    keyboard_defs[13].file="fr-be";
+    keyboard_defs[13].xkb_name="fr";
+    keyboard_defs[13].def="French";
+    keyboard_defs[13].file="fr";
 
-    keyboard_defs[14].xkb_name="ca_enhanced";
-    keyboard_defs[14].def="French (Canadian)";
-    keyboard_defs[14].file="fr-ca";
+    keyboard_defs[14].xkb_name="be";
+    keyboard_defs[14].def="French (Belgian)";
+    keyboard_defs[14].file="fr-be";
 
-    keyboard_defs[15].xkb_name="fr_CH";
-    keyboard_defs[15].def="French (Switzerland)";
-    keyboard_defs[15].file="fr-ch";
+    keyboard_defs[15].xkb_name="ca_enhanced";
+    keyboard_defs[15].def="French (Canadian)";
+    keyboard_defs[15].file="fr-ca";
 
-    keyboard_defs[16].xkb_name="hu";
-    keyboard_defs[16].def="Hungarian";
-    keyboard_defs[16].file="hu";
+    keyboard_defs[16].xkb_name="fr_CH";
+    keyboard_defs[16].def="French (Switzerland)";
+    keyboard_defs[16].file="fr-ch";
 
-    keyboard_defs[17].xkb_name="is";
-    keyboard_defs[17].def="Icelandic";
-    keyboard_defs[17].file="is";
+    keyboard_defs[17].xkb_name="he";
+    keyboard_defs[17].def="Hebrew";
+    keyboard_defs[17].file="he";
 
-    keyboard_defs[18].xkb_name="it";
-    keyboard_defs[18].def="Italian";
-    keyboard_defs[18].file="it";
+    keyboard_defs[18].xkb_name="hu";
+    keyboard_defs[18].def="Hungarian";
+    keyboard_defs[18].file="hu";
 
-    keyboard_defs[19].xkb_name="jp";
-    keyboard_defs[19].def="Japanese";
-    keyboard_defs[19].file="ja";
+    keyboard_defs[19].xkb_name="is";
+    keyboard_defs[19].def="Icelandic";
+    keyboard_defs[19].file="is";
 
-    keyboard_defs[20].xkb_name="lt";
-    keyboard_defs[20].def="Lithuanian";
-    keyboard_defs[20].file="lt";
+    keyboard_defs[20].xkb_name="it";
+    keyboard_defs[20].def="Italian";
+    keyboard_defs[20].file="it";
 
-    keyboard_defs[21].xkb_name="lv";
-    keyboard_defs[21].def="Latvian";
-    keyboard_defs[21].file="lv";
+    keyboard_defs[21].xkb_name="jp";
+    keyboard_defs[21].def="Japanese";
+    keyboard_defs[21].file="ja";
 
-    keyboard_defs[22].xkb_name="mk";
-    keyboard_defs[22].def="Macedonian";
-    keyboard_defs[22].file="mk";
+    keyboard_defs[22].xkb_name="lt";
+    keyboard_defs[22].def="Lithuanian";
+    keyboard_defs[22].file="lt";
 
-    keyboard_defs[23].xkb_name="nl";
-    keyboard_defs[23].def="Dutch (Netherlands)";
-    keyboard_defs[23].file="nl";
+    keyboard_defs[23].xkb_name="lv";
+    keyboard_defs[23].def="Latvian";
+    keyboard_defs[23].file="lv";
 
-    keyboard_defs[24].xkb_name="nl-be";
-    keyboard_defs[24].def="Dutch (Belgian)";
-    keyboard_defs[24].file="nl-be";
+    keyboard_defs[24].xkb_name="mk";
+    keyboard_defs[24].def="Macedonian";
+    keyboard_defs[24].file="mk";
 
-    keyboard_defs[25].xkb_name="no";
-    keyboard_defs[25].def="Norwegian";
-    keyboard_defs[25].file="no";
+    keyboard_defs[25].xkb_name="nl";
+    keyboard_defs[25].def="Dutch (Netherlands)";
+    keyboard_defs[25].file="nl";
 
-    keyboard_defs[26].xkb_name="pl";
-    keyboard_defs[26].def="Polish";
-    keyboard_defs[26].file="pl";
+    keyboard_defs[26].xkb_name="nl-be";
+    keyboard_defs[26].def="Dutch (Belgian)";
+    keyboard_defs[26].file="nl-be";
 
-    keyboard_defs[27].xkb_name="pt";
-    keyboard_defs[27].def="Portuguese";
-    keyboard_defs[27].file="pt";
+    keyboard_defs[27].xkb_name="no";
+    keyboard_defs[27].def="Norwegian";
+    keyboard_defs[27].file="no";
 
-    keyboard_defs[28].xkb_name="br";
-    keyboard_defs[28].def="Brazilian Portuguese";
-    keyboard_defs[28].file="pt-br";
+    keyboard_defs[28].xkb_name="pl";
+    keyboard_defs[28].def="Polish";
+    keyboard_defs[28].file="pl";
 
-    keyboard_defs[29].xkb_name="ru";
-    keyboard_defs[29].def="Russian";
-    keyboard_defs[29].file="ru";
+    keyboard_defs[29].xkb_name="pt";
+    keyboard_defs[29].def="Portuguese";
+    keyboard_defs[29].file="pt";
 
-    keyboard_defs[30].xkb_name="si";
-    keyboard_defs[30].def="Slovenian";
-    keyboard_defs[30].file="sl";
+    keyboard_defs[30].xkb_name="br";
+    keyboard_defs[30].def="Brazilian Portuguese";
+    keyboard_defs[30].file="pt-br";
 
-    keyboard_defs[31].xkb_name="sk";
-    keyboard_defs[31].def="Slovak";
-    keyboard_defs[31].file="sv";
+    keyboard_defs[31].xkb_name="ru";
+    keyboard_defs[31].def="Russian";
+    keyboard_defs[31].file="ru";
 
-    keyboard_defs[32].xkb_name="th";
-    keyboard_defs[32].def="Thai (Kedmanee)";
-    keyboard_defs[32].file="th";
+    keyboard_defs[32].xkb_name="si";
+    keyboard_defs[32].def="Slovenian";
+    keyboard_defs[32].file="sl";
 
-    keyboard_defs[33].xkb_name="tr";
-    keyboard_defs[33].def="Turkish";
-    keyboard_defs[33].file="tr";
+    keyboard_defs[33].xkb_name="sk";
+    keyboard_defs[33].def="Slovak";
+    keyboard_defs[33].file="sv";
+
+    keyboard_defs[34].xkb_name="th";
+    keyboard_defs[34].def="Thai (Kedmanee)";
+    keyboard_defs[34].file="th";
+
+    keyboard_defs[35].xkb_name="tr";
+    keyboard_defs[35].def="Turkish";
+    keyboard_defs[35].file="tr";
 }
 
 /* Translates the keymap number received to the internal rdesktop keymap name */
@@ -2303,43 +2408,45 @@ void NXTranslateKeymap()
 {
     switch(g_keylayout)
     {
-        case 0x0401: strcpy(keymapname, "ar"); break;
-        case 0x0406: strcpy(keymapname, "da"); break;
-        case 0x0407: strcpy(keymapname, "de"); break;
-        case 0x0807: strcpy(keymapname, "de-ch"); break;
-        case 0x0809: strcpy(keymapname, "en-gb"); break;
-        case 0x0409: strcpy(keymapname, "en-us"); break;
-        case 0x040a: strcpy(keymapname, "es"); break;
-        case 0x0425: strcpy(keymapname, "et"); break;
-        case 0x040b: strcpy(keymapname, "fi"); break;
-        case 0x0438: strcpy(keymapname, "fo"); break;
-        case 0x040c: strcpy(keymapname, "fr"); break;
-        case 0x080c: strcpy(keymapname, "fr-be"); break;
-        case 0x0c0c: strcpy(keymapname, "fr-ca"); break;
-        case 0x100c: strcpy(keymapname, "fr-ch"); break;
-        case 0x041a: strcpy(keymapname, "hr"); break;
-        case 0x040e: strcpy(keymapname, "hu"); break;
-        case 0x040f: strcpy(keymapname, "is"); break;
+        case 0x0401: strcpy(g_keymapname, "ar"); break;
+	case 0x0405: strcpy(g_keymapname, "cs"); break;
+        case 0x0406: strcpy(g_keymapname, "da"); break;
+        case 0x0407: strcpy(g_keymapname, "de"); break;
+        case 0x0807: strcpy(g_keymapname, "de-ch"); break;
+        case 0x0809: strcpy(g_keymapname, "en-gb"); break;
+        case 0x0409: strcpy(g_keymapname, "en-us"); break;
+        case 0x040a: strcpy(g_keymapname, "es"); break;
+        case 0x0425: strcpy(g_keymapname, "et"); break;
+        case 0x040b: strcpy(g_keymapname, "fi"); break;
+        case 0x0438: strcpy(g_keymapname, "fo"); break;
+        case 0x040c: strcpy(g_keymapname, "fr"); break;
+        case 0x080c: strcpy(g_keymapname, "fr-be"); break;
+        case 0x0c0c: strcpy(g_keymapname, "fr-ca"); break;
+        case 0x100c: strcpy(g_keymapname, "fr-ch"); break;
+	case 0x040d: strcpy(g_keymapname, "he"); break;
+        case 0x041a: strcpy(g_keymapname, "hr"); break;
+        case 0x040e: strcpy(g_keymapname, "hu"); break;
+        case 0x040f: strcpy(g_keymapname, "is"); break;
         case 0x0410:
-        case 0x0810: strcpy(keymapname, "it"); break;
-        case 0x0411: strcpy(keymapname, "ja"); break;
-        case 0x0427: strcpy(keymapname, "lt"); break;
-        case 0x0426: strcpy(keymapname, "lv"); break;
-        case 0x042f: strcpy(keymapname, "mk"); break;
-        case 0x0413: strcpy(keymapname, "nl"); break;
-        case 0x0813: strcpy(keymapname, "nl-be"); break;
-        case 0x0414: strcpy(keymapname, "no"); break;
-        case 0x0415: strcpy(keymapname, "pl"); break;
-        case 0x0816: strcpy(keymapname, "pt"); break;
-        case 0x0416: strcpy(keymapname, "pt-br"); break;
-        case 0x0419: strcpy(keymapname, "ru"); break;
-        case 0x0424: strcpy(keymapname, "sl"); break;
-        case 0x041d: strcpy(keymapname, "sv"); break;
-        case 0x041e: strcpy(keymapname, "th"); break;
-        case 0x041f: strcpy(keymapname, "tr"); break;
+        case 0x0810: strcpy(g_keymapname, "it"); break;
+        case 0x0411: strcpy(g_keymapname, "ja"); break;
+        case 0x0427: strcpy(g_keymapname, "lt"); break;
+        case 0x0426: strcpy(g_keymapname, "lv"); break;
+        case 0x042f: strcpy(g_keymapname, "mk"); break;
+        case 0x0413: strcpy(g_keymapname, "nl"); break;
+        case 0x0813: strcpy(g_keymapname, "nl-be"); break;
+        case 0x0414: strcpy(g_keymapname, "no"); break;
+        case 0x0415: strcpy(g_keymapname, "pl"); break;
+        case 0x0816: strcpy(g_keymapname, "pt"); break;
+        case 0x0416: strcpy(g_keymapname, "pt-br"); break;
+        case 0x0419: strcpy(g_keymapname, "ru"); break;
+        case 0x0424: strcpy(g_keymapname, "sl"); break;
+        case 0x041d: strcpy(g_keymapname, "sv"); break;
+        case 0x041e: strcpy(g_keymapname, "th"); break;
+        case 0x041f: strcpy(g_keymapname, "tr"); break;
         default: warning("unknown keyboard layout [%X].\n", g_keylayout);
     }
-    DEBUG_KBD(("keymapname is [%s].\n", keymapname));
+    DEBUG_KBD(("keymapname is [%s].\n", g_keymapname));
 }
 
 /* show_startup_info - Just show some header information */
@@ -2352,7 +2459,7 @@ void ShowHeaderInfo(void)
     fprintf(stderr,"Copyright (C) 2001, 2006 NoMachine.\n");
     fprintf(stderr,"See http://www.nomachine.com/ for more information.\n\n");
     fprintf(stderr,"Based on rdesktop version "VERSION"\n");
-    fprintf(stderr,"Copyright (C) 1999-2003 Matt Chapman.\n");
+    fprintf(stderr,"Copyright (C) 1999-2005 Matt Chapman.\n");
     fprintf(stderr,"See http://www.rdesktop.org/ for more information.\n\n");
     info("Agent running with pid '%d'.\n", getpid());
 }

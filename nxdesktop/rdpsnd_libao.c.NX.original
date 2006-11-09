@@ -1,4 +1,4 @@
-/* 
+/* -*- c-basic-offset: 8 -*- 
    rdesktop: A Remote Desktop Protocol client.
    Sound Channel Process Functions - libao-driver
    Copyright (C) Matthew Chapman 2003
@@ -20,6 +20,23 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+/**************************************************************************/
+/*                                                                        */
+/* Copyright (c) 2001,2006 NoMachine, http://www.nomachine.com.           */
+/*                                                                        */
+/* NXDESKTOP, NX protocol compression and NX extensions to this software  */
+/* are copyright of NoMachine. Redistribution and use of the present      */
+/* software is allowed according to terms specified in the file LICENSE   */
+/* which comes in the source distribution.                                */
+/*                                                                        */
+/* Check http://www.nomachine.com/licensing.html for applicability.       */
+/*                                                                        */
+/* NX and NoMachine are trademarks of Medialogic S.p.A.                   */
+/*                                                                        */
+/* All rights reserved.                                                   */
+/*                                                                        */
+/**************************************************************************/
+
 #include "rdesktop.h"
 #include <unistd.h>
 #include <fcntl.h>
@@ -31,13 +48,13 @@
 #define WAVEOUTBUF	64
 
 int g_dsp_fd;
-ao_device *o_device = NULL;
-int default_driver;
-int g_samplerate;
-int g_channels;
 BOOL g_dsp_busy = False;
-static BOOL g_reopened;
-static short g_samplewidth;
+static ao_device *o_device = NULL;
+static int default_driver;
+static int samplerate;
+static int audiochannels;
+static BOOL reopened;
+static short samplewidth;
 
 static struct audio_packet
 {
@@ -57,9 +74,9 @@ wave_out_open(void)
 
 	format.bits = 16;
 	format.channels = 2;
-	g_channels = 2;
+	audiochannels = 2;
 	format.rate = 44100;
-	g_samplerate = 44100;
+	samplerate = 44100;
 	format.byte_format = AO_FMT_LITTLE;
 
 	o_device = ao_open_live(default_driver, &format, NULL);
@@ -71,7 +88,7 @@ wave_out_open(void)
 	g_dsp_fd = 0;
 	queue_lo = queue_hi = 0;
 
-	g_reopened = True;
+	reopened = True;
 
 	return True;
 }
@@ -117,12 +134,12 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 
 	format.bits = pwfx->wBitsPerSample;
 	format.channels = pwfx->nChannels;
-	g_channels = pwfx->nChannels;
+	audiochannels = pwfx->nChannels;
 	format.rate = 44100;
-	g_samplerate = pwfx->nSamplesPerSec;
+	samplerate = pwfx->nSamplesPerSec;
 	format.byte_format = AO_FMT_LITTLE;
 
-	g_samplewidth = pwfx->wBitsPerSample / 8;
+	samplewidth = pwfx->wBitsPerSample / 8;
 
 	if (o_device != NULL)
 		ao_close(o_device);
@@ -133,7 +150,7 @@ wave_out_set_format(WAVEFORMATEX * pwfx)
 		return False;
 	}
 
-	g_reopened = True;
+	reopened = True;
 
 	return True;
 }
@@ -175,16 +192,16 @@ wave_out_play(void)
 {
 	struct audio_packet *packet;
 	STREAM out;
-	unsigned char outbuf[WAVEOUTBUF];
+	char outbuf[WAVEOUTBUF];
 	int offset, len, i;
 	static long prev_s, prev_us;
 	unsigned int duration;
 	struct timeval tv;
 	int next_tick;
 
-	if (g_reopened)
+	if (reopened)
 	{
-		g_reopened = False;
+		reopened = False;
 		gettimeofday(&tv, NULL);
 		prev_s = tv.tv_sec;
 		prev_us = tv.tv_usec;
@@ -210,10 +227,10 @@ wave_out_play(void)
 
 	len = 0;
 
-	if (g_samplerate == 22050)
+	if (samplerate == 22050)
 	{
 		/* Resample to 44100 */
-		for (i = 0; (i < ((WAVEOUTBUF / 4) * (3 - g_samplewidth))) && (out->p < out->end);
+		for (i = 0; (i < ((WAVEOUTBUF / 4) * (3 - samplewidth))) && (out->p < out->end);
 		     i++)
 		{
 			/* On a stereo-channel we must make sure that left and right
@@ -221,16 +238,16 @@ wave_out_play(void)
 			   data with channels in mind: 1234 -> 12123434
 			   If we have a mono-channel, we can expand the data by simply
 			   doubling the sample-data: 1234 -> 11223344 */
-			if (g_channels == 2)
-				offset = ((i * 2) - (i & 1)) * g_samplewidth;
+			if (audiochannels == 2)
+				offset = ((i * 2) - (i & 1)) * samplewidth;
 			else
-				offset = (i * 2) * g_samplewidth;
+				offset = (i * 2) * samplewidth;
 
-			memcpy(&outbuf[offset], out->p, g_samplewidth);
-			memcpy(&outbuf[g_channels * g_samplewidth + offset], out->p, g_samplewidth);
+			memcpy(&outbuf[offset], out->p, samplewidth);
+			memcpy(&outbuf[audiochannels * samplewidth + offset], out->p, samplewidth);
 
-			out->p += g_samplewidth;
-			len += 2 * g_samplewidth;
+			out->p += samplewidth;
+			len += 2 * samplewidth;
 		}
 	}
 	else

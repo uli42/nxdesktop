@@ -27,13 +27,6 @@
 
 * Keymapping: 
 
-  * Support non-dead versions of some dead keys, like
-    "acute". It seems like RDP4 only supports the dead versions, but
-    the non-dead ones can be simulated by sending a space after the
-    dead key.
-
-  * Autodetect which keymap to use.
-
 
 * Sound redirection
 
@@ -59,3 +52,38 @@
   * More fancy homepage. 
 
   * Enhance documentation. Write a FAQ. 
+
+
+* SeamlessRDP mode
+
+  * Add a client to server message for starting additional
+    applications.
+
+  * Support cmd.exe. 
+
+  * Support for Input Contexts. 
+
+  * Enhanced support for WM_DELETE_WINDOW: Instead of terminating
+    rdesktop, close the window on the server side. 
+
+  * Systray support. 
+
+  * Support for transferring the application taskbar icon.
+
+  * Better support for non-EWMH window managers. 
+
+  * Support for non-rectangular windows. 
+
+  * The focus handling of menus is a bit crude. 
+
+  * Support for sending focus information from client to server.
+
+  * Implement something similiar to explhook.dll - support for running
+    explorer.exe in non-shell mode. 
+
+  * Better compatibility with Task Manager. 
+
+  * XINERAMA support.  
+
+  * When enumerating windows, make sure to send info about windows
+    that are transient for other windows after the referred window.

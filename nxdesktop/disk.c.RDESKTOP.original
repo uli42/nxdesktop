@@ -121,7 +121,7 @@ struct dummy_statfs_t
 	int f_namemax;
 };
 
-int
+static int
 dummy_statfs(struct dummy_statfs_t *buf)
 {
 	buf->f_blocks = 262144;
@@ -144,10 +144,10 @@ BOOL g_notify_stamp = False;
 
 typedef struct
 {
-	char name[256];
-	char label[256];
+	char name[PATH_MAX];
+	char label[PATH_MAX];
 	unsigned long serial;
-	char type[256];
+	char type[PATH_MAX];
 } FsInfoType;
 
 static NTSTATUS NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p);
@@ -201,7 +201,7 @@ ftruncate_growable(int fd, off_t length)
 {
 	int ret;
 	off_t pos;
-	static const char zero;
+	static const char zero = 0;
 
 	/* Try the simple method first */
 	if ((ret = ftruncate(fd, length)) != -1)
@@ -209,7 +209,7 @@ ftruncate_growable(int fd, off_t length)
 		return ret;
 	}
 
-	/* 
+	/*
 	 * Some kind of error. Perhaps we were trying to grow. Retry
 	 * in a safe way.
 	 */
@@ -325,7 +325,7 @@ disk_enum_devices(uint32 * id, char *optarg)
 			fprintf(stderr, "share name %s truncated to %s\n", optarg,
 				g_rdpdr_device[*id].name);
 
-		g_rdpdr_device[*id].local_path = xmalloc(strlen(pos2) + 1);
+		g_rdpdr_device[*id].local_path = (char *) xmalloc(strlen(pos2) + 1);
 		strcpy(g_rdpdr_device[*id].local_path, pos2);
 		g_rdpdr_device[*id].device_type = DEVICE_TYPE_DISK;
 		count++;
@@ -344,7 +344,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	NTHANDLE handle;
 	DIR *dirp;
 	int flags, mode;
-	char path[256];
+	char path[PATH_MAX];
 	struct stat filestat;
 
 	handle = 0;
@@ -491,7 +491,7 @@ disk_create(uint32 device_id, uint32 accessmask, uint32 sharemode, uint32 create
 	g_fileinfo[handle].device_id = device_id;
 	g_fileinfo[handle].flags_and_attributes = flags_and_attributes;
 	g_fileinfo[handle].accessmask = accessmask;
-	strncpy(g_fileinfo[handle].path, path, 255);
+	strncpy(g_fileinfo[handle].path, path, PATH_MAX - 1);
 	g_fileinfo[handle].delete_on_close = False;
 	g_notify_stamp = True;
 
@@ -698,7 +698,7 @@ NTSTATUS
 disk_set_information(NTHANDLE handle, uint32 info_class, STREAM in, STREAM out)
 {
 	uint32 length, file_attributes, ft_high, ft_low, delete_on_close;
-	char newname[256], fullpath[256];
+	char newname[PATH_MAX], fullpath[PATH_MAX];
 	struct fileinfo *pfinfo;
 	int mode;
 	struct stat filestat;
@@ -960,7 +960,7 @@ NotifyInfo(NTHANDLE handle, uint32 info_class, NOTIFY * p)
 		if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
 			continue;
 		p->num_entries++;
-		fullname = xmalloc(strlen(pfinfo->path) + strlen(dp->d_name) + 2);
+		fullname = (char *) xmalloc(strlen(pfinfo->path) + strlen(dp->d_name) + 2);
 		sprintf(fullname, "%s/%s", pfinfo->path, dp->d_name);
 
 		if (!stat(fullname, &buf))
@@ -997,7 +997,7 @@ FsVolumeInfo(char *fpath)
 
 	while ((e = getmntent(fdfs)))
 	{
-		if (strncmp(fpath, e->mnt_dir, strlen(fpath)) == 0)
+		if (str_startswith(e->mnt_dir, fpath))
 		{
 			strcpy(info.type, e->mnt_type);
 			strcpy(info.name, e->mnt_fsname);
@@ -1016,13 +1016,13 @@ FsVolumeInfo(char *fpath)
 						info.serial =
 							(buf[42] << 24) + (buf[41] << 16) +
 							(buf[40] << 8) + buf[39];
-						strncpy(info.label, buf + 43, 10);
+						strncpy(info.label, (char *) buf + 43, 10);
 						info.label[10] = '\0';
 					}
 					else if (lseek(fd, 32767, SEEK_SET) >= 0)	/* ISO9660 */
 					{
 						read(fd, buf, sizeof(buf));
-						strncpy(info.label, buf + 41, 32);
+						strncpy(info.label, (char *) buf + 41, 32);
 						info.label[32] = '\0';
 						/* info.Serial = (buf[128]<<24)+(buf[127]<<16)+(buf[126]<<8)+buf[125]; */
 					}
@@ -1112,7 +1112,7 @@ NTSTATUS
 disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM out)
 {
 	uint32 file_attributes, ft_low, ft_high;
-	char *dirname, fullpath[256];
+	char *dirname, fullpath[PATH_MAX];
 	DIR *pdir;
 	struct dirent *pdirent;
 	struct stat fstat;
@@ -1130,7 +1130,7 @@ disk_query_directory(NTHANDLE handle, uint32 info_class, char *pattern, STREAM o
 			/* If a search pattern is received, remember this pattern, and restart search */
 			if (pattern[0] != 0)
 			{
-				strncpy(pfinfo->pattern, 1 + strrchr(pattern, '/'), 64);
+				strncpy(pfinfo->pattern, 1 + strrchr(pattern, '/'), PATH_MAX - 1);
 				rewinddir(pdir);
 			}
 
