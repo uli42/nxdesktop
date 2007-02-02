@@ -1,5 +1,16 @@
 ChangeLog:
 
+nxdesktop-2.1.0-10
+
+- Cleaned up the package.
+
+nxdesktop-2.1.0-9
+
+- Changed the LICENSE file to state that the software is only made
+  available under the version 2 of the GPL.
+
+- Restored some original files from rdesktop 1.5.0.
+
 nxdesktop-2.1.0-8
 
 - Fixed the recognition of parameters from command line.
